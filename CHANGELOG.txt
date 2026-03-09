@@ -1,0 +1,151 @@
+CHANGELOG
+=========
+
+crostini-setup-duet5.sh — Crostini post-install bootstrap
+Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
+
+
+2.4.0  2026-03-08
+------------------
+
+  Exhaustive 12-domain parallel audit (syntax, strict-modes, quoting,
+  entry-points, args, exit-codes, signals, dry-run, idempotency,
+  file-writes, security, privilege-sep, path-safety, injection,
+  ext-cmd, compat, networking, cross-refs, docs, output-contract,
+  var-scope, logging, concurrency, rollback, edge-cases, robustness).
+
+  Fixes:
+
+  - Add mkdir-based lock file (~/.crostini-setup.lock) to prevent
+    concurrent runs from corrupting checkpoint state
+  - Replace hardcoded /tmp/vscode-arm64.deb with mktemp (eliminates
+    predictable temp file / symlink attack surface)
+  - Fix set_checkpoint() writing to STEP_FILE during --dry-run;
+    a subsequent real run would skip steps "completed" in dry-run.
+    set_checkpoint and final cleanup now respect DRY_RUN.
+  - Route ALL remaining dry-run bypasses through run():
+    * mkdir -p in steps 9, 10, 11 (applications dir, .local/bin,
+      .npm-global)
+    * mkdir/chmod in step 17 (SSH .ssh dir, key permissions)
+    * rm in step 14 (VS Code temp .deb cleanup)
+  - Fix --dry-run crash in step 17: chmod on non-existent SSH key
+    would abort under set -e; now guarded with [[ -f "$SSH_KEY" ]]
+  - Fix apt-get vs apt inconsistency in step 14 dpkg fallback
+  - Add sudo mkdir -p to write_file_sudo() for parent dir creation
+  - Update step 19 memory tuning check: show yellow warning with
+    explanation instead of red X when vm.* sysctl was skipped
+    (expected in Crostini)
+  - Update --help step 15 description, step 15 banner, and README to
+    accurately reflect that memory tuning is conditional on container
+    write access to /proc/sys/vm/
+  - README: add lock file, concurrent-safe to features; fix --dry-run
+    claim to include mkdir/chmod; clarify 4 GB memory tuning caveat
+
+2.3.1  2026-03-08
+------------------
+
+  Post-audit fixes:
+
+  - Fix BUG: per-package apt install loops (GPU, audio, GUI, Qt theme,
+    adwaita-icon-theme-full) bypassed run() — --dry-run had no effect
+    and commands were not logged. All now route through run().
+  - Fix BUG: vm.swappiness/dirty_ratio/vfs_cache_pressure sysctl values
+    are not writable from Crostini's unprivileged LXC container. Added
+    writability check (/proc/sys/vm/swappiness); skips with warning
+    when read-only (expected in Crostini).
+  - Fix: Vulkan summary in step 19 now prints "not available (virgl does
+    not support Vulkan)" instead of silently omitting output when
+    vulkaninfo reports no devices.
+
+2.3.0  2026-03-08
+------------------
+
+  Crostini-exclusive audit — remove everything non-Crostini:
+
+  - Remove pulseaudio daemon package (Crostini bridges audio from host;
+    daemon would start conflicting server). Keep pulseaudio-utils only.
+  - Remove xwayland package (sommelier provides its own XWayland bridge;
+    standalone package conflicts)
+  - Fix OLED font rendering: change rgba=rgb to rgba=none across GTK 2/3/4,
+    Xresources, and fontconfig. OLED has no LCD subpixel stripe — grayscale
+    AA is correct. Remove all lcdfilter=lcddefault settings.
+  - Replace ping network check with curl (ICMP is blocked in Crostini VM)
+  - Add --yes to gpg --dearmor for NodeSource key (idempotent on re-run)
+  - Remove transitional apt-transport-https (built into apt on Bookworm)
+  - Bare-metal audit: confirmed zero systemctl, NetworkManager, modprobe,
+    bootloader, bluetooth, or display server management references
+
+2.2.0  2026-03-08
+------------------
+
+  - Remove Fish shell step entirely (Crostini default shell is bash)
+  - Renumber steps 18-20 → 17-19 (19 steps total)
+  - Remove all Fish config file writes, check_tool, check_config refs
+  - Final compatibility audit against Lenovo 82QS0001US hardware:
+    Snapdragon 7c Gen 2, aarch64, 4 GB LPDDR4x, 128 GB eMMC,
+    13.3" 1920x1080 OLED, Debian Bookworm arm64 container
+
+2.1.1  2026-03-08
+------------------
+
+  - Add vm.swappiness=10 and dirty ratio tuning for 4 GB RAM device
+  - Add /etc/sysctl.d/99-crostini-memory.conf to summary config check
+  - Update step 15 banner and help text to reflect memory tuning
+  - Final hardware audit against Snapdragon 7c Gen 2 / aarch64 / FHD OLED
+
+2.1.0  2026-03-08
+------------------
+
+  - Eliminate all eval usage: run() passes "$@" directly
+  - Add run_shell() for pipe/redirect-only commands (no user input)
+  - Add write_file() and write_file_sudo() helpers for dry-run config writes
+  - All config file writes now respect --dry-run
+  - Fix SC2155: separate declare/assign for LOG_FILE, CROS_UID
+  - Fix SC2034: remove unused BLUE color variable
+  - Replace hardcoded UID 1000 with dynamic $(id -u) via CROS_UID
+  - Pipefail-safe logging: separate file write + stdout (no | tee)
+  - Pipefail-safe run()/run_shell(): redirect to log, no pipe
+  - Add trap handler for EXIT/INT/TERM with /tmp cleanup
+  - Guard all sudo apt install with || warn/die
+  - Guard sudo sysctl --system, sudo locale-gen
+  - 12 parallel audits: shellcheck, syntax, injection, error handling,
+    idempotency, path safety, dry-run coverage, cross-references,
+    signal handling, unused vars, quoting, flag parsing
+
+2.0.0  2026-03-08
+------------------
+
+  - Full rewrite: fully automated setup
+  - Auto-open ChromeOS settings via garcon-url-handler:
+    GPU flags, microphone, USB, shared folders, port forwarding,
+    disk resize, container backup
+  - Add GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
+  - Add audio stack (ALSA, PulseAudio, GStreamer codecs)
+  - Add display scaling (sommelier, GTK 2/3/4, Qt, Xft, fontconfig,
+    cursor theme) tuned for 13.3" FHD OLED
+  - Add GUI apps with MIME defaults, Thunar, screenshots, archive
+    manager, accessibility, notifications, 8 font families
+  - Add VS Code Wayland/Ozone flags
+  - Auto-open container backup page
+  - Summary reports GPU/Vulkan, Wayland/sommelier, audio/mic,
+    shared folders, config file status, quick-test commands
+
+1.1.0  2026-03-08
+------------------
+
+  - Add interactive GUI prerequisites checklist
+  - Add GPU detection (/dev/dri/renderD128, sysfs driver)
+  - Add mesa-utils to GUI packages for GPU verification
+  - Add GPU/Wayland/audio/shared folder status to summary
+
+1.0.0  2026-03-08
+------------------
+
+  - Initial release: 15-step Crostini bootstrap
+  - Preflight checks (arch, Crostini, disk, network)
+  - System update, core CLI utilities, build essentials
+  - Python, Node.js LTS (arm64), Rust (aarch64)
+  - Git configuration, VS Code arm64
+  - Flatpak + Flathub, SSH key generation
+  - Container resource tuning (sysctl, locale, env, paths)
+  - Checkpoint resume, --dry-run, colored output, full logging
