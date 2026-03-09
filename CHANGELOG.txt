@@ -5,6 +5,25 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+2.4.1  2026-03-09
+------------------
+
+  Post-audit fixes (AUDIT-2.4.0.txt):
+
+  - Fix H-1: add existence guards to 5 write_file calls that
+    unconditionally overwrote user-customized configs on re-run:
+    gpu.conf, audio.conf, sommelier.conf, qt.conf, cursor index.theme.
+    All now skip with "already exists" like every other config write.
+  - Fix M-1: make NODE_MAJOR readonly to prevent accidental mutation
+    before interpolation into run_shell string
+  - Fix M-2: make SYSCTL_CONF readonly for same reason
+  - Fix L-1: replace ls /dev/snd/ | wc -l with find (SC2012) in
+    both step 7 audio verification and step 19 summary
+  - Fix L-2: suppress shellcheck SC2317 false positive on cleanup()
+    (invoked via trap, not direct call)
+  - Fix L-3: wrap preflight network curl in DRY_RUN guard so --dry-run
+    makes zero outbound requests
+
 2.4.0  2026-03-08
 ------------------
 

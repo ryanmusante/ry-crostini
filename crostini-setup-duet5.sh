@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 2.4.0
-# Date:    2026-03-08
+# Version: 2.4.1
+# Date:    2026-03-09
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--help] [--version]
@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="2.4.0"
+readonly SCRIPT_VERSION="2.4.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)"
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -30,6 +30,7 @@ readonly CROS_UID="$_cros_uid"
 DRY_RUN=false
 
 # ── Cleanup trap ─────────────────────────────────────────────────────────────
+# shellcheck disable=SC2317  # invoked via trap, not direct call
 cleanup() {
     local rc=$?
     # Remove temp files
@@ -279,7 +280,9 @@ if should_run_step 1; then
     log "Available disk: ${AVAIL_MB} MB ✓"
 
     # 1e. Network connectivity
-    if curl -fsS --max-time 5 https://deb.debian.org/debian/dists/bookworm/Release.gpg -o /dev/null 2>/dev/null; then
+    if $DRY_RUN; then
+        log "[DRY-RUN] skip network check"
+    elif curl -fsS --max-time 5 https://deb.debian.org/debian/dists/bookworm/Release.gpg -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -536,7 +539,8 @@ if should_run_step 6; then
 
     # GPU environment variables
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
-    write_file "$GPU_ENV_FILE" <<'EOF'
+    if [[ ! -f "$GPU_ENV_FILE" ]]; then
+        write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
 # Prefer Wayland for GTK apps (sommelier handles the bridge)
 GDK_BACKEND=wayland,x11
@@ -548,6 +552,9 @@ LIBGL_DRI3_DISABLE=0
 # Wayland EGL
 EGL_PLATFORM=wayland
 EOF
+    else
+        log "GPU env already exists — skipping"
+    fi
 
     set_checkpoint 6
     log "Step 6 complete."
@@ -598,7 +605,7 @@ EOF
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEVICES=$(ls /dev/snd/ 2>/dev/null | wc -l)
+        SND_DEVICES=$(find /dev/snd -maxdepth 1 -not -name snd 2>/dev/null | wc -l)
         log "Audio devices in /dev/snd: ${SND_DEVICES} ✓"
         if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
             log "Microphone capture device: detected ✓"
@@ -611,10 +618,14 @@ EOF
 
     # Audio environment
     AUDIO_ENV_FILE="${HOME}/.config/environment.d/audio.conf"
-    write_file "$AUDIO_ENV_FILE" <<EOF
+    if [[ ! -f "$AUDIO_ENV_FILE" ]]; then
+        write_file "$AUDIO_ENV_FILE" <<EOF
 # Crostini audio environment
 PULSE_SERVER=unix:/run/user/${CROS_UID}/pulse/native
 EOF
+    else
+        log "Audio env already exists — skipping"
+    fi
 
     set_checkpoint 7
     log "Step 7 complete."
@@ -634,7 +645,8 @@ if should_run_step 8; then
     # ── 8a. Sommelier environment (controls Linux app scaling) ───────────────
     SOMMELIER_ENV="${HOME}/.config/environment.d/sommelier.conf"
     # write_file handles mkdir
-    write_file "$SOMMELIER_ENV" <<'EOF'
+    if [[ ! -f "$SOMMELIER_ENV" ]]; then
+        write_file "$SOMMELIER_ENV" <<'EOF'
 # Sommelier display scaling for Crostini
 # SOMMELIER_SCALE adjusts Linux app window scaling:
 #   1.0 = native (let ChromeOS handle scaling — recommended for FHD)
@@ -645,6 +657,9 @@ SOMMELIER_SCALE=1.0
 # Crostini/sommelier sets these dynamically and overriding
 # them can break GUI apps if the display number changes.
 EOF
+    else
+        log "Sommelier env already exists — skipping"
+    fi
 
     # ── 8b. GTK 3 settings ──────────────────────────────────────────────────
     GTK3_DIR="${HOME}/.config/gtk-3.0"
@@ -713,13 +728,17 @@ EOF
     # ── 8e. Qt scaling and theming ───────────────────────────────────────────
     QT_ENV="${HOME}/.config/environment.d/qt.conf"
     # write_file handles mkdir
-    write_file "$QT_ENV" <<'EOF'
+    if [[ ! -f "$QT_ENV" ]]; then
+        write_file "$QT_ENV" <<'EOF'
 # Qt HiDPI and theming
 QT_AUTO_SCREEN_SCALE_FACTOR=1
 QT_QPA_PLATFORM=wayland;xcb
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 QT_QPA_PLATFORMTHEME=gtk3
 EOF
+    else
+        log "Qt env already exists — skipping"
+    fi
 
     # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme
     run sudo apt install -y qt5ct || true
@@ -794,10 +813,14 @@ FCEOF
     # ── 8h. Cursor theme (ensure consistency across toolkits) ────────────────
     CURSOR_DIR="${HOME}/.icons/default"
     # write_file handles mkdir
-    write_file "${CURSOR_DIR}/index.theme" <<'EOF'
+    if [[ ! -f "${CURSOR_DIR}/index.theme" ]]; then
+        write_file "${CURSOR_DIR}/index.theme" <<'EOF'
 [Icon Theme]
 Inherits=Adwaita
 EOF
+    else
+        log "Cursor theme already exists — skipping"
+    fi
 
     set_checkpoint 8
     log "Step 8 complete."
@@ -906,7 +929,7 @@ if should_run_step 11; then
     if command -v node &>/dev/null; then
         log "Node.js already installed: $(node --version)"
     else
-        NODE_MAJOR=22
+        readonly NODE_MAJOR=22
         log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
 
         run sudo mkdir -p /etc/apt/keyrings
@@ -1050,7 +1073,7 @@ if should_run_step 15; then
     step_banner 15 "Container resource tuning (sysctl, locale, env, paths)"
 
     # 15a. Increase inotify watchers (VS Code and file-heavy tools need this)
-    SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
+    readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         run_shell "echo 'fs.inotify.max_user_watches=524288' | sudo tee '${SYSCTL_CONF}' > /dev/null"
         run sudo sysctl --system || warn "sysctl apply failed"
@@ -1287,7 +1310,7 @@ printf '\n'
 # ── Audio ────────────────────────────────────────────────────────────────────
 printf '%bAudio:%b\n' "$BOLD" "$RESET"
 if [[ -d /dev/snd ]]; then
-    SND_DEV_COUNT=$(ls /dev/snd/ 2>/dev/null | wc -l)
+    SND_DEV_COUNT=$(find /dev/snd -maxdepth 1 -not -name snd 2>/dev/null | wc -l)
     printf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
 else
     printf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"

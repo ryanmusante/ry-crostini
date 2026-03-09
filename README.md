@@ -90,13 +90,13 @@ Everything else is handled by the script.
 ## Features
 
 - **Checkpoint resume** — progress saved after each step; re-run to continue
-- **`--dry-run`** — all `apt`, `sudo`, `mkdir`, `chmod`, and config writes are skipped with logged output
+- **`--dry-run`** — all `apt`, `sudo`, `mkdir`, `chmod`, config writes, and the preflight network check are skipped with logged output; zero outbound requests
 - **Colored output** — respects `NO_COLOR` env variable
 - **Full logging** — every command logged to `~/crostini-setup-YYYYMMDD-HHMMSS.log`
 - **Trap handler** — cleanup on EXIT/INT/TERM
 - **Pipefail-safe** — no `| tee` pipes; log writes are separate from stdout
 - **No eval** — `run()` passes `"$@"` directly; `run_shell()` restricted to pipe commands with no user input
-- **Idempotent** — config files check existence before writing
+- **Idempotent** — every config file checks existence before writing; re-runs never overwrite user customizations
 - **Dynamic UID** — PulseAudio socket path uses `$(id -u)`, not hardcoded 1000
 - **Concurrent-safe** — mkdir-based lock file prevents parallel runs from corrupting checkpoint
 - **4 GB aware** — memory tuning attempted if container permits (vm.swappiness is read-only in most Crostini setups)
@@ -137,7 +137,7 @@ fc-match monospace
 ## Files
 
 ```
-crostini-setup-duet5.sh    Main script (1434 lines, bash)
+crostini-setup-duet5.sh    Main script (1457 lines, bash)
 README.md                  This file
 LICENSE                    MIT
 CHANGELOG.txt              Version history (kernel.org style)
