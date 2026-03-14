@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 2.4.1
-# Date:    2026-03-09
+# Version: 2.5.1
+# Date:    2026-03-14
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--help] [--version]
@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="2.4.1"
+readonly SCRIPT_VERSION="2.5.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)"
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -130,7 +130,7 @@ run_shell() {
         return 0
     fi
     log "[EXEC] $1"
-    bash -c "set -eo pipefail; $1" >> "$LOG_FILE" 2>&1
+    bash -c "set -euo pipefail; $1" >> "$LOG_FILE" 2>&1
     local rc=$?
     [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1"
     return $rc
@@ -201,7 +201,7 @@ STEPS PERFORMED:
      5  Build essentials and development headers
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
      7  Audio stack (ALSA, PulseAudio, GStreamer codecs)
-     8  Display scaling and HiDPI (sommelier, GTK3/4, Qt, Xft, fontconfig)
+     8  Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig)
      9  GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots)
     10  Python ecosystem (python3, pip, venv)
     11  Node.js via NodeSource (LTS, arm64)
@@ -317,19 +317,23 @@ if should_run_step 2; then
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU acceleration: ALREADY ACTIVE ✓"
     else
-        log "GPU acceleration not detected. Opening chrome://flags..."
-        printf '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
-        printf '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
-        printf '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
-        printf '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
-        open_chromeos_url "chrome://flags/#crostini-gpu-support"
-        sleep 2
-        printf '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
-        read -r _
-        if [[ -e /dev/dri/renderD128 ]]; then
-            log "GPU acceleration now active ✓"
+        log "GPU acceleration not detected."
+        if ! $DRY_RUN; then
+            printf '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
+            printf '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
+            printf '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
+            printf '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
+            open_chromeos_url "chrome://flags/#crostini-gpu-support"
+            sleep 2
+            printf '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
+            read -r _
+            if [[ -e /dev/dri/renderD128 ]]; then
+                log "GPU acceleration now active ✓"
+            else
+                warn "GPU not yet active — requires full Chromebook reboot. Continuing."
+            fi
         else
-            warn "GPU not yet active — requires full Chromebook reboot. Continuing."
+            log "[DRY-RUN] would open chrome://flags/#crostini-gpu-support"
         fi
     fi
 
@@ -337,26 +341,34 @@ if should_run_step 2; then
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         log "Microphone capture device: detected ✓"
     else
-        log "Microphone not detected. Opening Linux settings..."
-        printf '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
-        open_chromeos_url "chrome://os-settings/crostini"
-        sleep 2
-        printf '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
-        read -r _
-        if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
-            log "Microphone now available ✓"
+        log "Microphone not detected."
+        if ! $DRY_RUN; then
+            printf '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
+            open_chromeos_url "chrome://os-settings/crostini"
+            sleep 2
+            printf '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
+            read -r _
+            if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+                log "Microphone now available ✓"
+            else
+                warn "Microphone still not detected. May need container restart."
+            fi
         else
-            warn "Microphone still not detected. May need container restart."
+            log "[DRY-RUN] would open chrome://os-settings/crostini for mic toggle"
         fi
     fi
 
     # ── 2c. USB device passthrough ───────────────────────────────────────────
-    log "Opening USB device management..."
-    printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
-    open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
-    sleep 2
-    printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-    read -r _
+    if ! $DRY_RUN; then
+        log "Opening USB device management..."
+        printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
+        open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
+        sleep 2
+        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
+        read -r _
+    else
+        log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
+    fi
 
     # ── 2d. Shared folders ───────────────────────────────────────────────────
     if [[ -d /mnt/chromeos ]]; then
@@ -364,33 +376,45 @@ if should_run_step 2; then
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
-            log "No shared folders. Opening shared paths settings..."
-            printf '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET"
-            open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
-            sleep 2
-            printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-            read -r _
+            log "No shared folders."
+            if ! $DRY_RUN; then
+                printf '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET"
+                open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
+                sleep 2
+                printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
+                read -r _
+            else
+                log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
+            fi
         fi
     fi
 
     # ── 2e. Port forwarding ──────────────────────────────────────────────────
-    log "Opening port forwarding settings..."
-    printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
-    printf '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET"
-    open_chromeos_url "chrome://os-settings/crostini/portForwarding"
-    sleep 2
-    printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-    read -r _
+    if ! $DRY_RUN; then
+        log "Opening port forwarding settings..."
+        printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
+        printf '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET"
+        open_chromeos_url "chrome://os-settings/crostini/portForwarding"
+        sleep 2
+        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
+        read -r _
+    else
+        log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
+    fi
 
     # ── 2f. Disk size check ──────────────────────────────────────────────────
     AVAIL_MB_NOW=$(($(df --output=avail / | tail -1 | tr -d ' ') / 1024))
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
-        log "Disk under 10 GB free. Opening disk resize settings..."
-        printf '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
-        open_chromeos_url "chrome://os-settings/crostini"
-        sleep 2
-        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r _
+        log "Disk under 10 GB free."
+        if ! $DRY_RUN; then
+            printf '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
+            open_chromeos_url "chrome://os-settings/crostini"
+            sleep 2
+            printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
+            read -r _
+        else
+            log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
+        fi
     else
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
     fi
@@ -447,11 +471,11 @@ if should_run_step 4; then
 
     # Create common symlinks for renamed Debian packages
     if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
-        run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+        run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd || true
         log "Symlinked fdfind → fd"
     fi
     if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
-        run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat
+        run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat || true
         log "Symlinked batcat → bat"
     fi
 
@@ -606,7 +630,7 @@ EOF
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEVICES=$(find /dev/snd -maxdepth 1 -not -name snd 2>/dev/null | wc -l)
+        SND_DEVICES=$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
         log "Audio devices in /dev/snd: ${SND_DEVICES} ✓"
         if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
             log "Microphone capture device: detected ✓"
@@ -637,7 +661,7 @@ fi
 #  STEP 8: Display scaling and HiDPI configuration
 # ═════════════════════════════════════════════════════════════════════════════
 if should_run_step 8; then
-    step_banner 8 "Display scaling and HiDPI (sommelier, GTK, Qt, Xft, fontconfig)"
+    step_banner 8 "Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig)"
 
     # The Duet 5 has a 13.3" 1920x1080 OLED. At that size, the default
     # Linux DPI (96) makes everything tiny. We configure every rendering
@@ -913,8 +937,8 @@ if should_run_step 10; then
 
     run mkdir -p "${HOME}/.local/bin"
 
-    log "Python version: $(python3 --version 2>&1)"
-    log "pip version: $(python3 -m pip --version 2>&1)"
+    log "Python version: $(python3 --version 2>&1 || echo 'not installed')"
+    log "pip version: $(python3 -m pip --version 2>&1 || echo 'not installed')"
 
     set_checkpoint 10
     log "Step 10 complete."
@@ -933,7 +957,7 @@ if should_run_step 11; then
         readonly NODE_MAJOR=22
         log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
 
-        run sudo mkdir -p /etc/apt/keyrings
+        run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
         run_shell "curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg"
         run_shell "echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main' | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null"
         run sudo apt update  || warn "apt update failed"
@@ -994,20 +1018,28 @@ if should_run_step 13; then
     CURRENT_EMAIL="$(git config --global user.email 2>/dev/null || true)"
 
     if [[ -z "$CURRENT_NAME" ]]; then
-        printf '%bEnter your Git name (e.g. Ryan Musante): %b' "$YELLOW" "$RESET"
-        read -r GIT_NAME
-        if [[ -n "$GIT_NAME" ]]; then
-            run git config --global user.name "${GIT_NAME}"
+        if ! $DRY_RUN; then
+            printf '%bEnter your Git name (e.g. Ryan Musante): %b' "$YELLOW" "$RESET"
+            read -r GIT_NAME
+            if [[ -n "$GIT_NAME" ]]; then
+                run git config --global user.name "${GIT_NAME}"
+            fi
+        else
+            log "[DRY-RUN] would prompt for git user.name"
         fi
     else
         log "Git user.name already set: ${CURRENT_NAME}"
     fi
 
     if [[ -z "$CURRENT_EMAIL" ]]; then
-        printf '%bEnter your Git email: %b' "$YELLOW" "$RESET"
-        read -r GIT_EMAIL
-        if [[ -n "$GIT_EMAIL" ]]; then
-            run git config --global user.email "${GIT_EMAIL}"
+        if ! $DRY_RUN; then
+            printf '%bEnter your Git email: %b' "$YELLOW" "$RESET"
+            read -r GIT_EMAIL
+            if [[ -n "$GIT_EMAIL" ]]; then
+                run git config --global user.email "${GIT_EMAIL}"
+            fi
+        else
+            log "[DRY-RUN] would prompt for git user.email"
         fi
     else
         log "Git user.email already set: ${CURRENT_EMAIL}"
@@ -1021,7 +1053,7 @@ if should_run_step 13; then
     run git config --global push.autoSetupRemote true
     run git lfs install
 
-    log "Git version: $(git --version 2>&1)"
+    log "Git version: $(git --version 2>&1 || echo 'not installed')"
 
     set_checkpoint 13
     log "Step 13 complete."
@@ -1037,18 +1069,23 @@ if should_run_step 14; then
     if command -v code &>/dev/null; then
         log "VS Code already installed: $(code --version 2>&1 | head -1)"
     else
-        log "Downloading VS Code arm64 .deb..."
-        _VSCODE_DEB="/tmp/vscode-arm64-$$.deb"
-        run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}"
-
-        if [[ -f "$_VSCODE_DEB" ]]; then
-            run sudo dpkg -i "$_VSCODE_DEB" || run sudo apt install -f -y
-            log "VS Code installed ✓"
+        if $DRY_RUN; then
+            log "[DRY-RUN] curl -fSL https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
+            log "[DRY-RUN] sudo dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
-            warn "VS Code download failed. Install manually:"
-            warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
+            log "Downloading VS Code arm64 .deb..."
+            _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)"
+            run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}"
+
+            if [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
+                run sudo dpkg -i "$_VSCODE_DEB" || run sudo apt install -f -y
+                log "VS Code installed ✓"
+            else
+                warn "VS Code download failed. Install manually:"
+                warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
+            fi
+            rm -f "$_VSCODE_DEB" 2>/dev/null
         fi
-        rm -f "$_VSCODE_DEB" 2>/dev/null
     fi
 
     # VS Code Wayland flags for better rendering on Crostini
@@ -1079,7 +1116,7 @@ if should_run_step 15; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
 EOF
-        run sudo chmod 644 "$SYSCTL_CONF"
+        run sudo chmod 644 "$SYSCTL_CONF" || true
         run sudo sysctl --system || warn "sysctl apply failed"
         log "inotify watchers increased to 524288"
     else
@@ -1088,7 +1125,7 @@ EOF
 
     # 15b. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
-        run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+        run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen || warn "locale.gen edit failed"
         run sudo locale-gen || warn "locale-gen failed"
         log "en_US.UTF-8 locale generated"
     else
@@ -1122,7 +1159,7 @@ if [ -d "$HOME/.npm-global/bin" ]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
 fi
 ENVEOF
-        run sudo chmod 644 "$PROFILE_D"
+        run sudo chmod 644 "$PROFILE_D" || true
         log "Environment defaults written to ${PROFILE_D}"
     else
         log "Environment profile already exists"
@@ -1146,7 +1183,7 @@ vm.vfs_cache_pressure=150
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 MEMEOF
-            run sudo chmod 644 "$MEM_CONF"
+            run sudo chmod 644 "$MEM_CONF" || true
             run sudo sysctl --system || warn "memory sysctl apply failed"
         else
             warn "vm.swappiness is read-only in this container (expected in Crostini)"
@@ -1175,7 +1212,7 @@ if should_run_step 16; then
     step_banner 16 "Flatpak + Flathub (ARM64 app source)"
 
     run sudo apt install -y flatpak || warn "flatpak install failed"
-    run sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    run sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
 
     log "Flatpak installed with Flathub remote."
     log "Install apps: flatpak install flathub <app-id>"
@@ -1195,33 +1232,37 @@ if should_run_step 17; then
     if [[ -f "$SSH_KEY" ]]; then
         log "SSH key already exists at ${SSH_KEY}"
     else
-        printf '%bGenerate an Ed25519 SSH key? [Y/n]: %b' "$YELLOW" "$RESET"
-        read -r GEN_SSH
+        if ! $DRY_RUN; then
+            printf '%bGenerate an Ed25519 SSH key? [Y/n]: %b' "$YELLOW" "$RESET"
+            read -r GEN_SSH
 
-        if [[ "${GEN_SSH,,}" != "n" ]]; then
-            printf '%bEmail for SSH key comment (blank for none): %b' "$YELLOW" "$RESET"
-            read -r SSH_COMMENT
+            if [[ "${GEN_SSH,,}" != "n" ]]; then
+                printf '%bEmail for SSH key comment (blank for none): %b' "$YELLOW" "$RESET"
+                read -r SSH_COMMENT
 
-            run mkdir -p "${HOME}/.ssh"
-            run chmod 700 "${HOME}/.ssh"
+                run mkdir -p "${HOME}/.ssh"
+                run chmod 700 "${HOME}/.ssh"
 
-            if [[ -n "$SSH_COMMENT" ]]; then
-                run ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" -N ""
+                if [[ -n "$SSH_COMMENT" ]]; then
+                    run ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" -N ""
+                else
+                    run ssh-keygen -t ed25519 -f "$SSH_KEY" -N ""
+                fi
+
+                if [[ -f "$SSH_KEY" ]]; then
+                    run chmod 600 "$SSH_KEY"
+                    run chmod 644 "${SSH_KEY}.pub"
+
+                    log "SSH public key:"
+                    tee -a "$LOG_FILE" < "${SSH_KEY}.pub"
+                    printf '\n'
+                    log "Add to GitHub/GitLab/servers as needed."
+                fi
             else
-                run ssh-keygen -t ed25519 -f "$SSH_KEY" -N ""
-            fi
-
-            if [[ -f "$SSH_KEY" ]]; then
-                run chmod 600 "$SSH_KEY"
-                run chmod 644 "${SSH_KEY}.pub"
-
-                log "SSH public key:"
-                tee -a "$LOG_FILE" < "${SSH_KEY}.pub"
-                printf '\n'
-                log "Add to GitHub/GitLab/servers as needed."
+                log "Skipping SSH key generation"
             fi
         else
-            log "Skipping SSH key generation"
+            log "[DRY-RUN] would prompt for SSH key generation"
         fi
     fi
 
@@ -1236,13 +1277,17 @@ fi
 if should_run_step 18; then
     step_banner 18 "Container backup"
 
-    log "Opening ChromeOS backup page to snapshot this fresh setup..."
-    printf '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET"
-    printf '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET"
-    open_chromeos_url "chrome://os-settings/crostini/exportImport"
-    sleep 2
-    printf '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
-    read -r _
+    if ! $DRY_RUN; then
+        log "Opening ChromeOS backup page to snapshot this fresh setup..."
+        printf '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET"
+        printf '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET"
+        open_chromeos_url "chrome://os-settings/crostini/exportImport"
+        sleep 2
+        printf '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
+        read -r _
+    else
+        log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"
+    fi
 
     set_checkpoint 18
     log "Step 18 complete."
@@ -1315,7 +1360,7 @@ if should_run_step 19; then
     # ── Audio ────────────────────────────────────────────────────────────────────
     printf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT=$(find /dev/snd -maxdepth 1 -not -name snd 2>/dev/null | wc -l)
+        SND_DEV_COUNT=$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
         printf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
     else
         printf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"

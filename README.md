@@ -90,7 +90,7 @@ Everything else is handled by the script.
 ## Features
 
 - **Checkpoint resume** — progress saved after each step; re-run to continue
-- **`--dry-run`** — all `apt`, `sudo`, `mkdir`, `chmod`, config writes, and the preflight network check are skipped with logged output; zero outbound requests
+- **`--dry-run`** — all `apt`, `sudo`, `mkdir`, `chmod`, config writes, interactive prompts, ChromeOS URL opens, and the preflight network check are skipped with logged output; zero outbound requests, zero user interaction
 - **Colored output** — respects `NO_COLOR` env variable
 - **Full logging** — every command logged to `~/crostini-setup-YYYYMMDD-HHMMSS.log`
 - **Trap handler** — cleanup on EXIT/INT/TERM
@@ -137,7 +137,7 @@ fc-match monospace
 ## Files
 
 ```
-crostini-setup-duet5.sh    Main script (1457 lines, bash)
+crostini-setup-duet5.sh    Main script (1509 lines, bash)
 README.md                  This file
 LICENSE                    MIT
 CHANGELOG.txt              Version history (kernel.org style)

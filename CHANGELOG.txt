@@ -5,6 +5,58 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+2.5.1  2026-03-14
+------------------
+
+  Post-audit fixes:
+
+  - Fix M-1: wrap VS Code download/install block in DRY_RUN guard.
+    mktemp created a real temp file in /tmp during --dry-run, violating
+    the zero-side-effects contract. Also add -s (non-empty) check
+    alongside -f before dpkg to prevent installing a 0-byte file on
+    download failure.
+  - Fix M-2: replace fragile find -not -name snd with -mindepth 1 in
+    both step 7 audio verification and step 19 summary. The old filter
+    excluded /dev/snd itself by matching basename, but would also
+    silently exclude any child named snd.
+  - Fix L-1: add -u (nounset) to run_shell() bash -c invocation so
+    the subshell enforces set -euo pipefail, consistent with the
+    parent script's strict mode.
+  - README: update script line count to 1509.
+
+2.5.0  2026-03-13
+------------------
+
+  Exhaustive audit — complete --dry-run isolation + error handling:
+
+  - Fix H-1: guard all step 2 interactive prompts (open_chromeos_url,
+    sleep, read) with DRY_RUN checks across 6 sub-sections: GPU flag,
+    microphone, USB passthrough, shared folders, port forwarding, and
+    disk resize. --dry-run now logs which URL would open instead.
+  - Fix H-2: guard step 13 git config prompts (user.name, user.email)
+    with DRY_RUN — dry-run no longer blocks on stdin for git identity.
+  - Fix H-3: guard step 17 SSH key generation prompts with DRY_RUN —
+    dry-run no longer asks whether to generate keys or for an email
+    comment.
+  - Fix H-4: guard step 18 container backup prompt (open_chromeos_url,
+    sleep, read) with DRY_RUN.
+  - Fix M-1: replace PID-based temp path /tmp/vscode-arm64-$$.deb with
+    mktemp (eliminates TOCTOU race; matches 2.4.0 changelog claim).
+  - Fix M-2: add error handling to all unguarded sudo calls that would
+    abort the script under set -e without a useful message: sudo ln -sf
+    for fd/bat symlinks (|| true), sudo mkdir -p /etc/apt/keyrings
+    (|| die), sudo chmod 644 on sysctl/profile/memory configs (|| true),
+    sudo sed -i locale.gen (|| warn), flatpak remote-add (|| warn).
+  - Fix M-3: step 8 banner now reads "GTK 2/3/4" to match README, help
+    text, and the actual GTK 2/3/4 config files the step writes.
+  - Fix L-1: --help step 8 description now lists GTK 2/3/4 (was GTK3/4),
+    matching actual config files written, banner, and README.
+  - Fix L-2: guard python3 --version, pip --version, and git --version
+    subshells with || echo fallback to prevent set -e abort when tools
+    are missing after partial install.
+  - README: update --dry-run feature description to include interactive
+    prompts and ChromeOS URL opens; update script line count.
+
 2.4.1  2026-03-09
 ------------------
 
