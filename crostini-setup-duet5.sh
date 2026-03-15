@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 2.5.2
+# Version: 2.5.3
 # Date:    2026-03-15
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── Constants ────────────────────────────────────────────────────────────────
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="2.5.2"
+readonly SCRIPT_VERSION="2.5.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)"
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -88,7 +88,14 @@ step_banner() {
 # ── Checkpoint system ────────────────────────────────────────────────────────
 get_checkpoint() {
     if [[ -f "$STEP_FILE" ]]; then
-        cat "$STEP_FILE"
+        local val
+        val="$(cat "$STEP_FILE")"
+        if [[ "$val" =~ ^[0-9]+$ ]]; then
+            echo "$val"
+        else
+            warn "Corrupted checkpoint file (got '${val}'). Use --reset to clear."
+            echo 0
+        fi
     else
         echo 0
     fi
@@ -1432,7 +1439,7 @@ if should_run_step 19; then
     check_tool "tmux"        tmux
     check_tool "jq"          jq
     check_tool "glxinfo"     glxinfo
-    check_tool "glmark2"     glmark2
+    check_tool "glmark2"     glmark2-es2-wayland
     check_tool "vulkaninfo"  vulkaninfo
     check_tool "pactl"       pactl
     check_tool "pavucontrol" pavucontrol

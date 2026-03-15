@@ -5,6 +5,22 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+2.5.3  2026-03-15
+------------------
+
+  Post-audit fixes (AUDIT-2.5.2.txt, extended):
+
+  - Fix M-1: check_tool "glmark2" in step 19 checked for non-existent
+    binary 'glmark2'. The script installs glmark2-wayland and
+    glmark2-es2-wayland (Wayland-only variants); the correct binary is
+    'glmark2-es2-wayland'. Verification would always show ✗ not found.
+  - Fix L-1: get_checkpoint() now validates that checkpoint file content
+    is numeric (regex ^[0-9]+$). Corrupted checkpoint file previously
+    caused unhelpful bash arithmetic error under set -e. Now warns and
+    falls back to 0 with a message to use --reset.
+  - README: add CHANGELOG.txt hyperlink in Files section.
+  - README: update script line count to 1521.
+
 2.5.2  2026-03-15
 ------------------
 
