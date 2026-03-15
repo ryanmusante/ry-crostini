@@ -5,6 +5,150 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+2.5.10  2026-03-15
+-------------------
+
+  Final audit (AUDIT-2.5.10.txt — 27-domain checklist):
+
+  - Fix F-1: add || true guard to `code --version 2>&1 | head -1`
+    pipe in step 14 (line 1028). Same SIGPIPE class as check_tool()
+    fix in 2.5.9: `code --version` emits 3 lines, `head -1` closes
+    pipe, SIGPIPE (rc 141) propagates through pipefail, and set -e
+    aborts step 14 before reaching the else branch (new install).
+    Only triggers on re-run when VS Code is already installed.
+  - Fix F-2: README Files section had markdown link syntax
+    `[CHANGELOG.txt](CHANGELOG.txt)` inside a fenced code block
+    where it renders as literal text, not a hyperlink. Replaced with
+    plain text matching the formatting of adjacent entries.
+  - Full 27-domain audit: inputs, syntax, strict-modes, entry-points,
+    arg-contract, exit-codes, ext-cmd-audit, idempotency, file-writes,
+    security, signals, var-scope, rollback, privilege-sep, path-safety,
+    output-contract, cross-refs, docs, compat, networking, concurrency,
+    logging, lint, dry-run, test-matrix, systemd, pacman. No further
+    findings.
+  - shellcheck clean, bash -n clean
+
+2.5.9  2026-03-15
+------------------
+
+  Sync audit + execution flow fix:
+
+  - Fix E-1: add || true guard to check_tool() --version pipe in
+    step 19 summary. Under set -euo pipefail, multi-line --version
+    output (e.g. `code --version` emits 3 lines) piped to `head -1`
+    causes SIGPIPE (rc 141) on the left side of the pipe. pipefail
+    propagates this to the subshell, and set -e aborts step 19 before
+    printing the remaining tool/config verification table.
+  - Fix S-1: step 2 help text and banner now include "disk" to match
+    README and actual step 2f (disk resize settings page).
+  - Fix S-2: step 8 help text and banner now include "cursor" to match
+    README and actual step 8h (cursor theme).
+  - Fix S-3: step 9 help text and banner now include "Evince" and
+    "MIME defaults" to match README and actual xdg-mime calls.
+  - Fix S-4: step 15 banner now includes "XDG" to match help text
+    and README (step 15e creates XDG dirs).
+  - All 19 step descriptions now match across help text, banners,
+    and README step table.
+  - shellcheck clean, bash -n clean
+
+2.5.8  2026-03-15
+------------------
+
+  Remove all decorative code:
+
+  - Replace step_banner ══ box-drawing lines with plain bold text
+  - Replace ┌──┐│ │└──┘ completion box with plain bold text
+  - Replace └ tree-drawing char in shared folder listing with indent
+  - Remove # ─── header separator line
+  - Remove unused CYAN color variable (was only used by decorative
+    step_banner lines and completion message; completion message
+    changed to BOLD)
+  - Zero box-drawing characters remain in script (═─┌┐└┘│━╔╗╚╝║)
+  - shellcheck clean, bash -n clean, zero fish-isms
+  - README: update line count 1460→1453
+
+2.5.7  2026-03-15
+------------------
+
+  Comment cleanup + code trim (65 lines removed):
+
+  - Trim all multiline bash comments to single lines:
+    * X11/xwayland warning (2→1), PulseAudio daemon warning (3→1),
+      step 8 HiDPI overview (3→1), rustup TOFU notice (2→1),
+      memory tuning vm.* note (5→1)
+  - Strip all decorative line art from comments:
+    * Remove 38 ═══ box separator lines around step headers
+    * Strip trailing ─── from all 23 sub-section labels
+    * Strip ── prefix from sub-section labels
+  - Remove 6 redundant "write_file handles mkdir" comments
+  - Trim all section header separators to plain "# Section name"
+  - Inline GTK3_DIR and GTK4_DIR variables (each used exactly once)
+  - Collapse excess blank lines
+  - README: update line count 1525→1460
+  - All remaining multiline comments are inside heredoc config files
+    (user-facing documentation); correctly preserved.
+  - shellcheck clean, bash -n clean, zero fish-isms
+
+2.5.6  2026-03-15
+------------------
+
+  Comment audit + bug fix (AUDIT-2.5.6.txt):
+
+  - Fix L-1: step 8 overview comment (line 674) listed rendering layers
+    as "sommelier, GTK3, GTK4, Qt, Xft, and fontconfig" but step 8
+    also configures GTK2 (sub-step 8d) and cursor theme (sub-step 8h).
+    Updated to "sommelier, GTK 2/3/4, Qt, Xft, fontconfig, and cursor
+    theme".
+  - Fix L-2: GPU package comment (line 545) claimed "Crostini has no
+    native X11" — inaccurate since sommelier provides XWayland. Crostini
+    DOES have X11 through the sommelier XWayland bridge; the Wayland
+    glmark2 variants are preferred because the compositor is Wayland-
+    based. Updated comment wording.
+  - Fix L-3: add || true guard to `run xdg-user-dirs-update` (step 15e,
+    line 1215). This is a non-critical convenience operation; failure
+    (e.g., package not installed despite command -v guard passing, or
+    filesystem issue) should not abort the script under set -e.
+  - Full 218-comment audit against code: all other comments verified
+    accurate. No fish shell syntax found. No further bugs found.
+
+2.5.5  2026-03-15
+------------------
+
+  Post-audit fixes (AUDIT-2.5.5.txt):
+
+  - Fix H-1: add || true guard to `rmdir "$LOCK_FILE"` in cleanup()
+    trap handler. The rmdir is a bare command (not in && or || list),
+    so when it fails under set -e the trap aborts early — skipping
+    the remaining cleanup logic and corrupting the exit code.
+    Reproduced: --help, --version, and --reset all exit with code 1
+    instead of 0 because the lock was never acquired (created after
+    argument parsing) so rmdir fails and set -e fires in the EXIT
+    trap before `exit "$rc"` executes.
+  - Fix M-1: add || true guard to VS Code curl download (step 14).
+    Without it, a download failure aborts the script under set -e
+    before reaching the [[ -f ]] && [[ -s ]] check that has the
+    user-friendly "Install manually" fallback message.
+  - Fix M-2: restructure VS Code dpkg/apt-fix chain from bare
+    `run dpkg || run apt -f` + unconditional success log into an
+    if/else block. Previously, if both dpkg and apt -f failed, the
+    second run() (command after final ||) triggered set -e, aborting
+    the script for a non-critical package. Now: success logs on
+    install, warns with manual install URL on failure.
+  - README: update script line count to 1525.
+
+2.5.4  2026-03-15
+------------------
+
+  Post-audit fixes (AUDIT-2.5.4.txt):
+
+  - Fix M-1: add || warn guard to `run git lfs install` (step 13).
+    If git-lfs package failed to install in the preceding apt call
+    (which uses || warn and continues), `git lfs install` would abort
+    the script under set -e with no useful error message.
+  - Fix L-1: add || true guard to `tee -a "$LOG_FILE"` in step 17
+    SSH key display. If LOG_FILE became unwritable, set -e would abort
+    the script during a non-critical display operation.
+
 2.5.3  2026-03-15
 ------------------
 

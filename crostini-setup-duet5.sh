@@ -1,24 +1,18 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 2.5.3
+# Version: 2.5.10
 # Date:    2026-03-15
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--help] [--version]
-#
-# Fully automated — no manual GUI steps required. The script uses
-# garcon-url-handler to auto-open any ChromeOS settings pages that
-# need a toggle, then waits for you to flip them.
-#
+# Fully automated — garcon-url-handler auto-opens ChromeOS settings for toggles.
 # WARNING: Steam (x86-only) CANNOT run on this ARM64 device.
-#          Use cloud gaming: GeForce NOW, Xbox Cloud Gaming (browser).
-# -----------------------------------------------------------------------------
 
 set -euo pipefail
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="2.5.3"
+readonly SCRIPT_VERSION="2.5.10"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)"
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -30,14 +24,14 @@ unset _log_ts _cros_uid
 
 DRY_RUN=false
 
-# ── Cleanup trap ─────────────────────────────────────────────────────────────
-# shellcheck disable=SC2317  # invoked via trap, not direct call
+# Cleanup trap
+# shellcheck disable=SC2317
 cleanup() {
     local rc=$?
     # Remove temp files
     [[ -n "${_VSCODE_DEB:-}" ]] && rm -f "$_VSCODE_DEB" 2>/dev/null
     # Release lock
-    rmdir "$LOCK_FILE" 2>/dev/null
+    rmdir "$LOCK_FILE" 2>/dev/null || true
     if [[ $rc -ne 0 ]]; then
         warn "Script exited with code $rc. Re-run to resume from checkpoint."
     fi
@@ -45,19 +39,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Colors (respects NO_COLOR) ───────────────────────────────────────────────
+# Colors (respects NO_COLOR)
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
     RED='\033[0;31m'
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
-    CYAN='\033[0;36m'
     BOLD='\033[1m'
     RESET='\033[0m'
 else
-    RED='' GREEN='' YELLOW='' CYAN='' BOLD='' RESET=''
+    RED='' GREEN='' YELLOW='' BOLD='' RESET=''
 fi
 
-# ── Logging (pipefail-safe: write to file and stdout separately) ──────────────
+# Logging (pipefail-safe: write to file and stdout separately)
 log() {
     local msg
     msg="$(printf '%s [INFO]  %s' "$(date +%T)" "$*")"
@@ -80,12 +73,10 @@ die()  { err "$*"; exit 1; }
 
 step_banner() {
     local num="$1" title="$2"
-    printf '\n%b══════════════════════════════════════════════════════════════%b\n' "$CYAN" "$RESET"
-    printf '%b  STEP %s: %s%b\n' "$BOLD" "$num" "$title" "$RESET"
-    printf '%b══════════════════════════════════════════════════════════════%b\n\n' "$CYAN" "$RESET"
+    printf '\n%bSTEP %s: %s%b\n\n' "$BOLD" "$num" "$title" "$RESET"
 }
 
-# ── Checkpoint system ────────────────────────────────────────────────────────
+# Checkpoint system
 get_checkpoint() {
     if [[ -f "$STEP_FILE" ]]; then
         local val
@@ -116,8 +107,7 @@ should_run_step() {
     [[ "$step_num" -gt "$checkpoint" ]]
 }
 
-# ── Dry-run wrapper (pipefail-safe: no tee pipes) ────────────────────────────
-# run: execute arguments directly (no eval — safe with user input)
+# run: execute "$@" directly (no eval), respects dry-run
 run() {
     if $DRY_RUN; then
         log "[DRY-RUN] $*"
@@ -130,7 +120,7 @@ run() {
     return $rc
 }
 
-# run_shell: execute a string via bash -c (for pipes/redirects only — never user input)
+# run_shell: execute string via bash -c (pipes/redirects only, never user input)
 run_shell() {
     if $DRY_RUN; then
         log "[DRY-RUN] $1"
@@ -143,8 +133,7 @@ run_shell() {
     return $rc
 }
 
-# write_file: write stdin to a file path, respects dry-run
-# Usage: write_file /path/to/file <<'EOF' ... EOF
+# write_file: write stdin to path, respects dry-run. Usage: write_file /path <<'EOF'
 write_file() {
     local dest="$1"
     if $DRY_RUN; then
@@ -157,7 +146,7 @@ write_file() {
     log "Wrote $dest"
 }
 
-# write_file_sudo: same but via sudo
+# write_file_sudo: same as write_file but via sudo
 write_file_sudo() {
     local dest="$1"
     if $DRY_RUN; then
@@ -170,9 +159,7 @@ write_file_sudo() {
     log "Wrote $dest (sudo)"
 }
 
-# ── ChromeOS URL opener ─────────────────────────────────────────────────────
-# garcon-url-handler opens URLs in the ChromeOS browser from inside Crostini.
-# Falls back to xdg-open, then prints the URL if neither works.
+# Open URL in ChromeOS browser via garcon-url-handler, fallback xdg-open
 open_chromeos_url() {
     local url="$1"
     if command -v garcon-url-handler &>/dev/null; then
@@ -184,7 +171,7 @@ open_chromeos_url() {
     fi
 }
 
-# ── Usage / Help ─────────────────────────────────────────────────────────────
+# Usage / Help
 usage() {
     cat <<EOF
 ${SCRIPT_NAME} v${SCRIPT_VERSION}
@@ -202,14 +189,14 @@ OPTIONS:
 STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
      2  ChromeOS integration (GPU flag, microphone, USB, folder sharing,
-        port forwarding — auto-opens each settings page)
+        port forwarding, disk — auto-opens each settings page)
      3  System update and upgrade
      4  Core CLI utilities
      5  Build essentials and development headers
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
      7  Audio stack (ALSA, PulseAudio, GStreamer codecs)
-     8  Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig)
-     9  GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots)
+     8  Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)
+     9  GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults)
     10  Python ecosystem (python3, pip, venv)
     11  Node.js via NodeSource (LTS, arm64)
     12  Rust via rustup (aarch64)
@@ -232,7 +219,7 @@ EOF
     exit 0
 }
 
-# ── Argument parsing ─────────────────────────────────────────────────────────
+# Argument parsing
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
@@ -243,15 +230,13 @@ for arg in "$@"; do
     esac
 done
 
-# ── Acquire exclusive lock (prevents concurrent runs corrupting checkpoint) ──
+# Acquire exclusive lock (prevents concurrent runs corrupting checkpoint)
 if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     die "Another instance is already running (lock: ${LOCK_FILE}). Remove it manually if stale."
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 1: Preflight checks
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 1: Preflight checks
 if should_run_step 1; then
     step_banner 1 "Preflight checks"
 
@@ -314,13 +299,11 @@ if should_run_step 1; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 2: ChromeOS integration — auto-open settings for required toggles
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 2: ChromeOS integration — auto-open settings for required toggles
 if should_run_step 2; then
-    step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports)"
+    step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports, disk)"
 
-    # ── 2a. GPU acceleration ─────────────────────────────────────────────────
+    # 2a. GPU acceleration
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU acceleration: ALREADY ACTIVE ✓"
     else
@@ -344,7 +327,7 @@ if should_run_step 2; then
         fi
     fi
 
-    # ── 2b. Microphone access ────────────────────────────────────────────────
+    # 2b. Microphone access
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         log "Microphone capture device: detected ✓"
     else
@@ -365,7 +348,7 @@ if should_run_step 2; then
         fi
     fi
 
-    # ── 2c. USB device passthrough ───────────────────────────────────────────
+    # 2c. USB device passthrough
     if ! $DRY_RUN; then
         log "Opening USB device management..."
         printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
@@ -377,7 +360,7 @@ if should_run_step 2; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
-    # ── 2d. Shared folders ───────────────────────────────────────────────────
+    # 2d. Shared folders
     if [[ -d /mnt/chromeos ]]; then
         SHARED_COUNT=$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
@@ -396,7 +379,7 @@ if should_run_step 2; then
         fi
     fi
 
-    # ── 2e. Port forwarding ──────────────────────────────────────────────────
+    # 2e. Port forwarding
     if ! $DRY_RUN; then
         log "Opening port forwarding settings..."
         printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
@@ -409,7 +392,7 @@ if should_run_step 2; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
-    # ── 2f. Disk size check ──────────────────────────────────────────────────
+    # 2f. Disk size check
     AVAIL_MB_NOW=$(($(df --output=avail / | tail -1 | tr -d ' ') / 1024))
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
@@ -431,9 +414,7 @@ if should_run_step 2; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 3: System update and upgrade
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 3: System update and upgrade
 if should_run_step 3; then
     step_banner 3 "System update and upgrade"
 
@@ -446,9 +427,7 @@ if should_run_step 3; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 4: Core CLI utilities
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 4: Core CLI utilities
 if should_run_step 4; then
     step_banner 4 "Core CLI utilities"
 
@@ -491,9 +470,7 @@ if should_run_step 4; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 5: Build essentials and development headers
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 5: Build essentials and development headers
 if should_run_step 5; then
     step_banner 5 "Build essentials and development headers"
 
@@ -512,9 +489,7 @@ if should_run_step 5; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 6: GPU + graphics stack
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 6: GPU + graphics stack
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
@@ -535,14 +510,13 @@ if should_run_step 6; then
         libwayland-client0
         libwayland-egl1
 
-        # X11 compatibility — sommelier provides XWayland, so do NOT install
-        # the standalone xwayland package (it conflicts with sommelier's bridge).
+        # X11 compat — do NOT install standalone xwayland (conflicts with sommelier)
         x11-utils
         x11-xserver-utils
         xdg-desktop-portal
         xdg-desktop-portal-gtk
 
-        # GL benchmark/test tools (Wayland only — Crostini has no native X11)
+        # GL benchmark/test tools (Wayland variants — sommelier's compositor is Wayland)
         glmark2-wayland
         glmark2-es2-wayland
     )
@@ -592,9 +566,7 @@ EOF
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 7: Audio stack
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 7: Audio stack
 if should_run_step 7; then
     step_banner 7 "Audio stack (ALSA, PulseAudio, GStreamer codecs)"
 
@@ -604,9 +576,7 @@ if should_run_step 7; then
         libasound2
         libasound2-plugins
 
-        # PulseAudio CLIENT only — Crostini bridges audio from the ChromeOS
-        # host via a PulseAudio socket. Do NOT install the pulseaudio daemon
-        # package; it would start a conflicting server inside the container.
+        # PulseAudio client only — do NOT install the daemon (conflicts with host)
         pulseaudio-utils
         pavucontrol             # GUI volume mixer
 
@@ -663,19 +633,14 @@ EOF
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 8: Display scaling and HiDPI configuration
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 8: Display scaling and HiDPI configuration
 if should_run_step 8; then
-    step_banner 8 "Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig)"
+    step_banner 8 "Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)"
 
-    # The Duet 5 has a 13.3" 1920x1080 OLED. At that size, the default
-    # Linux DPI (96) makes everything tiny. We configure every rendering
-    # layer: sommelier, GTK3, GTK4, Qt, Xft, and fontconfig.
+    # 13.3" FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
-    # ── 8a. Sommelier environment (controls Linux app scaling) ───────────────
+    # 8a. Sommelier environment (controls Linux app scaling)
     SOMMELIER_ENV="${HOME}/.config/environment.d/sommelier.conf"
-    # write_file handles mkdir
     if [[ ! -f "$SOMMELIER_ENV" ]]; then
         write_file "$SOMMELIER_ENV" <<'EOF'
 # Sommelier display scaling for Crostini
@@ -692,10 +657,8 @@ EOF
         log "Sommelier env already exists — skipping"
     fi
 
-    # ── 8b. GTK 3 settings ──────────────────────────────────────────────────
-    GTK3_DIR="${HOME}/.config/gtk-3.0"
-    GTK3_SETTINGS="${GTK3_DIR}/settings.ini"
-    # write_file handles mkdir
+    # 8b. GTK 3 settings
+    GTK3_SETTINGS="${HOME}/.config/gtk-3.0/settings.ini"
     if [[ ! -f "$GTK3_SETTINGS" ]]; then
         write_file "$GTK3_SETTINGS" <<'EOF'
 [Settings]
@@ -715,10 +678,8 @@ EOF
         log "GTK 3 settings.ini already exists — skipping"
     fi
 
-    # ── 8c. GTK 4 settings ──────────────────────────────────────────────────
-    GTK4_DIR="${HOME}/.config/gtk-4.0"
-    GTK4_SETTINGS="${GTK4_DIR}/settings.ini"
-    # write_file handles mkdir
+    # 8c. GTK 4 settings
+    GTK4_SETTINGS="${HOME}/.config/gtk-4.0/settings.ini"
     if [[ ! -f "$GTK4_SETTINGS" ]]; then
         write_file "$GTK4_SETTINGS" <<'EOF'
 [Settings]
@@ -737,7 +698,7 @@ EOF
         log "GTK 4 settings.ini already exists — skipping"
     fi
 
-    # ── 8d. GTK 2 settings (legacy apps) ─────────────────────────────────────
+    # 8d. GTK 2 settings (legacy apps)
     GTK2_RC="${HOME}/.gtkrc-2.0"
     if [[ ! -f "$GTK2_RC" ]]; then
         write_file "$GTK2_RC" <<'EOF'
@@ -756,9 +717,8 @@ EOF
         log ".gtkrc-2.0 already exists — skipping"
     fi
 
-    # ── 8e. Qt scaling and theming ───────────────────────────────────────────
+    # 8e. Qt scaling and theming
     QT_ENV="${HOME}/.config/environment.d/qt.conf"
-    # write_file handles mkdir
     if [[ ! -f "$QT_ENV" ]]; then
         write_file "$QT_ENV" <<'EOF'
 # Qt HiDPI and theming
@@ -777,7 +737,7 @@ EOF
         run sudo apt install -y qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
 
-    # ── 8f. Xft / Xresources (for pure X11 apps) ────────────────────────────
+    # 8f. Xft / Xresources (for pure X11 apps)
     XRESOURCES="${HOME}/.Xresources"
     if [[ ! -f "$XRESOURCES" ]]; then
         write_file "$XRESOURCES" <<'EOF'
@@ -801,9 +761,8 @@ EOF
         log "Xresources merged"
     fi
 
-    # ── 8g. Fontconfig (grayscale AA for OLED, Noto defaults) ────────────────
+    # 8g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
-    # write_file handles mkdir
     if [[ ! -f "$FC_LOCAL" ]]; then
         write_file "$FC_LOCAL" <<'FCEOF'
 <?xml version="1.0"?>
@@ -841,9 +800,8 @@ FCEOF
         log "Font cache rebuilt"
     fi
 
-    # ── 8h. Cursor theme (ensure consistency across toolkits) ────────────────
+    # 8h. Cursor theme (ensure consistency across toolkits)
     CURSOR_DIR="${HOME}/.icons/default"
-    # write_file handles mkdir
     if [[ ! -f "${CURSOR_DIR}/index.theme" ]]; then
         write_file "${CURSOR_DIR}/index.theme" <<'EOF'
 [Icon Theme]
@@ -858,11 +816,9 @@ EOF
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 9: GUI application essentials
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 9: GUI application essentials
 if should_run_step 9; then
-    step_banner 9 "GUI applications (Firefox, Thunar, fonts, screenshots)"
+    step_banner 9 "GUI applications (Firefox, Thunar, Evince, fonts, screenshots, MIME defaults)"
 
     GUI_PKGS=(
         firefox-esr
@@ -932,9 +888,7 @@ if should_run_step 9; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 10: Python ecosystem
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 10: Python ecosystem
 if should_run_step 10; then
     step_banner 10 "Python ecosystem"
 
@@ -951,9 +905,7 @@ if should_run_step 10; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 11: Node.js via NodeSource (LTS, arm64)
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 11: Node.js via NodeSource (LTS, arm64)
 if should_run_step 11; then
     step_banner 11 "Node.js LTS (arm64)"
 
@@ -991,9 +943,7 @@ if should_run_step 11; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 12: Rust via rustup (aarch64)
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 12: Rust via rustup (aarch64)
 if should_run_step 12; then
     step_banner 12 "Rust toolchain (aarch64)"
 
@@ -1001,8 +951,7 @@ if should_run_step 12; then
         log "Rust already installed: $(rustc --version)"
     else
         log "Installing Rust via rustup (non-interactive)..."
-        # TOFU pattern: rustup's installer has no detached signature to verify.
-        # TLS 1.2+ and HTTPS-only mitigate transport-level risks.
+        # TOFU: no detached sig for rustup; HTTPS-only mitigates transport risk
         run_shell "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable"
 
         if [[ -f "${HOME}/.cargo/env" ]]; then
@@ -1019,9 +968,7 @@ if should_run_step 12; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 13: Git configuration
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 13: Git configuration
 if should_run_step 13; then
     step_banner 13 "Git configuration"
 
@@ -1064,7 +1011,7 @@ if should_run_step 13; then
     run git config --global core.editor vim
     run git config --global color.ui auto
     run git config --global push.autoSetupRemote true
-    run git lfs install
+    run git lfs install || warn "git-lfs init failed — install git-lfs manually"
 
     log "Git version: $(git --version 2>&1 || echo 'not installed')"
 
@@ -1073,14 +1020,12 @@ if should_run_step 13; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 14: VS Code (arm64 .deb)
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 14: VS Code (arm64 .deb)
 if should_run_step 14; then
     step_banner 14 "Visual Studio Code (arm64)"
 
     if command -v code &>/dev/null; then
-        log "VS Code already installed: $(code --version 2>&1 | head -1)"
+        log "VS Code already installed: $(code --version 2>&1 | head -1 || true)"
     else
         if $DRY_RUN; then
             log "[DRY-RUN] curl -fSL https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
@@ -1088,11 +1033,15 @@ if should_run_step 14; then
         else
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)"
-            run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}"
+            run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || true
 
             if [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
-                run sudo dpkg -i "$_VSCODE_DEB" || run sudo apt install -f -y
-                log "VS Code installed ✓"
+                if run sudo dpkg -i "$_VSCODE_DEB" || run sudo apt install -f -y; then
+                    log "VS Code installed ✓"
+                else
+                    warn "VS Code install failed. Install manually:"
+                    warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
+                fi
             else
                 warn "VS Code download failed. Install manually:"
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
@@ -1116,11 +1065,9 @@ EOF
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 15: Container resource tuning
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 15: Container resource tuning
 if should_run_step 15; then
-    step_banner 15 "Container resource tuning (sysctl, locale, env, paths)"
+    step_banner 15 "Container resource tuning (sysctl, locale, env, XDG, paths)"
 
     # 15a. Increase inotify watchers (VS Code and file-heavy tools need this)
     readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
@@ -1177,11 +1124,7 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 15d. Memory tuning for 4 GB device
-    # NOTE: vm.swappiness, vm.vfs_cache_pressure, vm.dirty_ratio, and
-    # vm.dirty_background_ratio are NOT namespace-aware. In Crostini's
-    # unprivileged LXC container they are read-only — only the termina
-    # VM kernel can change them. We test writability before applying.
+    # 15d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if [[ -w /proc/sys/vm/swappiness ]]; then
@@ -1208,7 +1151,7 @@ MEMEOF
     # 15e. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache"
     if command -v xdg-user-dirs-update &>/dev/null; then
-        run xdg-user-dirs-update
+        run xdg-user-dirs-update || true
         log "XDG user directories updated"
     fi
 
@@ -1217,9 +1160,7 @@ MEMEOF
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 16: Flatpak + Flathub
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 16: Flatpak + Flathub
 if should_run_step 16; then
     step_banner 16 "Flatpak + Flathub (ARM64 app source)"
 
@@ -1234,9 +1175,7 @@ if should_run_step 16; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 17: SSH key generation
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 17: SSH key generation
 if should_run_step 17; then
     step_banner 17 "SSH key generation"
 
@@ -1266,7 +1205,7 @@ if should_run_step 17; then
                     run chmod 644 "${SSH_KEY}.pub"
 
                     log "SSH public key:"
-                    tee -a "$LOG_FILE" < "${SSH_KEY}.pub"
+                    tee -a "$LOG_FILE" < "${SSH_KEY}.pub" || true
                     printf '\n'
                     log "Add to GitHub/GitLab/servers as needed."
                 fi
@@ -1283,9 +1222,7 @@ if should_run_step 17; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 18: Container backup — auto-opens ChromeOS backup page
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 18: Container backup — auto-opens ChromeOS backup page
 if should_run_step 18; then
     step_banner 18 "Container backup"
 
@@ -1306,18 +1243,13 @@ if should_run_step 18; then
 fi
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  STEP 19: Summary and verification
-# ═════════════════════════════════════════════════════════════════════════════
+# Step 19: Summary and verification
 if should_run_step 19; then
     step_banner 19 "Summary and verification"
 
-    printf '%b┌──────────────────────────────────────────────────────────┐%b\n' "$GREEN" "$RESET"
-    printf '%b│              CROSTINI SETUP COMPLETE                     │%b\n' "$GREEN" "$RESET"
-    printf '%b└──────────────────────────────────────────────────────────┘%b\n' "$GREEN" "$RESET"
-    printf '\n'
+    printf '\n%bCROSTINI SETUP COMPLETE%b\n\n' "$GREEN" "$RESET"
     
-    # ── System ───────────────────────────────────────────────────────────────────
+    # System
     printf '%bSystem:%b\n' "$BOLD" "$RESET"
     printf '  Architecture:  %s\n' "$(uname -m)"
     printf '  Kernel:        %s\n' "$(uname -r)"
@@ -1325,7 +1257,7 @@ if should_run_step 19; then
     printf '  Disk free:     %s MB\n' "$(($(df --output=avail / | tail -1 | tr -d ' ') / 1024))"
     printf '\n'
     
-    # ── GPU ──────────────────────────────────────────────────────────────────────
+    # GPU
     printf '%bGPU / Graphics:%b\n' "$BOLD" "$RESET"
     if [[ -e /dev/dri/renderD128 ]]; then
         printf '  Render node:   %b✓%b /dev/dri/renderD128\n' "$GREEN" "$RESET"
@@ -1355,7 +1287,7 @@ if should_run_step 19; then
     fi
     printf '\n'
     
-    # ── Display ──────────────────────────────────────────────────────────────────
+    # Display
     printf '%bDisplay / Wayland:%b\n' "$BOLD" "$RESET"
     if pgrep -x sommelier &>/dev/null; then
         printf '  Sommelier:     %b✓%b running\n' "$GREEN" "$RESET"
@@ -1369,7 +1301,7 @@ if should_run_step 19; then
     printf '  Font:          %s\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | cut -d= -f2 || echo 'default')"
     printf '\n'
     
-    # ── Audio ────────────────────────────────────────────────────────────────────
+    # Audio
     printf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
         SND_DEV_COUNT=$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
@@ -1392,7 +1324,7 @@ if should_run_step 19; then
     fi
     printf '\n'
     
-    # ── ChromeOS integration ────────────────────────────────────────────────────
+    # ChromeOS integration
     printf '%bChromeOS integration:%b\n' "$BOLD" "$RESET"
     if [[ -d /mnt/chromeos ]]; then
         mapfile -t _shared_arr < <(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null)
@@ -1400,7 +1332,7 @@ if should_run_step 19; then
         if [[ "$SHARED_N" -gt 0 ]]; then
             printf '  Shared dirs:   %b✓%b %s folder(s)\n' "$GREEN" "$RESET" "$SHARED_N"
             for d in "${_shared_arr[@]}"; do
-                [[ -n "$d" ]] && printf '                 └ %s\n' "$d"
+                [[ -n "$d" ]] && printf '    %s\n' "$d"
             done
         else
             printf '  Shared dirs:   none — share via Files app → right-click → Share with Linux\n'
@@ -1409,14 +1341,14 @@ if should_run_step 19; then
     fi
     printf '\n'
     
-    # ── Installed tools ──────────────────────────────────────────────────────────
+    # Installed tools
     printf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
     
     check_tool() {
         local name="$1" cmd="$2"
         if command -v "$cmd" &>/dev/null; then
             local ver
-            ver=$("$cmd" --version 2>&1 | head -1)
+            ver=$("$cmd" --version 2>&1 | head -1) || true
             printf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
         else
             printf '  %-14s %b✗%b  not found\n' "$name" "$RED" "$RESET"
@@ -1453,7 +1385,7 @@ if should_run_step 19; then
     check_tool "gnome-screenshot" gnome-screenshot
     printf '\n'
     
-    # ── Config files ─────────────────────────────────────────────────────────────
+    # Config files
     printf '%bConfig files written:%b\n' "$BOLD" "$RESET"
     
     check_config() {
@@ -1488,7 +1420,7 @@ if should_run_step 19; then
     fi
     printf '\n'
     
-    # ── Quick-test commands ──────────────────────────────────────────────────────
+    # Quick-test commands
     printf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     printf '  GPU:     glxgears / glmark2-es2-wayland / vulkaninfo --summary\n'
     printf '  Audio:   pactl info / speaker-test -t wav -c 2 / pavucontrol\n'
@@ -1496,7 +1428,7 @@ if should_run_step 19; then
     printf '  Fonts:   fc-match sans-serif / fc-match monospace\n'
     printf '\n'
     
-    # ── Reminders ────────────────────────────────────────────────────────────────
+    # Reminders
     printf '%bReminders:%b\n' "$YELLOW" "$RESET"
     printf '  • Steam is x86-only — will NOT work on this ARM64 device\n'
     printf '  • Cloud gaming: GeForce NOW / Xbox Cloud Gaming in ChromeOS browser\n'
@@ -1515,7 +1447,7 @@ if should_run_step 19; then
         log "Checkpoint file removed. Setup fully complete."
     fi
     
-    printf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$CYAN" "$RESET"
+    printf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
 fi
 
 exit 0

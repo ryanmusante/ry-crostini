@@ -137,10 +137,10 @@ fc-match monospace
 ## Files
 
 ```
-crostini-setup-duet5.sh    Main script (1521 lines, bash)
+crostini-setup-duet5.sh    Main script (1453 lines, bash)
 README.md                  This file
 LICENSE                    MIT
-[CHANGELOG.txt](CHANGELOG.txt)  Version history (kernel.org style)
+CHANGELOG.txt              Version history (kernel.org style)
 ```
 
 ## License
