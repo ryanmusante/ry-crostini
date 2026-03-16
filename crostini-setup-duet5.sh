@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 2.8.0
+# Version: 3.0.1
 # Date:    2026-03-15
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--interactive] [--dry-run] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# WARNING: Steam (x86-only) CANNOT run on this ARM64 device.
+# WARNING: Steam is x86-only. Native execution is impossible on ARM64.
+#          Community x86 translation (box64/box86) exists but is unsupported
+#          and unusable for gaming on this device's 4 GB RAM / virgl GPU.
 
 set -euo pipefail
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="2.8.0"
+readonly SCRIPT_VERSION="3.0.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)"
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -39,6 +41,8 @@ cleanup() {
     local rc=$?
     # Remove temp files
     [[ -n "${_VSCODE_DEB:-}" ]] && rm -f "$_VSCODE_DEB" 2>/dev/null
+    [[ -n "${_ns_key:-}" ]] && rm -f "$_ns_key" 2>/dev/null
+    [[ -n "${_ns_gpg:-}" ]] && sudo rm -f "$_ns_gpg" 2>/dev/null
     # Release lock
     rm -rf "$LOCK_FILE" 2>/dev/null || true
     if [[ $rc -ne 0 ]]; then
@@ -118,19 +122,22 @@ should_run_step() {
 }
 
 # run: execute "$@" directly, respects dry-run
+# Process substitution tee is async — log lines may interleave slightly
+# but terminal output and exit codes are correct.
 run() {
     if $DRY_RUN; then
         log "[DRY-RUN] $*"
         return 0
     fi
     log "[EXEC] $*"
-    "$@" 2>&1 | tee -a "$LOG_FILE" || true
-    local rc=${PIPESTATUS[0]}
+    local rc=0
+    "$@" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
     [[ $rc -ne 0 ]] && warn "Command exited $rc: $*"
     return $rc
 }
 
 # run_shell: execute string via bash -c, respects dry-run
+# Only called with hardcoded strings — never with user input.
 # tee output to both terminal and log
 run_shell() {
     if $DRY_RUN; then
@@ -138,8 +145,8 @@ run_shell() {
         return 0
     fi
     log "[EXEC] $1"
-    bash -c "set -euo pipefail; $1" 2>&1 | tee -a "$LOG_FILE" || true
-    local rc=${PIPESTATUS[0]}
+    local rc=0
+    bash -c "set -euo pipefail; $1" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
     [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1"
     return $rc
 }
@@ -245,9 +252,10 @@ STEPS PERFORMED:
     14  VS Code (arm64 .deb + Wayland flags)
     15  Container resource tuning (sysctl, locale, env, XDG, paths)
     16  Flatpak + Flathub (ARM64 app source)
-    17  SSH key generation
-    18  Container backup (opens ChromeOS backup page with --interactive)
-    19  Summary and verification
+    17  Gaming packages (DOSBox, ScummVM, RetroArch)
+    18  SSH key generation
+    19  Container backup (opens ChromeOS backup page with --interactive)
+    20  Summary and verification
 
 CHECKPOINT:
     Progress is saved after each step to ${STEP_FILE}.
@@ -494,7 +502,7 @@ if should_run_step 4; then
         nano vim less jq
 
         # Network utilities
-        curl wget dnsutils netcat-openbsd openssh-client
+        curl wget dnsutils openssh-client
         ca-certificates gnupg
 
         # System monitoring
@@ -544,37 +552,34 @@ fi
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
-    GPU_PKGS=(
-        # Mesa drivers — virgl is the paravirtualized GPU Crostini uses
+    # Stable packages — names consistent across Debian Bookworm
+    GPU_STABLE_PKGS=(
         mesa-utils
-        mesa-vulkan-drivers
         libgl1-mesa-dri
-        libgl1                  # replaces transitional libgl1-mesa-glx
         libegl1-mesa
         libgles2-mesa
-
-        # Vulkan loader + tools
         libvulkan1
-        vulkan-tools
-
-        # Wayland client libs (Crostini uses Wayland via sommelier)
         libwayland-client0
         libwayland-egl1
-
-        # X11 compat — do NOT install standalone xwayland (conflicts with sommelier)
         x11-utils
         x11-xserver-utils
         xdg-desktop-portal
         xdg-desktop-portal-gtk
+    )
 
-        # GL benchmark/test tools (Wayland variants — sommelier's compositor is Wayland)
+    run sudo apt-get install -y "${GPU_STABLE_PKGS[@]}" || warn "Some stable GPU packages failed — continuing"
+
+    # Volatile packages — names may differ across Debian versions
+    GPU_VOLATILE_PKGS=(
+        mesa-vulkan-drivers
+        libgl1                  # replaces transitional libgl1-mesa-glx
+        vulkan-tools
         glmark2-wayland
         glmark2-es2-wayland
     )
 
-    # Install what's available — some packages differ across Debian versions
-    # Per-package loop is intentional — GPU package names change between
-    for pkg in "${GPU_PKGS[@]}"; do
+    # Per-package loop for volatile names — GPU package names change between
+    for pkg in "${GPU_VOLATILE_PKGS[@]}"; do
         run sudo apt-get install -y "$pkg" || warn "Skipped unavailable: $pkg"
     done
 
@@ -599,7 +604,9 @@ if should_run_step 6; then
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
-# Prefer Wayland for GTK apps (sommelier handles the bridge)
+# Prefer Wayland for GTK apps (sommelier handles the bridge).
+# NOTE: Some Electron apps (Slack, Discord) may ignore this or need
+# GDK_BACKEND unset.  VS Code uses --ozone-platform-hint=auto instead.
 GDK_BACKEND=wayland,x11
 # Do NOT set MESA_LOADER_DRIVER_OVERRIDE — the driver name varies
 # across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
@@ -875,7 +882,7 @@ if should_run_step 9; then
         eog                     # Image viewer (Eye of GNOME)
         gnome-calculator
         gnome-screenshot        # Screenshot tool
-        gnome-disk-utility      # Disk management
+        gnome-disk-utility      # Disk management (heavy GNOME deps — remove if RAM-constrained)
         file-roller             # Archive manager
         xdg-utils
         dbus-x11                # D-Bus for X11 session
@@ -957,11 +964,20 @@ if should_run_step 11; then
         log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
 
         run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
-        run_shell "curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg"
-        # Verify keyring is non-empty (curl failure in pipe can leave 0-byte file)
-        if [[ ! -s /etc/apt/keyrings/nodesource.gpg ]]; then
-            die "NodeSource GPG keyring is empty — curl download likely failed"
+        _ns_key="$(mktemp)"
+        run curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
+            || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
+        if [[ ! -s "$_ns_key" ]]; then
+            rm -f "$_ns_key"; die "NodeSource GPG key is empty"
         fi
+        _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
+            || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
+        sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
+            || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "NodeSource GPG dearmor failed"; }
+        sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
+            || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "Cannot move GPG keyring into place"; }
+        rm -f "$_ns_key"
+        unset _ns_key _ns_gpg
         run_shell "echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main' | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null"
         run sudo apt-get update  || warn "apt update failed"
         run sudo apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
@@ -1119,10 +1135,12 @@ if should_run_step 14; then
             run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || true
 
             if [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
-                if run sudo dpkg -i "$_VSCODE_DEB" || run sudo apt-get install -f -y; then
+                if run sudo dpkg -i "$_VSCODE_DEB"; then
                     log "VS Code installed ✓"
+                elif run sudo apt-get install -f -y; then
+                    log "VS Code installed (dpkg deps resolved by apt-get -f) ✓"
                 else
-                    warn "VS Code install failed. Install manually:"
+                    warn "VS Code install failed (dpkg and apt-get -f both failed). Install manually:"
                     warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
                 fi
             else
@@ -1165,6 +1183,8 @@ EOF
 
     # 15b. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
+        # sed -i is not atomic; backup first in case of partial write or interruption
+        run sudo cp /etc/locale.gen /etc/locale.gen.bak || warn "locale.gen backup failed"
         run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen || warn "locale.gen edit failed"
         run sudo locale-gen || warn "locale-gen failed"
         log "en_US.UTF-8 locale generated"
@@ -1245,7 +1265,6 @@ if should_run_step 16; then
 
     run sudo apt-get install -y flatpak || warn "flatpak install failed"
     run sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
-    unset DEBIAN_FRONTEND
 
     log "Flatpak installed with Flathub remote."
     log "Install apps: flatpak install flathub <app-id>"
@@ -1253,9 +1272,37 @@ if should_run_step 16; then
     set_checkpoint 16
     log "Step 16 complete."
 fi
-# Step 17: SSH key generation
+# Step 17: Gaming packages
 if should_run_step 17; then
-    step_banner 17 "SSH key generation"
+    step_banner 17 "Gaming packages (DOSBox, ScummVM, RetroArch)"
+
+    # Phase 2: native ARM packages (no translation layer needed)
+    run sudo apt-get install -y dosbox scummvm || warn "Some gaming packages failed"
+
+    # RetroArch via Flatpak (aarch64 confirmed on Flathub)
+    if command -v flatpak &>/dev/null; then
+        run flatpak install -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
+    else
+        warn "flatpak not available — skip RetroArch (install flatpak first)"
+    fi
+
+    # Verify
+    command -v dosbox  &>/dev/null && log "dosbox: $(dosbox --version 2>&1 | head -1 || true) ✓" || warn "dosbox not found"
+    command -v scummvm &>/dev/null && log "scummvm: $(scummvm --version 2>&1 | head -1 || true) ✓" || warn "scummvm not found"
+    if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+        log "RetroArch Flatpak: installed ✓"
+    else
+        warn "RetroArch Flatpak not detected"
+    fi
+
+    log "For advanced gaming (box86/Wine/GOG): see crostini-gaming-packages.txt"
+
+    set_checkpoint 17
+    log "Step 17 complete."
+fi
+# Step 18: SSH key generation
+if should_run_step 18; then
+    step_banner 18 "SSH key generation"
 
     SSH_KEY="${HOME}/.ssh/id_ed25519"
     if [[ -f "$SSH_KEY" ]]; then
@@ -1314,12 +1361,12 @@ if should_run_step 17; then
         fi
     fi
 
-    set_checkpoint 17
-    log "Step 17 complete."
+    set_checkpoint 18
+    log "Step 18 complete."
 fi
-# Step 18: Container backup — opens ChromeOS backup page (--interactive)
-if should_run_step 18; then
-    step_banner 18 "Container backup"
+# Step 19: Container backup — opens ChromeOS backup page (--interactive)
+if should_run_step 19; then
+    step_banner 19 "Container backup"
 
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening ChromeOS backup page to snapshot this fresh setup..."
@@ -1335,12 +1382,12 @@ if should_run_step 18; then
         log "Skipping interactive backup prompt (unattended mode)"
     fi
 
-    set_checkpoint 18
-    log "Step 18 complete."
+    set_checkpoint 19
+    log "Step 19 complete."
 fi
-# Step 19: Summary and verification
-if should_run_step 19; then
-    step_banner 19 "Summary and verification"
+# Step 20: Summary and verification
+if should_run_step 20; then
+    step_banner 20 "Summary and verification"
 
     printf '\n%bCROSTINI SETUP COMPLETE%b\n\n' "$GREEN" "$RESET"
 
@@ -1464,6 +1511,8 @@ if should_run_step 19; then
     check_tool "pactl"       pactl
     check_tool "pavucontrol" pavucontrol
     check_tool "flatpak"     flatpak
+    check_tool "dosbox"      dosbox
+    check_tool "scummvm"     scummvm
     check_tool "code"        code
     check_tool "firefox-esr" firefox-esr
     check_tool "thunar"      thunar
@@ -1471,6 +1520,9 @@ if should_run_step 19; then
     check_tool "eog"         eog
     check_tool "file-roller" file-roller
     check_tool "gnome-screenshot" gnome-screenshot
+    if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+        printf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
+    fi
     printf '\n'
 
     # Config files
@@ -1509,10 +1561,13 @@ if should_run_step 19; then
 
     # Reminders
     printf '%bReminders:%b\n' "$YELLOW" "$RESET"
-    printf '  • Steam is x86-only — will NOT work on this ARM64 device\n'
+    printf '  • Steam is x86-only — no native ARM64 build exists\n'
+    printf '  • box64/box86 (community x86 translation) exists but is\n'
+    printf '    unsupported and unusable for gaming on 4 GB RAM / virgl GPU\n'
     printf '  • Cloud gaming: GeForce NOW / Xbox Cloud Gaming in ChromeOS browser\n'
     printf '  • Manual .deb downloads: always get the arm64 variant\n'
     printf '  • Flatpak apps: flatpak install flathub <app-id>\n'
+    printf '  • Gaming (box86/Wine/GOG): see crostini-gaming-packages.txt\n'
     printf '  • If GPU not active: reboot entire Chromebook (not just container)\n'
     printf '\n'
 
@@ -1526,7 +1581,7 @@ if should_run_step 19; then
         log "Checkpoint file removed. Setup fully complete."
     fi
 
-    # Clean up step 19 variables
+    # Clean up step 20 variables
     unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
 
     printf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"

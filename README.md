@@ -50,9 +50,10 @@ bash crostini-setup-duet5.sh --reset                      # clear checkpoint, st
 | 14 | VS Code arm64 + Wayland flags |
 | 15 | Tuning (inotify 524288, locale, env, XDG, memory if writable) |
 | 16 | Flatpak + Flathub |
-| 17 | SSH Ed25519 key |
-| 18 | Container backup (--interactive) |
-| 19 | Summary + verification |
+| 17 | Gaming packages (DOSBox, ScummVM, RetroArch) |
+| 18 | SSH Ed25519 key |
+| 19 | Container backup (--interactive) |
+| 20 | Summary + verification |
 
 ## Config files written
 
@@ -69,13 +70,17 @@ shell env + PATH. Memory tuning attempted if /proc/sys/vm/ is writable.
   * **Idempotent** — config files skip if already present
   * **Concurrent-safe** — PID-based mkdir lock
   * **Atomic writes** — tmpfile + mv for all config files
-  * **No eval** — `run()` passes `"$@"` directly
+  * **No eval** — `run()` passes `"$@"` directly; `run_shell()` uses `bash -c` with hardcoded strings only (never user input)
   * **Colored output** — respects `NO_COLOR`
   * **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600)
 
 ## Limitations
 
-**Steam is x86-only and will not run on this ARM64 device.** Use
+**Steam is x86-only and will not run natively on this ARM64 device.**
+Community x86 translation layers ([box64](https://github.com/ptitSeb/box64) /
+[box86](https://github.com/ptitSeb/box86)) exist but are unsupported in
+Crostini and unusable for gaming on this device's 4 GB RAM and virgl
+paravirtualized GPU. Use
 [GeForce NOW](https://play.geforcenow.com) or
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
 Always download the **arm64** `.deb` variant.
@@ -96,6 +101,8 @@ crostini-setup-duet5.sh    main script (bash)
 README.md                  this file
 CHANGELOG.txt              version history
 ```
+
+See [CHANGELOG.txt](CHANGELOG.txt) for the full version history.
 
 ## License
 

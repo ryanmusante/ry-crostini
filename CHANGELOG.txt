@@ -5,6 +5,64 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+3.0.1  2026-03-15
+
+  * fix run()/run_shell() stderr merge: use separate process substitution
+    per fd so stderr remains on fd 2 (was: 2>&1 before tee merged both
+    onto stdout); document async flush as known limitation
+  * fix step 14 VS Code dpkg/apt-get chain: restructure as if/elif/else
+    so both dpkg and apt-get failures are reported (was: || chain only
+    surfaced the apt-get failure)
+  * fix step 11 NodeSource GPG dearmor: atomic tmpfile+mv for keyring
+    (was: direct write to final path)
+  * fix step 15 locale.gen: backup before sed -i
+  * fix cleanup trap: add _ns_key and _ns_gpg tmpfile removal (step 11
+    leak on mid-step failure)
+  * remove stale unset DEBIAN_FRONTEND from step 17 (contradicts the
+    global export at script top added in 2.7.1 to persist across
+    checkpoint resume; var dies with process at exit 0)
+  * fix step 20 cleanup comment: "step 19" → "step 20" (stale from
+    3.0.0 renumbering)
+  * split step 6 GPU packages into stable batch + volatile per-package
+    loop (reduces apt-get calls from 20 to 6 for known-stable names)
+  * add run_shell() comment: only called with hardcoded strings, never
+    user input (clarifies "No eval" claim)
+  * README: clarify "No eval" bullet re: run_shell() bash -c usage
+  * crostini-gaming-packages.txt: add TOFU warning for box86/box64
+    third-party repos (ryanfortner.github.io)
+
+3.0.0  2026-03-15
+
+  * add step 17: gaming packages (DOSBox, ScummVM, RetroArch)
+    - dosbox and scummvm via apt-get (Debian Bookworm arm64 repos)
+    - RetroArch via Flatpak (aarch64 confirmed on Flathub)
+  * renumber subsequent steps (SSH → 18, backup → 19, summary → 20)
+  * move unset DEBIAN_FRONTEND from Flatpak step to gaming step
+  * add dosbox, scummvm, RetroArch to summary verification
+  * add gaming reference pointer to summary reminders
+  * Phase 3 (box86/box64/Wine) and Phase 4 (Heroic) remain manual;
+    documented in crostini-gaming-packages.txt
+  * README: update step table (20 steps)
+
+2.9.0  2026-03-15
+
+  * fix run()/run_shell() exit code propagation: replace pipe + || true
+    with process substitution (> >(tee ...)) so callers receive the real
+    exit code; previous pattern reset PIPESTATUS via || true, silently
+    masking all command failures and suppressing warnings
+  * fix dpkg/apt-fix chain in step 14 (now works correctly with real
+    exit codes from run())
+  * remove DEBIAN_FRONTEND unset from step 16 (prevents resume fragility
+    when checkpoint lands after the unset but before a later apt call)
+  * fix NodeSource GPG key: download to tmpfile before dearmor to prevent
+    truncated keyring from partial curl pipe failure
+  * add GDK_BACKEND comment noting Electron app caveats (Slack, Discord)
+  * add box64/box86 community x86 translation mention to header, step 19
+    reminders, and README limitations
+  * remove unused netcat-openbsd from CLI tools (step 4)
+  * add RAM-constrained note to gnome-disk-utility comment (step 9)
+  * add non-atomic note to sed -i locale.gen (step 15)
+
 2.8.0  2026-03-15
 
   * default to fully unattended execution (zero interactive prompts)
