@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.3.6
+# Version: 3.3.7
 # Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -16,7 +16,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.3.6"
+readonly SCRIPT_VERSION="3.3.7"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -44,6 +44,7 @@ _SSH_COMMENT=""
 _SSH_PASSPHRASE=""
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
+_LOCK_ACQUIRED=false
 
 # Cleanup trap
 # shellcheck disable=SC2317,SC2329
@@ -54,8 +55,10 @@ cleanup() {
     [[ -n "${_ns_key:-}" ]] && rm -f "$_ns_key" 2>/dev/null
     [[ -n "${_ns_gpg:-}" ]] && sudo rm -f "$_ns_gpg" 2>/dev/null
     [[ -n "${_rustup_tmp:-}" ]] && rm -f "$_rustup_tmp" 2>/dev/null
-    # Release lock
-    [[ -n "${LOCK_FILE:-}" ]] && rm -rf "$LOCK_FILE" 2>/dev/null || true
+    # Release lock only if this instance acquired it
+    if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
+        rm -rf "$LOCK_FILE" 2>/dev/null || true
+    fi
     if [[ $rc -ne 0 ]]; then
         warn "Script exited with code $rc. Re-run to resume from checkpoint."
     fi
@@ -252,6 +255,7 @@ OPTIONS:
     --git-email=EMAIL  Git user.email (unattended mode; ignored with --interactive)
     --ssh-comment=TXT  SSH key comment (unattended mode; default: none)
     --ssh-passphrase=PASS  SSH key passphrase (unattended mode; default: empty/none)
+                           NOTE: visible in /proc/*/cmdline while script runs
     --from-step=N  Start (or restart) from step N (1–20)
     --verify       Run only step 20 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
@@ -303,6 +307,7 @@ for arg in "$@"; do
         --ssh-comment=*) _SSH_COMMENT="${arg#*=}" ;;
         --ssh-passphrase=*) _SSH_PASSPHRASE="${arg#*=}" ;;
         --from-step=*)
+            [[ -n "$_DEFERRED_CHECKPOINT" ]] && die "Cannot combine --from-step with --verify"
             _from="${arg#*=}"
             if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 20 ]]; then
                 die "--from-step requires a number 1–20 (got '${_from}')"
@@ -313,13 +318,14 @@ for arg in "$@"; do
             unset _from
             ;;
         --verify)
+            [[ -n "$_DEFERRED_CHECKPOINT" ]] && die "Cannot combine --verify with --from-step"
             # Defer checkpoint write until after lock acquisition (#2)
             _DEFERRED_CHECKPOINT="19"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 19; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
-        --help)    usage ;;
-        --version) echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
+        --help)    rm -f "$LOG_FILE" 2>/dev/null; usage ;;
+        --version) rm -f "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
         --reset)
             if [[ -d "$LOCK_FILE" ]]; then
                 _rpid="$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")"
@@ -328,7 +334,7 @@ for arg in "$@"; do
                 fi
                 unset _rpid
             fi
-            rm -f "$STEP_FILE"; echo "Checkpoint cleared."; exit 0
+            rm -f "$STEP_FILE"; rm -f "$LOG_FILE" 2>/dev/null; echo "Checkpoint cleared."; exit 0
             ;;
         *)         die "Unknown argument: $arg. Use --help for usage." ;;
     esac
@@ -356,6 +362,7 @@ _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
 printf '%s\n' $$ > "$_pid_tmp"
 mv "$_pid_tmp" "$LOCK_FILE/pid" \
     || { rm -f "$_pid_tmp"; die "Cannot write PID file"; }
+_LOCK_ACQUIRED=true
 unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock — fix #2)
@@ -1272,8 +1279,10 @@ if should_run_step 14; then
         else
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)"
-            if ! run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}"; then
-                warn "VS Code download failed (curl exit $?). Install manually:"
+            _vscode_rc=0
+            run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
+            if [[ "$_vscode_rc" -ne 0 ]]; then
+                warn "VS Code download failed (curl exit ${_vscode_rc}). Install manually:"
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
             fi
 
@@ -1308,7 +1317,7 @@ EOF
         log "VS Code flags already exist"
     fi
 
-    unset VSCODE_FLAGS _VSCODE_DEB
+    unset VSCODE_FLAGS _VSCODE_DEB _vscode_rc
     set_checkpoint 14
     log "Step 14 complete."
 fi
@@ -1474,6 +1483,7 @@ if should_run_step 18; then
                 GEN_SSH="y"
                 SSH_COMMENT="$_SSH_COMMENT"
                 SSH_PASS="$_SSH_PASSPHRASE"
+                _SSH_PASSPHRASE=""
             else
                 printf '%bGenerate an Ed25519 SSH key? [Y/n]: %b' "$YELLOW" "$RESET"
                 read -r GEN_SSH
@@ -1502,29 +1512,32 @@ if should_run_step 18; then
                 # Acceptable risk: Crostini is single-user, exposure is
                 # sub-second, and the variable is zeroed immediately after.
                 log "[EXEC] ssh-keygen -t ed25519 -f $SSH_KEY (passphrase redacted)"
+                _keygen_rc=0
                 if [[ -n "${SSH_COMMENT:-}" ]]; then
                     ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" \
-                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
+                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1 || _keygen_rc=$?
                 else
                     ssh-keygen -t ed25519 -f "$SSH_KEY" \
-                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
+                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1 || _keygen_rc=$?
                 fi
-                # Zero passphrase from memory immediately
+                # Zero passphrase from memory immediately (must run even on failure)
                 SSH_PASS=""
 
-                if [[ -f "$SSH_KEY" ]]; then
+                if [[ "$_keygen_rc" -ne 0 ]]; then
+                    warn "ssh-keygen failed (exit ${_keygen_rc})"
+                elif [[ -f "$SSH_KEY" ]]; then
                     run chmod 600 "$SSH_KEY"
                     run chmod 644 "${SSH_KEY}.pub"
 
                     log "SSH public key:"
                     tee -a "$LOG_FILE" < "${SSH_KEY}.pub" || true
-                    printf '\n'
+                    logprintf '\n'
                     log "Add to GitHub/GitLab/servers as needed."
                 fi
             else
                 log "Skipping SSH key generation"
             fi
-            unset GEN_SSH SSH_COMMENT SSH_PASS
+            unset GEN_SSH SSH_COMMENT SSH_PASS _keygen_rc
         else
             log "[DRY-RUN] would prompt for SSH key generation"
         fi

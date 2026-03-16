@@ -9,6 +9,27 @@ development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
 
+3.3.7  2026-03-16
+
+  * fix CRITICAL: cleanup trap deleted lock file on --help/--version/
+    --reset early exit, racing with running instances; add
+    _LOCK_ACQUIRED guard so cleanup only releases own lock
+  * fix VS Code curl exit code: $? was always 0 after `if ! run curl`;
+    capture explicit _vscode_rc before conditional (#8)
+  * fix ssh-keygen exit code unchecked: capture _keygen_rc, warn on
+    failure, ensure passphrase zeroing runs unconditionally
+  * fix --ssh-passphrase visible in /proc/*/cmdline for full script
+    lifetime: zero _SSH_PASSPHRASE immediately after consuming in
+    step 18; add cmdline visibility warning to --help output
+  * fix --from-step + --verify conflict: silently last-one-wins →
+    die with explicit mutual-exclusion error
+  * fix SSH pubkey display: bare printf '\n' → logprintf so trailing
+    newline reaches log file
+  * fix empty log files left behind on --help/--version/--reset early
+    exit: rm $LOG_FILE before exit 0
+  * add _vscode_rc, _keygen_rc to respective step unset lists
+  * bump version 3.3.6 → 3.3.7; all cross-refs aligned
+
 3.3.6  2026-03-16
 
   * fix step_banner() writing to stdout only — now uses logprintf to
