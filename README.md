@@ -21,6 +21,8 @@ bash crostini-setup-duet5.sh                              # unattended (default)
 bash crostini-setup-duet5.sh --git-name="…" --git-email="…"  # with git identity
 bash crostini-setup-duet5.sh --interactive                # prompt for toggles
 bash crostini-setup-duet5.sh --dry-run                    # preview, zero side effects
+bash crostini-setup-duet5.sh --from-step=6                # resume from a specific step
+bash crostini-setup-duet5.sh --verify                     # run only summary/verification
 bash crostini-setup-duet5.sh --reset                      # clear checkpoint, start over
 ```
 

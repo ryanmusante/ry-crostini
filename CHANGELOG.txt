@@ -4,6 +4,79 @@ CHANGELOG
 crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+Note: Multiple versions on the same date reflect iterative
+development and review within single sessions. Each entry
+represents a discrete, committed change set.
+
+
+3.3.0  2026-03-15
+
+  * fix step 20: verification output (tools, configs, GPU, audio,
+    display, reminders) now written to log file via logprintf
+    helper that strips ANSI escapes for the log copy
+  * fix check_tool: stderr no longer leaks into version string
+    (2>&1 → 2>/dev/null)
+  * fix 8 version-report lines: stderr contaminated output for
+    python, pip, node, npm, git, vscode, dosbox, scummvm
+    (all changed to 2>/dev/null)
+  * fix 13 unconditional log calls after dry-run'd run() that
+    falsely claimed success: symlinks, xresources, firefox,
+    thunar, evince, eog, desktop dir, npm prefix, XDG dirs,
+    flatpak — all guarded with $DRY_RUN check
+
+3.2.0  2026-03-15
+
+  * trim all multiline comments to single lines (6 blocks)
+  * fix --dry-run: arch check now warns instead of dying on
+    non-ARM64 hosts (was: --dry-run unusable off-device)
+  * fix --dry-run: root check now warns instead of dying
+  * fix step 12 --dry-run: wrap rustup download-execute in
+    explicit dry-run guard (was: mktemp created real tmpfile,
+    empty-file check died because curl was dry-run'd)
+  * fix step 8 --dry-run: suppress "Font cache rebuilt" log
+    when fc-cache was not actually executed
+  * fix step 15 --dry-run: suppress "inotify watchers applied"
+    and "locale generated" logs when commands were not executed
+  * fix step 12: suppress shell error in rustc/cargo version
+    output (2>&1 → 2>/dev/null)
+  * remove redundant profile.d log (write_file_sudo already logs)
+
+3.1.0  2026-03-15
+
+  * fix run()/run_shell(): add wait after process substitution tee
+    to flush log output before next command (#1)
+  * fix --from-step/--verify: defer checkpoint write until after
+    lock acquisition to prevent corruption on concurrent invocation (#2)
+  * fix PID write: atomic tmpfile+mv instead of direct echo (#3)
+  * fix step 12 rustup: download to tmpfile then execute, preventing
+    truncated script execution on partial curl failure (#4)
+  * fix step 6: unset GL_VENDOR/GL_RENDERER/GL_VERSION at end of
+    step instead of leaking until step 20 (#5)
+  * fix step 11 NodeSource: verify sources.list content after write
+    before apt-get update (#6)
+  * fix step 15 locale.gen: restore backup on sed -i failure (#7)
+  * add _rustup_tmp cleanup to trap handler
+  * add --minimal flag: skip heavy optional packages
+    (gnome-disk-utility) for RAM-constrained devices (#12)
+  * add date compression note to CHANGELOG header (#9)
+
+3.0.2  2026-03-15
+
+  * fix lock file: handle missing/empty PID file as stale lock (crash
+    between mkdir and PID write left unrecoverable lock on next run)
+  * fix early init: add die guards to date and id -u command
+    substitutions; die on log file creation failure
+  * fix cleanup trap: guard rm -rf with [[ -n ]] (defensive against
+    empty LOCK_FILE)
+  * fix step 14 VS Code curl: preserve error message instead of
+    swallowing with || true (download failures now warn with context)
+  * fix step 20 verification: cache glxinfo and vulkaninfo output in
+    variables (was: 3+2 redundant subprocess invocations)
+  * fix step 16 Flathub URL: use canonical dl.flathub.org/repo/ path
+    (was: flathub.org/repo/ which redirects)
+  * add --from-step=N flag: start (or restart) from a specific step
+  * add --verify flag: run only step 20 (summary and verification)
+  * update help text with new flags
 
 3.0.1  2026-03-15
 
