@@ -9,6 +9,21 @@ development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
 
+3.3.6  2026-03-16
+
+  * fix step_banner() writing to stdout only — now uses logprintf to
+    dual-write step headers to both terminal and log file
+  * fix five bare printf calls in step 20 verification (GL vendor,
+    GL renderer, GL version, Vulkan API, shared directories) that
+    skipped the log file — all now use logprintf
+  * fix --from-step/--verify + --dry-run writing checkpoint to disk;
+    deferred checkpoint now respects DRY_RUN flag (zero side effects)
+  * fix --reset racing with running instance; now checks PID lock
+    and refuses to clear checkpoint while another instance is active
+  * fix deferred checkpoint message (--from-step/--verify) using bare
+    echo instead of log() — now dual-writes to terminal and log file
+  * bump version 3.3.5 → 3.3.6; all cross-refs aligned
+
 3.3.5  2026-03-16
 
   * add SND_DEV_COUNT to step 7 unset list (was leaking until step 20)

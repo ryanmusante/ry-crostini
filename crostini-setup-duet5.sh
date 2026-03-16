@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.3.5
+# Version: 3.3.6
 # Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -16,7 +16,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.3.5"
+readonly SCRIPT_VERSION="3.3.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -97,7 +97,7 @@ die()  { err "$*"; exit 1; }
 
 step_banner() {
     local num="$1" title="$2"
-    printf '\n%bSTEP %s: %s%b\n\n' "$BOLD" "$num" "$title" "$RESET"
+    logprintf '\n%bSTEP %s: %s%b\n\n' "$BOLD" "$num" "$title" "$RESET"
 }
 
 # Checkpoint system
@@ -320,7 +320,16 @@ for arg in "$@"; do
         --minimal) MINIMAL=true ;;
         --help)    usage ;;
         --version) echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
-        --reset)   rm -f "$STEP_FILE"; echo "Checkpoint cleared."; exit 0 ;;
+        --reset)
+            if [[ -d "$LOCK_FILE" ]]; then
+                _rpid="$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")"
+                if [[ -n "$_rpid" ]] && kill -0 "$_rpid" 2>/dev/null; then
+                    die "Another instance (PID ${_rpid}) is running. Cannot reset while active."
+                fi
+                unset _rpid
+            fi
+            rm -f "$STEP_FILE"; echo "Checkpoint cleared."; exit 0
+            ;;
         *)         die "Unknown argument: $arg. Use --help for usage." ;;
     esac
 done
@@ -351,10 +360,12 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock — fix #2)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
-    if ! echo "$_DEFERRED_CHECKPOINT" > "$STEP_FILE" 2>/dev/null; then
+    if $DRY_RUN; then
+        log "[DRY-RUN] set checkpoint $_DEFERRED_CHECKPOINT"
+    elif ! echo "$_DEFERRED_CHECKPOINT" > "$STEP_FILE" 2>/dev/null; then
         die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     fi
-    echo "$_DEFERRED_CHECKPOINT_MSG"
+    log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
@@ -1572,9 +1583,9 @@ if should_run_step 20; then
             GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs || true)"
             GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs || true)"
             unset _glx_out
-            [[ -n "$GL_VENDOR" ]]   && printf '  GL vendor:     %s\n' "$GL_VENDOR"
-            [[ -n "$GL_RENDERER" ]] && printf '  GL renderer:   %s\n' "$GL_RENDERER"
-            [[ -n "$GL_VERSION" ]]  && printf '  GL version:    %s\n' "$GL_VERSION"
+            [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
+            [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
+            [[ -n "$GL_VERSION" ]]  && logprintf '  GL version:    %s\n' "$GL_VERSION"
         fi
         if command -v vulkaninfo &>/dev/null; then
             _vk_out="$(vulkaninfo --summary 2>/dev/null || true)"
@@ -1583,7 +1594,7 @@ if should_run_step 20; then
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
                 logprintf '  Vulkan GPU:    %s\n' "$VK_GPU"
-                [[ -n "$VK_API" ]] && printf '  Vulkan API:    %s\n' "$VK_API"
+                [[ -n "$VK_API" ]] && logprintf '  Vulkan API:    %s\n' "$VK_API"
             else
                 logprintf '  Vulkan:        not available (virgl does not support Vulkan)\n'
             fi
@@ -1641,7 +1652,7 @@ if should_run_step 20; then
         if [[ "$SHARED_N" -gt 0 ]]; then
             logprintf '  Shared dirs:   %b✓%b %s folder(s)\n' "$GREEN" "$RESET" "$SHARED_N"
             for d in "${_shared_arr[@]}"; do
-                [[ -n "$d" ]] && printf '    %s\n' "$d"
+                [[ -n "$d" ]] && logprintf '    %s\n' "$d"
             done
         else
             logprintf '  Shared dirs:   none — share via Files app → right-click → Share with Linux\n'
