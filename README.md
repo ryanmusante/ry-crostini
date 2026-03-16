@@ -1,5 +1,9 @@
 # crostini-setup-duet5
 
+![version](https://img.shields.io/badge/version-3.3.5-blue?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
+
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Takes a fresh Debian Bookworm container from zero to a fully
 configured dev environment in one unattended run.
