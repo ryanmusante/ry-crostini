@@ -1,32 +1,39 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.3.0
-# Date:    2026-03-15
+# Version: 3.3.5
+# Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
-# Usage:   bash crostini-setup-duet5.sh [--interactive] [--dry-run] [--help] [--version]
+# Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
+#              [--from-step=N] [--verify] [--reset] [--help] [--version]
+#              [--git-name=NAME] [--git-email=EMAIL] [--ssh-comment=TXT]
+#              [--ssh-passphrase=PASS]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 
 set -euo pipefail
+umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.3.0"
+readonly SCRIPT_VERSION="3.3.5"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.crostini-setup-checkpoint"
 readonly LOCK_FILE="${HOME}/.crostini-setup.lock"
 readonly NODE_MAJOR=22
+readonly NODESOURCE_GPG_FP="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
 readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
 _cros_uid="$(id -u)" || { printf 'FATAL: cannot determine UID\n' >&2; exit 1; }
 readonly CROS_UID="$_cros_uid"
 unset _log_ts _cros_uid
 
 # Create log file with restrictive permissions before any writes
-touch "$LOG_FILE" && chmod 600 "$LOG_FILE" \
-    || { printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2; exit 1; }
+if ! touch "$LOG_FILE" || ! chmod 600 "$LOG_FILE"; then
+    printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2
+    exit 1
+fi
 
 DRY_RUN=false
 UNATTENDED=true
@@ -34,11 +41,12 @@ MINIMAL=false
 _GIT_NAME=""
 _GIT_EMAIL=""
 _SSH_COMMENT=""
+_SSH_PASSPHRASE=""
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 
 # Cleanup trap
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() {
     local rc=$?
     # Remove temp files
@@ -133,7 +141,8 @@ run() {
     log "[EXEC] $*"
     local rc=0
     "$@" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
-    wait  # flush tee subprocesses
+    # Flush tee subprocesses before checking exit code
+    wait
     [[ $rc -ne 0 ]] && warn "Command exited $rc: $*"
     return $rc
 }
@@ -147,7 +156,8 @@ run_shell() {
     log "[EXEC] $1"
     local rc=0
     bash -c "set -euo pipefail; $1" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
-    wait  # flush tee subprocesses
+    # Flush tee subprocesses before checking exit code
+    wait
     [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1"
     return $rc
 }
@@ -157,7 +167,8 @@ write_file() {
     local dest="$1"
     if $DRY_RUN; then
         log "[DRY-RUN] write $dest"
-        cat > /dev/null  # consume stdin
+        # Consume stdin so heredoc doesn't error
+        cat > /dev/null
         return 0
     fi
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
@@ -240,6 +251,7 @@ OPTIONS:
     --git-name=NAME    Git user.name (unattended mode; ignored with --interactive)
     --git-email=EMAIL  Git user.email (unattended mode; ignored with --interactive)
     --ssh-comment=TXT  SSH key comment (unattended mode; default: none)
+    --ssh-passphrase=PASS  SSH key passphrase (unattended mode; default: empty/none)
     --from-step=N  Start (or restart) from step N (1–20)
     --verify       Run only step 20 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
@@ -289,6 +301,7 @@ for arg in "$@"; do
         --git-name=*)  _GIT_NAME="${arg#*=}" ;;
         --git-email=*) _GIT_EMAIL="${arg#*=}" ;;
         --ssh-comment=*) _SSH_COMMENT="${arg#*=}" ;;
+        --ssh-passphrase=*) _SSH_PASSPHRASE="${arg#*=}" ;;
         --from-step=*)
             _from="${arg#*=}"
             if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 20 ]]; then
@@ -412,6 +425,7 @@ if should_run_step 1; then
         warn "Sommelier not detected. GUI apps may not display until container restarts."
     fi
 
+    unset CURRENT_ARCH AVAIL_KB AVAIL_MB
     set_checkpoint 1
     log "Step 1 complete."
 fi
@@ -530,6 +544,7 @@ if should_run_step 2; then
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
     fi
 
+    unset AVAIL_MB_NOW
     set_checkpoint 2
     log "Step 2 complete."
 fi
@@ -583,6 +598,7 @@ if should_run_step 4; then
         $DRY_RUN || log "Symlinked batcat → bat"
     fi
 
+    unset CORE_PKGS
     set_checkpoint 4
     log "Step 4 complete."
 fi
@@ -600,6 +616,7 @@ if should_run_step 5; then
 
     run sudo apt-get install -y "${DEV_PKGS[@]}" || warn "Some dev packages failed to install — continuing"
 
+    unset DEV_PKGS
     set_checkpoint 5
     log "Step 5 complete."
 fi
@@ -625,9 +642,10 @@ if should_run_step 6; then
     run sudo apt-get install -y "${GPU_STABLE_PKGS[@]}" || warn "Some stable GPU packages failed — continuing"
 
     # Volatile packages — names may differ across Debian versions
+    # libgl1 replaces the transitional libgl1-mesa-glx
     GPU_VOLATILE_PKGS=(
         mesa-vulkan-drivers
-        libgl1                  # replaces transitional libgl1-mesa-glx
+        libgl1
         vulkan-tools
         glmark2-wayland
         glmark2-es2-wayland
@@ -675,7 +693,7 @@ EOF
         log "GPU env already exists — skipping"
     fi
 
-    unset GL_VENDOR GL_RENDERER GL_VERSION
+    unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
     set_checkpoint 6
     log "Step 6 complete."
 fi
@@ -690,8 +708,9 @@ if should_run_step 7; then
         libasound2-plugins
 
         # PulseAudio client only — do NOT install the daemon (conflicts with host)
+        # pavucontrol = GUI volume mixer
         pulseaudio-utils
-        pavucontrol             # GUI volume mixer
+        pavucontrol
 
         # GStreamer codecs and media support
         gstreamer1.0-plugins-base
@@ -741,6 +760,7 @@ EOF
         log "Audio env already exists — skipping"
     fi
 
+    unset AUDIO_PKGS AUDIO_ENV_FILE PA_CLIENT SND_DEV_COUNT
     set_checkpoint 7
     log "Step 7 complete."
 fi
@@ -922,6 +942,7 @@ EOF
         log "Cursor theme already exists — skipping"
     fi
 
+    unset SOMMELIER_ENV GTK3_SETTINGS GTK4_SETTINGS GTK2_RC QT_ENV XRESOURCES FC_LOCAL CURSOR_DIR
     set_checkpoint 8
     log "Step 8 complete."
 fi
@@ -930,19 +951,29 @@ if should_run_step 9; then
     step_banner 9 "GUI applications (Firefox, Thunar, Evince, fonts, screenshots, MIME defaults)"
 
     GUI_PKGS=(
+        # Browser
         firefox-esr
-        thunar                  # Lightweight file manager
-        thunar-archive-plugin   # Archive support in Thunar
-        tumbler                 # Thumbnail service for Thunar
-        evince                  # PDF viewer
-        eog                     # Image viewer (Eye of GNOME)
+
+        # File management: thunar (lightweight), archive plugin, thumbnail service
+        thunar
+        thunar-archive-plugin
+        tumbler
+
+        # Document and image viewers
+        evince
+        eog
+
+        # Utilities: calculator, screenshot tool, archive manager
         gnome-calculator
-        gnome-screenshot        # Screenshot tool
-        file-roller             # Archive manager
+        gnome-screenshot
+        file-roller
         xdg-utils
-        dbus-x11                # D-Bus for X11 session
-        at-spi2-core            # Accessibility (suppresses GTK warnings)
-        libnotify-bin           # Desktop notifications (notify-send)
+
+        # Session support: D-Bus for X11, accessibility (suppresses GTK warnings),
+        # desktop notifications (notify-send)
+        dbus-x11
+        at-spi2-core
+        libnotify-bin
 
         # Fonts — comprehensive set for international content
         fonts-noto
@@ -999,6 +1030,7 @@ if should_run_step 9; then
     run mkdir -p "${HOME}/.local/share/applications"
     $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
 
+    unset GUI_PKGS
     set_checkpoint 9
     log "Step 9 complete."
 fi
@@ -1033,8 +1065,18 @@ if should_run_step 11; then
         if [[ ! -s "$_ns_key" ]]; then
             rm -f "$_ns_key"; die "NodeSource GPG key is empty"
         fi
+        # Verify GPG key fingerprint to prevent supply-chain substitution
+        _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
+            | awk -F: '/^fpr:/{print $10; exit}')"
+        if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
+            rm -f "$_ns_key"
+            die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp:-empty}. Possible key rotation or supply-chain compromise."
+        fi
+        log "NodeSource GPG fingerprint verified: ${_ns_fp}"
+        unset _ns_fp
         _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
             || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
+        # shellcheck disable=SC2024  # redirect captures gpg log messages, not dearmored output (-o flag)
         sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
             || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "NodeSource GPG dearmor failed"; }
         sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
@@ -1064,6 +1106,7 @@ if should_run_step 11; then
     log "Node version: $(node --version 2>/dev/null || echo 'not installed')"
     log "npm version: $(npm --version 2>/dev/null || echo 'not installed')"
 
+    unset NPM_GLOBAL
     set_checkpoint 11
     log "Step 11 complete."
 fi
@@ -1224,7 +1267,11 @@ if should_run_step 14; then
             fi
 
             if [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
-                if run sudo dpkg -i "$_VSCODE_DEB"; then
+                # Validate .deb structure before installing (catches corrupt/truncated downloads)
+                if ! dpkg-deb --info "$_VSCODE_DEB" > /dev/null 2>&1; then
+                    warn "VS Code .deb is corrupt or invalid. Install manually:"
+                    warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
+                elif run sudo dpkg -i "$_VSCODE_DEB"; then
                     log "VS Code installed ✓"
                 elif run sudo apt-get install -f -y; then
                     log "VS Code installed (dpkg deps resolved by apt-get -f) ✓"
@@ -1250,6 +1297,7 @@ EOF
         log "VS Code flags already exist"
     fi
 
+    unset VSCODE_FLAGS _VSCODE_DEB
     set_checkpoint 14
     log "Step 14 complete."
 fi
@@ -1349,6 +1397,7 @@ MEMEOF
         $DRY_RUN || log "XDG user directories updated"
     fi
 
+    unset PROFILE_D MEM_CONF
     set_checkpoint 15
     log "Step 15 complete."
 fi
@@ -1380,8 +1429,16 @@ if should_run_step 17; then
     fi
 
     # Verify
-    command -v dosbox  &>/dev/null && log "dosbox: $(dosbox --version 2>/dev/null | head -1 || true) ✓" || warn "dosbox not found"
-    command -v scummvm &>/dev/null && log "scummvm: $(scummvm --version 2>/dev/null | head -1 || true) ✓" || warn "scummvm not found"
+    if command -v dosbox &>/dev/null; then
+        log "dosbox: $(dosbox --version 2>/dev/null | head -1 || true) ✓"
+    else
+        warn "dosbox not found"
+    fi
+    if command -v scummvm &>/dev/null; then
+        log "scummvm: $(scummvm --version 2>/dev/null | head -1 || true) ✓"
+    else
+        warn "scummvm not found"
+    fi
     if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
         log "RetroArch Flatpak: installed ✓"
     else
@@ -1405,7 +1462,7 @@ if should_run_step 18; then
             if $UNATTENDED; then
                 GEN_SSH="y"
                 SSH_COMMENT="$_SSH_COMMENT"
-                SSH_PASS=""
+                SSH_PASS="$_SSH_PASSPHRASE"
             else
                 printf '%bGenerate an Ed25519 SSH key? [Y/n]: %b' "$YELLOW" "$RESET"
                 read -r GEN_SSH
@@ -1428,13 +1485,21 @@ if should_run_step 18; then
                 run mkdir -p "${HOME}/.ssh"
                 run chmod 700 "${HOME}/.ssh"
 
-                # Call ssh-keygen directly — run() would log passphrase
+                # NOTE: ssh-keygen only accepts the passphrase via -N flag
+                # (it reads from /dev/tty, NOT stdin or SSH_ASKPASS).
+                # The -N value is transiently visible in /proc/*/cmdline.
+                # Acceptable risk: Crostini is single-user, exposure is
+                # sub-second, and the variable is zeroed immediately after.
                 log "[EXEC] ssh-keygen -t ed25519 -f $SSH_KEY (passphrase redacted)"
                 if [[ -n "${SSH_COMMENT:-}" ]]; then
-                    ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
+                    ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" \
+                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
                 else
-                    ssh-keygen -t ed25519 -f "$SSH_KEY" -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
+                    ssh-keygen -t ed25519 -f "$SSH_KEY" \
+                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1
                 fi
+                # Zero passphrase from memory immediately
+                SSH_PASS=""
 
                 if [[ -f "$SSH_KEY" ]]; then
                     run chmod 600 "$SSH_KEY"
@@ -1454,6 +1519,7 @@ if should_run_step 18; then
         fi
     fi
 
+    unset SSH_KEY
     set_checkpoint 18
     log "Step 18 complete."
 fi

@@ -19,8 +19,11 @@ configured dev environment in one unattended run.
 ```bash
 bash crostini-setup-duet5.sh                              # unattended (default)
 bash crostini-setup-duet5.sh --git-name="…" --git-email="…"  # with git identity
+bash crostini-setup-duet5.sh --ssh-comment="…"            # SSH key comment
+bash crostini-setup-duet5.sh --ssh-passphrase="…"         # SSH key passphrase
 bash crostini-setup-duet5.sh --interactive                # prompt for toggles
 bash crostini-setup-duet5.sh --dry-run                    # preview, zero side effects
+bash crostini-setup-duet5.sh --minimal                    # skip heavy optional packages
 bash crostini-setup-duet5.sh --from-step=6                # resume from a specific step
 bash crostini-setup-duet5.sh --verify                     # run only summary/verification
 bash crostini-setup-duet5.sh --reset                      # clear checkpoint, start over
@@ -69,6 +72,7 @@ shell env + PATH. Memory tuning attempted if /proc/sys/vm/ is writable.
   * **Unattended by default** — all 12 prompts auto-answered; `--interactive` restores them
   * **Checkpoint resume** — re-run to continue from last completed step
   * **`--dry-run`** — zero side effects, zero network, zero interaction
+  * **`--minimal`** — skip heavy optional packages (e.g. gnome-disk-utility) for RAM-constrained devices
   * **Idempotent** — config files skip if already present
   * **Concurrent-safe** — PID-based mkdir lock
   * **Atomic writes** — tmpfile + mv for all config files

@@ -9,6 +9,57 @@ development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
 
+3.3.5  2026-03-16
+
+  * add SND_DEV_COUNT to step 7 unset list (was leaking until step 20)
+  * full Crostini/Debian Bookworm bash compatibility audit: all bashisms
+    confirmed bash 4.0+ safe (Bookworm ships 5.2); all pre-step-4
+    commands verified present in Crostini base image; command dependency
+    ordering (gpg→step 4→step 11, locale-gen→step 4→step 15) confirmed
+    enforced by checkpoint system
+  * bump version 3.3.4 → 3.3.5; all cross-refs aligned
+
+3.3.4  2026-03-16
+
+  * fix CRITICAL: revert broken SSH_ASKPASS approach for ssh-keygen
+    passphrase delivery — ssh-keygen does NOT honor SSH_ASKPASS (only
+    ssh and ssh-add do); reverted to -N flag with documented /proc
+    argv exposure limitation and immediate variable zeroing
+  * add VS Code .deb integrity check: dpkg-deb --info validation
+    before dpkg -i to catch corrupt or truncated downloads
+  * remove dead _askpass_helper variable from cleanup trap
+  * bump version 3.3.3 → 3.3.4; all cross-refs aligned
+
+3.3.3  2026-03-16
+
+  * add unset for 6 remaining leaked variables: CORE_PKGS (step 4),
+    DEV_PKGS (step 5), GPU_STABLE_PKGS + GPU_VOLATILE_PKGS (step 6),
+    AUDIO_PKGS (step 7), GUI_PKGS (step 9), _VSCODE_DEB (step 14)
+  * all 55 non-local non-readonly variables now confirmed unset at
+    step boundaries
+
+3.3.2  2026-03-15
+
+  * add unset for 20 leaked variables across steps 1, 2, 6, 7, 8,
+    11, 14, 15, 18 (CURRENT_ARCH, AVAIL_KB, AVAIL_MB, AVAIL_MB_NOW,
+    GPU_ENV_FILE, AUDIO_ENV_FILE, PA_CLIENT, SOMMELIER_ENV,
+    GTK3_SETTINGS, GTK4_SETTINGS, GTK2_RC, QT_ENV, XRESOURCES,
+    FC_LOCAL, CURSOR_DIR, NPM_GLOBAL, VSCODE_FLAGS, PROFILE_D,
+    MEM_CONF, SSH_KEY)
+
+3.3.1  2026-03-15
+
+  * fix SC2015: replace A && B || C with if/else for dosbox, scummvm
+    version checks (step 17) and log file creation (init)
+  * fix SC2024: add shellcheck disable for gpg dearmor redirect —
+    false positive; redirect captures log messages, not -o output
+  * fix header Usage: comment missing --minimal, --from-step, --verify,
+    --reset, --git-name, --git-email, --ssh-comment flags
+  * move all inline comments to above-section comments (14 instances:
+    wait flush, cat stdin, libgl1, pavucontrol, GUI_PKGS array)
+  * README: add --ssh-comment and --minimal to Usage block; add
+    --minimal to Features section
+
 3.3.0  2026-03-15
 
   * fix step 20: verification output (tools, configs, GPU, audio,
