@@ -5,402 +5,171 @@ crostini-setup-duet5.sh — Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 
+2.8.0  2026-03-15
+
+  * default to fully unattended execution (zero interactive prompts)
+  * add --interactive flag to restore original prompt behavior
+  * add --git-name=, --git-email=, --ssh-comment= flags
+  * wrap step 2 + step 18 interactive blocks (open_chromeos_url, sleep,
+    read, instruction printf) inside if ! $UNATTENDED guards
+  * SSH key auto-generated with no passphrase in unattended mode
+  * update help text, banners, README for --interactive semantics
+
+2.7.1  2026-03-15
+
+  * move DEBIAN_FRONTEND=noninteractive before step blocks (persist on
+    checkpoint resume)
+  * cosmetic: strip trailing whitespace, normalize blank lines
+
+2.7.0  2026-03-15
+
+  * call ssh-keygen directly to avoid logging passphrase via run()
+  * initialize LOG_FILE with chmod 600 before first write
+  * add PID-based stale lock detection (auto-remove dead locks)
+  * apply tee pattern to run_shell() (show rustup/NodeSource progress)
+  * use sudo mktemp in write_file_sudo() for atomic writes
+  * clean up variables at end of steps 1, 2, 13, 17, 19
+
+2.6.0  2026-03-15
+
+  * add SSH passphrase prompt (remove hardcoded -N "")
+  * guard 6 git config keys with existing-value checks
+  * conditionalize inotify sysctl success/fail log
+  * replace all 18 'sudo apt' with 'sudo apt-get'
+  * export DEBIAN_FRONTEND=noninteractive around apt steps
+  * make write_file() and write_file_sudo() atomic (tmpfile + mv)
+  * add apt-get full-upgrade in step 3
+  * hoist check_tool()/check_config() to helpers section
+  * tee run() output to terminal and log (fix silent-freeze UX)
+  * move NODE_MAJOR, SYSCTL_CONF to constants block
+  * rename SND_DEVICES -> SND_DEV_COUNT for consistency
+
 2.5.10  2026-03-15
--------------------
 
-  Final audit (AUDIT-2.5.10.txt — 27-domain checklist):
-
-  - Fix F-1: add || true guard to `code --version 2>&1 | head -1`
-    pipe in step 14 (line 1028). Same SIGPIPE class as check_tool()
-    fix in 2.5.9: `code --version` emits 3 lines, `head -1` closes
-    pipe, SIGPIPE (rc 141) propagates through pipefail, and set -e
-    aborts step 14 before reaching the else branch (new install).
-    Only triggers on re-run when VS Code is already installed.
-  - Fix F-2: README Files section had markdown link syntax
-    `[CHANGELOG.txt](CHANGELOG.txt)` inside a fenced code block
-    where it renders as literal text, not a hyperlink. Replaced with
-    plain text matching the formatting of adjacent entries.
-  - Full 27-domain audit: inputs, syntax, strict-modes, entry-points,
-    arg-contract, exit-codes, ext-cmd-audit, idempotency, file-writes,
-    security, signals, var-scope, rollback, privilege-sep, path-safety,
-    output-contract, cross-refs, docs, compat, networking, concurrency,
-    logging, lint, dry-run, test-matrix, systemd, pacman. No further
-    findings.
-  - shellcheck clean, bash -n clean
+  * guard code --version pipe against SIGPIPE under pipefail
 
 2.5.9  2026-03-15
-------------------
 
-  Sync audit + execution flow fix:
-
-  - Fix E-1: add || true guard to check_tool() --version pipe in
-    step 19 summary. Under set -euo pipefail, multi-line --version
-    output (e.g. `code --version` emits 3 lines) piped to `head -1`
-    causes SIGPIPE (rc 141) on the left side of the pipe. pipefail
-    propagates this to the subshell, and set -e aborts step 19 before
-    printing the remaining tool/config verification table.
-  - Fix S-1: step 2 help text and banner now include "disk" to match
-    README and actual step 2f (disk resize settings page).
-  - Fix S-2: step 8 help text and banner now include "cursor" to match
-    README and actual step 8h (cursor theme).
-  - Fix S-3: step 9 help text and banner now include "Evince" and
-    "MIME defaults" to match README and actual xdg-mime calls.
-  - Fix S-4: step 15 banner now includes "XDG" to match help text
-    and README (step 15e creates XDG dirs).
-  - All 19 step descriptions now match across help text, banners,
-    and README step table.
-  - shellcheck clean, bash -n clean
+  * guard check_tool() --version pipe against SIGPIPE
+  * sync all 19 step descriptions across help, banners, README
 
 2.5.8  2026-03-15
-------------------
 
-  Remove all decorative code:
-
-  - Replace step_banner ══ box-drawing lines with plain bold text
-  - Replace ┌──┐│ │└──┘ completion box with plain bold text
-  - Replace └ tree-drawing char in shared folder listing with indent
-  - Remove # ─── header separator line
-  - Remove unused CYAN color variable (was only used by decorative
-    step_banner lines and completion message; completion message
-    changed to BOLD)
-  - Zero box-drawing characters remain in script (═─┌┐└┘│━╔╗╚╝║)
-  - shellcheck clean, bash -n clean, zero fish-isms
-  - README: update line count 1460→1453
+  * remove all box-drawing decorative characters
+  * remove unused CYAN color variable
 
 2.5.7  2026-03-15
-------------------
 
-  Comment cleanup + code trim (65 lines removed):
-
-  - Trim all multiline bash comments to single lines:
-    * X11/xwayland warning (2→1), PulseAudio daemon warning (3→1),
-      step 8 HiDPI overview (3→1), rustup TOFU notice (2→1),
-      memory tuning vm.* note (5→1)
-  - Strip all decorative line art from comments:
-    * Remove 38 ═══ box separator lines around step headers
-    * Strip trailing ─── from all 23 sub-section labels
-    * Strip ── prefix from sub-section labels
-  - Remove 6 redundant "write_file handles mkdir" comments
-  - Trim all section header separators to plain "# Section name"
-  - Inline GTK3_DIR and GTK4_DIR variables (each used exactly once)
-  - Collapse excess blank lines
-  - README: update line count 1525→1460
-  - All remaining multiline comments are inside heredoc config files
-    (user-facing documentation); correctly preserved.
-  - shellcheck clean, bash -n clean, zero fish-isms
+  * trim multiline comments to single lines
+  * strip decorative line art from section headers
+  * inline GTK3_DIR and GTK4_DIR (used once each)
 
 2.5.6  2026-03-15
-------------------
 
-  Comment audit + bug fix (AUDIT-2.5.6.txt):
-
-  - Fix L-1: step 8 overview comment (line 674) listed rendering layers
-    as "sommelier, GTK3, GTK4, Qt, Xft, and fontconfig" but step 8
-    also configures GTK2 (sub-step 8d) and cursor theme (sub-step 8h).
-    Updated to "sommelier, GTK 2/3/4, Qt, Xft, fontconfig, and cursor
-    theme".
-  - Fix L-2: GPU package comment (line 545) claimed "Crostini has no
-    native X11" — inaccurate since sommelier provides XWayland. Crostini
-    DOES have X11 through the sommelier XWayland bridge; the Wayland
-    glmark2 variants are preferred because the compositor is Wayland-
-    based. Updated comment wording.
-  - Fix L-3: add || true guard to `run xdg-user-dirs-update` (step 15e,
-    line 1215). This is a non-critical convenience operation; failure
-    (e.g., package not installed despite command -v guard passing, or
-    filesystem issue) should not abort the script under set -e.
-  - Full 218-comment audit against code: all other comments verified
-    accurate. No fish shell syntax found. No further bugs found.
+  * fix step 8 comment: add GTK2 and cursor to listed layers
+  * fix GPU comment: Crostini has X11 via sommelier XWayland
+  * add || true guard to xdg-user-dirs-update
 
 2.5.5  2026-03-15
-------------------
 
-  Post-audit fixes (AUDIT-2.5.5.txt):
-
-  - Fix H-1: add || true guard to `rmdir "$LOCK_FILE"` in cleanup()
-    trap handler. The rmdir is a bare command (not in && or || list),
-    so when it fails under set -e the trap aborts early — skipping
-    the remaining cleanup logic and corrupting the exit code.
-    Reproduced: --help, --version, and --reset all exit with code 1
-    instead of 0 because the lock was never acquired (created after
-    argument parsing) so rmdir fails and set -e fires in the EXIT
-    trap before `exit "$rc"` executes.
-  - Fix M-1: add || true guard to VS Code curl download (step 14).
-    Without it, a download failure aborts the script under set -e
-    before reaching the [[ -f ]] && [[ -s ]] check that has the
-    user-friendly "Install manually" fallback message.
-  - Fix M-2: restructure VS Code dpkg/apt-fix chain from bare
-    `run dpkg || run apt -f` + unconditional success log into an
-    if/else block. Previously, if both dpkg and apt -f failed, the
-    second run() (command after final ||) triggered set -e, aborting
-    the script for a non-critical package. Now: success logs on
-    install, warns with manual install URL on failure.
-  - README: update script line count to 1525.
+  * add || true to rmdir in cleanup() trap (fix exit code corruption)
+  * add || true to VS Code curl download (graceful fallback)
+  * restructure VS Code dpkg/apt-fix chain as if/else
 
 2.5.4  2026-03-15
-------------------
 
-  Post-audit fixes (AUDIT-2.5.4.txt):
-
-  - Fix M-1: add || warn guard to `run git lfs install` (step 13).
-    If git-lfs package failed to install in the preceding apt call
-    (which uses || warn and continues), `git lfs install` would abort
-    the script under set -e with no useful error message.
-  - Fix L-1: add || true guard to `tee -a "$LOG_FILE"` in step 17
-    SSH key display. If LOG_FILE became unwritable, set -e would abort
-    the script during a non-critical display operation.
+  * add || warn to git lfs install
+  * add || true to SSH pubkey tee
 
 2.5.3  2026-03-15
-------------------
 
-  Post-audit fixes (AUDIT-2.5.2.txt, extended):
-
-  - Fix M-1: check_tool "glmark2" in step 19 checked for non-existent
-    binary 'glmark2'. The script installs glmark2-wayland and
-    glmark2-es2-wayland (Wayland-only variants); the correct binary is
-    'glmark2-es2-wayland'. Verification would always show ✗ not found.
-  - Fix L-1: get_checkpoint() now validates that checkpoint file content
-    is numeric (regex ^[0-9]+$). Corrupted checkpoint file previously
-    caused unhelpful bash arithmetic error under set -e. Now warns and
-    falls back to 0 with a message to use --reset.
-  - README: add CHANGELOG.txt hyperlink in Files section.
-  - README: update script line count to 1521.
+  * fix check_tool "glmark2" -> "glmark2-es2-wayland"
+  * validate checkpoint file content is numeric
 
 2.5.2  2026-03-15
-------------------
 
-  Post-audit fixes (AUDIT-2.5.1.txt):
-
-  - Fix H-1: add || die guards to write_file() and write_file_sudo()
-    for mkdir -p, cat, and sudo tee calls. Previously, failures under
-    set -e would abort with no useful error message.
-  - Fix M-1: help text step 1 now includes "sommelier" to match README
-    and actual preflight checks performed.
-  - Fix M-2: move readonly NODE_MAJOR=22 above the "if command -v node"
-    conditional so it is always declared within the step scope.
-  - Fix M-3: replace deprecated --enable-features=UseOzonePlatform and
-    --ozone-platform=wayland VS Code flags (removed in Electron 28+)
-    with forward-compatible --ozone-platform-hint=auto.
-  - Fix M-4: add non-empty check (-s) on NodeSource GPG keyring after
-    curl|gpg pipeline to catch silent curl failures that leave a 0-byte
-    keyring file.
-  - Fix M-5: add TOFU acknowledgment comment to rustup curl-pipe-shell
-    install pattern.
-  - Fix L-5: remove glmark2 (GLX variant) from GPU_PKGS — Crostini uses
-    Wayland; only glmark2-wayland and glmark2-es2-wayland are relevant.
-  - README: update script line count to 1514.
+  * add || die guards to write_file()/write_file_sudo()
+  * replace deprecated VS Code Ozone flags with --ozone-platform-hint=auto
+  * add -s check on NodeSource GPG keyring after curl|gpg
+  * remove glmark2 GLX variant (Crostini is Wayland-only)
 
 2.5.1  2026-03-14
-------------------
 
-  Post-audit fixes:
-
-  - Fix M-1: wrap VS Code download/install block in DRY_RUN guard.
-    mktemp created a real temp file in /tmp during --dry-run, violating
-    the zero-side-effects contract. Also add -s (non-empty) check
-    alongside -f before dpkg to prevent installing a 0-byte file on
-    download failure.
-  - Fix M-2: replace fragile find -not -name snd with -mindepth 1 in
-    both step 7 audio verification and step 19 summary. The old filter
-    excluded /dev/snd itself by matching basename, but would also
-    silently exclude any child named snd.
-  - Fix L-1: add -u (nounset) to run_shell() bash -c invocation so
-    the subshell enforces set -euo pipefail, consistent with the
-    parent script's strict mode.
-  - README: update script line count to 1509.
+  * wrap VS Code download in DRY_RUN guard
+  * replace fragile find -not -name with -mindepth 1
+  * add -u (nounset) to run_shell() subshell
 
 2.5.0  2026-03-13
-------------------
 
-  Exhaustive audit — complete --dry-run isolation + error handling:
-
-  - Fix H-1: guard all step 2 interactive prompts (open_chromeos_url,
-    sleep, read) with DRY_RUN checks across 6 sub-sections: GPU flag,
-    microphone, USB passthrough, shared folders, port forwarding, and
-    disk resize. --dry-run now logs which URL would open instead.
-  - Fix H-2: guard step 13 git config prompts (user.name, user.email)
-    with DRY_RUN — dry-run no longer blocks on stdin for git identity.
-  - Fix H-3: guard step 17 SSH key generation prompts with DRY_RUN —
-    dry-run no longer asks whether to generate keys or for an email
-    comment.
-  - Fix H-4: guard step 18 container backup prompt (open_chromeos_url,
-    sleep, read) with DRY_RUN.
-  - Fix M-1: replace PID-based temp path /tmp/vscode-arm64-$$.deb with
-    mktemp (eliminates TOCTOU race; matches 2.4.0 changelog claim).
-  - Fix M-2: add error handling to all unguarded sudo calls that would
-    abort the script under set -e without a useful message: sudo ln -sf
-    for fd/bat symlinks (|| true), sudo mkdir -p /etc/apt/keyrings
-    (|| die), sudo chmod 644 on sysctl/profile/memory configs (|| true),
-    sudo sed -i locale.gen (|| warn), flatpak remote-add (|| warn).
-  - Fix M-3: step 8 banner now reads "GTK 2/3/4" to match README, help
-    text, and the actual GTK 2/3/4 config files the step writes.
-  - Fix L-1: --help step 8 description now lists GTK 2/3/4 (was GTK3/4),
-    matching actual config files written, banner, and README.
-  - Fix L-2: guard python3 --version, pip --version, and git --version
-    subshells with || echo fallback to prevent set -e abort when tools
-    are missing after partial install.
-  - README: update --dry-run feature description to include interactive
-    prompts and ChromeOS URL opens; update script line count.
+  * guard all step 2/13/17/18 interactive prompts with DRY_RUN
+  * replace hardcoded vscode temp path with mktemp
+  * add error handling to all unguarded sudo calls
 
 2.4.1  2026-03-09
-------------------
 
-  Post-audit fixes (AUDIT-2.4.0.txt):
-
-  - Fix H-1: add existence guards to 5 write_file calls that
-    unconditionally overwrote user-customized configs on re-run:
-    gpu.conf, audio.conf, sommelier.conf, qt.conf, cursor index.theme.
-    All now skip with "already exists" like every other config write.
-  - Fix M-1: make NODE_MAJOR readonly to prevent accidental mutation
-    before interpolation into run_shell string
-  - Fix M-2: make SYSCTL_CONF readonly for same reason
-  - Fix L-1: replace ls /dev/snd/ | wc -l with find (SC2012) in
-    both step 7 audio verification and step 19 summary
-  - Fix L-2: suppress shellcheck SC2317 false positive on cleanup()
-    (invoked via trap, not direct call)
-  - Fix L-3: wrap preflight network curl in DRY_RUN guard so --dry-run
-    makes zero outbound requests
+  * add existence guards to 5 write_file calls (prevent overwrite)
+  * make NODE_MAJOR and SYSCTL_CONF readonly
+  * replace ls|wc with find for /dev/snd count (SC2012)
+  * wrap preflight curl in DRY_RUN guard
 
 2.4.0  2026-03-08
-------------------
 
-  Exhaustive 12-domain parallel audit (syntax, strict-modes, quoting,
-  entry-points, args, exit-codes, signals, dry-run, idempotency,
-  file-writes, security, privilege-sep, path-safety, injection,
-  ext-cmd, compat, networking, cross-refs, docs, output-contract,
-  var-scope, logging, concurrency, rollback, edge-cases, robustness).
-
-  Fixes:
-
-  - Add mkdir-based lock file (~/.crostini-setup.lock) to prevent
-    concurrent runs from corrupting checkpoint state
-  - Replace hardcoded /tmp/vscode-arm64.deb with mktemp (eliminates
-    predictable temp file / symlink attack surface)
-  - Fix set_checkpoint() writing to STEP_FILE during --dry-run;
-    a subsequent real run would skip steps "completed" in dry-run.
-    set_checkpoint and final cleanup now respect DRY_RUN.
-  - Route ALL remaining dry-run bypasses through run():
-    * mkdir -p in steps 9, 10, 11 (applications dir, .local/bin,
-      .npm-global)
-    * mkdir/chmod in step 17 (SSH .ssh dir, key permissions)
-    * rm in step 14 (VS Code temp .deb cleanup)
-  - Fix --dry-run crash in step 17: chmod on non-existent SSH key
-    would abort under set -e; now guarded with [[ -f "$SSH_KEY" ]]
-  - Fix apt-get vs apt inconsistency in step 14 dpkg fallback
-  - Add sudo mkdir -p to write_file_sudo() for parent dir creation
-  - Update step 19 memory tuning check: show yellow warning with
-    explanation instead of red X when vm.* sysctl was skipped
-    (expected in Crostini)
-  - Update --help step 15 description, step 15 banner, and README to
-    accurately reflect that memory tuning is conditional on container
-    write access to /proc/sys/vm/
-  - README: add lock file, concurrent-safe to features; fix --dry-run
-    claim to include mkdir/chmod; clarify 4 GB memory tuning caveat
+  * add mkdir-based lock file for concurrent-run safety
+  * replace hardcoded /tmp/vscode-arm64.deb with mktemp
+  * fix set_checkpoint() writing during --dry-run
+  * route all remaining dry-run bypasses through run()
+  * fix --dry-run crash in step 17 (chmod on non-existent key)
 
 2.3.1  2026-03-08
-------------------
 
-  Post-audit fixes:
-
-  - Fix BUG: per-package apt install loops (GPU, audio, GUI, Qt theme,
-    adwaita-icon-theme-full) bypassed run() — --dry-run had no effect
-    and commands were not logged. All now route through run().
-  - Fix BUG: vm.swappiness/dirty_ratio/vfs_cache_pressure sysctl values
-    are not writable from Crostini's unprivileged LXC container. Added
-    writability check (/proc/sys/vm/swappiness); skips with warning
-    when read-only (expected in Crostini).
-  - Fix: Vulkan summary in step 19 now prints "not available (virgl does
-    not support Vulkan)" instead of silently omitting output when
-    vulkaninfo reports no devices.
+  * route per-package apt loops through run() for dry-run/logging
+  * add vm.swappiness writability check (read-only in Crostini)
+  * show virgl Vulkan status in summary
 
 2.3.0  2026-03-08
-------------------
 
-  Crostini-exclusive audit — remove everything non-Crostini:
-
-  - Remove pulseaudio daemon package (Crostini bridges audio from host;
-    daemon would start conflicting server). Keep pulseaudio-utils only.
-  - Remove xwayland package (sommelier provides its own XWayland bridge;
-    standalone package conflicts)
-  - Fix OLED font rendering: change rgba=rgb to rgba=none across GTK 2/3/4,
-    Xresources, and fontconfig. OLED has no LCD subpixel stripe — grayscale
-    AA is correct. Remove all lcdfilter=lcddefault settings.
-  - Replace ping network check with curl (ICMP is blocked in Crostini VM)
-  - Add --yes to gpg --dearmor for NodeSource key (idempotent on re-run)
-  - Remove transitional apt-transport-https (built into apt on Bookworm)
-  - Bare-metal audit: confirmed zero systemctl, NetworkManager, modprobe,
-    bootloader, bluetooth, or display server management references
+  * remove pulseaudio daemon (conflicts with Crostini host audio)
+  * remove standalone xwayland (conflicts with sommelier)
+  * fix OLED font rendering: rgba=none (no LCD subpixel stripe)
+  * replace ping with curl for network check (ICMP blocked)
+  * add --yes to gpg --dearmor for idempotent re-runs
+  * remove transitional apt-transport-https
 
 2.2.0  2026-03-08
-------------------
 
-  - Remove Fish shell step entirely (Crostini default shell is bash)
-  - Renumber steps 18-20 → 17-19 (19 steps total)
-  - Remove all Fish config file writes, check_tool, check_config refs
-  - Final compatibility audit against Lenovo 82QS0001US hardware:
-    Snapdragon 7c Gen 2, aarch64, 4 GB LPDDR4x, 128 GB eMMC,
-    13.3" 1920x1080 OLED, Debian Bookworm arm64 container
+  * remove Fish shell step (Crostini default is bash)
+  * renumber steps 18-20 -> 17-19
 
 2.1.1  2026-03-08
-------------------
 
-  - Add vm.swappiness=10 and dirty ratio tuning for 4 GB RAM device
-  - Add /etc/sysctl.d/99-crostini-memory.conf to summary config check
-  - Update step 15 banner and help text to reflect memory tuning
-  - Final hardware audit against Snapdragon 7c Gen 2 / aarch64 / FHD OLED
+  * add vm.swappiness=10 and dirty ratio tuning for 4 GB device
+  * add memory config to summary verification
 
 2.1.0  2026-03-08
-------------------
 
-  - Eliminate all eval usage: run() passes "$@" directly
-  - Add run_shell() for pipe/redirect-only commands (no user input)
-  - Add write_file() and write_file_sudo() helpers for dry-run config writes
-  - All config file writes now respect --dry-run
-  - Fix SC2155: separate declare/assign for LOG_FILE, CROS_UID
-  - Fix SC2034: remove unused BLUE color variable
-  - Replace hardcoded UID 1000 with dynamic $(id -u) via CROS_UID
-  - Pipefail-safe logging: separate file write + stdout (no | tee)
-  - Pipefail-safe run()/run_shell(): redirect to log, no pipe
-  - Add trap handler for EXIT/INT/TERM with /tmp cleanup
-  - Guard all sudo apt install with || warn/die
-  - Guard sudo sysctl --system, sudo locale-gen
-  - 12 parallel audits: shellcheck, syntax, injection, error handling,
-    idempotency, path safety, dry-run coverage, cross-references,
-    signal handling, unused vars, quoting, flag parsing
+  * eliminate all eval usage: run() passes "$@" directly
+  * add run_shell(), write_file(), write_file_sudo() helpers
+  * replace hardcoded UID 1000 with $(id -u)
+  * pipefail-safe logging (no pipe in log path)
+  * add trap handler for EXIT/INT/TERM
 
 2.0.0  2026-03-08
-------------------
 
-  - Full rewrite: fully automated setup
-  - Auto-open ChromeOS settings via garcon-url-handler:
-    GPU flags, microphone, USB, shared folders, port forwarding,
-    disk resize, container backup
-  - Add GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
-  - Add audio stack (ALSA, PulseAudio, GStreamer codecs)
-  - Add display scaling (sommelier, GTK 2/3/4, Qt, Xft, fontconfig,
-    cursor theme) tuned for 13.3" FHD OLED
-  - Add GUI apps with MIME defaults, Thunar, screenshots, archive
-    manager, accessibility, notifications, 8 font families
-  - Add VS Code Wayland/Ozone flags
-  - Auto-open container backup page
-  - Summary reports GPU/Vulkan, Wayland/sommelier, audio/mic,
-    shared folders, config file status, quick-test commands
+  * full rewrite: 19-step automated setup
+  * auto-open ChromeOS settings via garcon-url-handler
+  * GPU + graphics stack (Mesa, Virgl, Wayland, Vulkan)
+  * audio stack (ALSA, PulseAudio, GStreamer)
+  * display scaling tuned for 13.3" FHD OLED
+  * GUI apps with MIME defaults, fonts, screenshots
+  * VS Code Wayland/Ozone flags
+  * summary: GPU, Vulkan, Wayland, audio, configs, tools
 
 1.1.0  2026-03-08
-------------------
 
-  - Add interactive GUI prerequisites checklist
-  - Add GPU detection (/dev/dri/renderD128, sysfs driver)
-  - Add mesa-utils to GUI packages for GPU verification
-  - Add GPU/Wayland/audio/shared folder status to summary
+  * add GPU detection and verification
+  * add GPU/Wayland/audio/shared folder status to summary
 
 1.0.0  2026-03-08
-------------------
 
-  - Initial release: 15-step Crostini bootstrap
-  - Preflight checks (arch, Crostini, disk, network)
-  - System update, core CLI utilities, build essentials
-  - Python, Node.js LTS (arm64), Rust (aarch64)
-  - Git configuration, VS Code arm64
-  - Flatpak + Flathub, SSH key generation
-  - Container resource tuning (sysctl, locale, env, paths)
-  - Checkpoint resume, --dry-run, colored output, full logging
+  * initial release: Crostini bootstrap with checkpoint resume,
+    --dry-run, colored output, and full logging
