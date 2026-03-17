@@ -8,6 +8,79 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.8  2026-03-17
+
+  * fix step 9 banner: "Firefox" → "Firefox ESR" — banner said "Firefox"
+    but the script installs firefox-esr; now matches usage() and README.
+  * sync README step table with usage() help text: expanded abbreviated
+    descriptions (e.g. "CLI tools" → "Core CLI utilities", "HiDPI" →
+    "Display scaling and HiDPI", "Tuning" → "Container resource tuning")
+    so all three sources (banner, usage, README) use consistent
+    terminology.
+  * sync README config files section: add apt download tuning
+    (/etc/apt/apt.conf.d/90parallel) which was written by step 3 but
+    missing from the README narrative.
+  * sync README verify section: add vulkaninfo, speaker-test, xdpyinfo,
+    and fc-match monospace to match the script's step 18 quick-test
+    commands (README only listed 4 of 8 commands).
+  * sync README files section: add LICENSE to file listing (was present
+    in the repo but missing from the README table).
+  * bump version 3.8.7 → 3.8.8
+
+3.8.7  2026-03-17
+
+  * fix step 18 verification: microphone not-detected line used ✗
+    (failure symbol, RED convention) with YELLOW color — inconsistent
+    with the symbol/color contract used everywhere else in the script
+    (✗=RED=failure, ⚠=YELLOW=warning, ✓=GREEN=pass).  Microphone is
+    a ChromeOS settings toggle, not a script installation failure, so
+    changed to ⚠ YELLOW to match the warning convention.
+  * bump version 3.8.6 → 3.8.7
+
+3.8.6  2026-03-17
+
+  * fix: --from-step and --verify ignored in --dry-run mode.
+    set_checkpoint is a no-op in dry-run (by design — zero side
+    effects), but the deferred checkpoint from --from-step/--verify
+    also wasn't written, so get_checkpoint() always returned 0 and
+    all 18 steps ran regardless of the --from-step value.  Fix: add
+    _CHECKPOINT_OVERRIDE in-memory variable that get_checkpoint()
+    checks before reading the on-disk file.  The deferred checkpoint
+    always sets this override (both dry-run and live), so
+    should_run_step correctly skips earlier steps.  Per-step
+    set_checkpoint still correctly skips disk writes in dry-run.
+    Confirmed: --from-step=17 --dry-run now runs only steps 17–18;
+    --verify --dry-run now runs only step 18.
+  * bump version 3.8.5 → 3.8.6
+
+3.8.5  2026-03-17
+
+  * fix M1: eliminate run_shell() (bash -c) entirely — NodeSource repo
+    write replaced with printf | write_file_sudo, removing the last
+    shell-injection surface from the script.  run_shell() function
+    removed as dead code.
+  * fix M2: add last-verified date (2026-03-16) and verification
+    command URL to NODESOURCE_GPG_FP constant comment, so future
+    maintainers can re-verify after key rotation.
+  * fix M3: write_file_sudo() now sets mode 644 on tmpfile before mv,
+    ensuring /etc/ config files are never unreadable between write and
+    caller chmod.  Remove 4 now-redundant per-callsite chmod 644 calls
+    (apt.conf.d, sysctl.d ×2, profile.d).
+  * fix L1: VS Code curl missing -s (silent) flag — progress meter
+    contaminated log; changed -fSL to -fsSL matching all other curl
+    calls.
+  * fix L2: expand rustup TOFU comment to document the tradeoff vs
+    NodeSource GPG pinning and note that rustup.rs does not publish a
+    stable signing key.
+  * fix L3: cleanup trap temp-file removal converted from A&&B pattern
+    to if/fi for consistency with post-3.8.1 style.
+  * fix L4: step 3 apt parallel comment now notes Pipeline-Depth
+    applies to HTTP only; HTTPS repos benefit from Queue-Mode but not
+    HTTP pipelining.
+  * update README: "No eval" bullet updated to "No eval, no bash -c"
+    reflecting run_shell removal.
+  * bump version 3.8.4 → 3.8.5
+
 3.8.4  2026-03-16
 
   * fix: guard 7 pipeline assignments against set -eo pipefail early

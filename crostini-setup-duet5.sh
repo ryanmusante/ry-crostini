@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.4
-# Date:    2026-03-16
+# Version: 3.8.8
+# Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
@@ -14,13 +14,16 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.4"
+readonly SCRIPT_VERSION="3.8.8"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.crostini-setup-checkpoint"
 readonly LOCK_FILE="${HOME}/.crostini-setup.lock"
 readonly NODE_MAJOR=22
+# NodeSource GPG key fingerprint — last verified 2026-03-16
+# Verify: curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+#           | gpg --show-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}'
 readonly NODESOURCE_GPG_FP="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
 readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
 _cros_uid="$(id -u)" || { printf 'FATAL: cannot determine UID\n' >&2; exit 1; }
@@ -41,6 +44,7 @@ UNATTENDED=true
 MINIMAL=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
+_CHECKPOINT_OVERRIDE=""
 _LOCK_ACQUIRED=false
 _received_signal=""
 
@@ -61,10 +65,10 @@ cleanup() {
     # which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
     # Remove temp files
-    [[ -n "${_VSCODE_DEB:-}" ]] && rm -f "$_VSCODE_DEB" 2>/dev/null
-    [[ -n "${_ns_key:-}" ]] && rm -f "$_ns_key" 2>/dev/null
-    [[ -n "${_ns_gpg:-}" ]] && sudo rm -f "$_ns_gpg" 2>/dev/null
-    [[ -n "${_rustup_tmp:-}" ]] && rm -f "$_rustup_tmp" 2>/dev/null
+    if [[ -n "${_VSCODE_DEB:-}" ]]; then rm -f "$_VSCODE_DEB" 2>/dev/null; fi
+    if [[ -n "${_ns_key:-}" ]]; then rm -f "$_ns_key" 2>/dev/null; fi
+    if [[ -n "${_ns_gpg:-}" ]]; then sudo rm -f "$_ns_gpg" 2>/dev/null; fi
+    if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         rm -f "$LOCK_FILE/pid" 2>/dev/null || true
@@ -169,6 +173,12 @@ step_banner() {
 
 # Checkpoint system
 get_checkpoint() {
+    # In-memory override: set by --from-step/--verify so should_run_step
+    # works in --dry-run mode (where set_checkpoint is a no-op).
+    if [[ -n "$_CHECKPOINT_OVERRIDE" ]]; then
+        echo "$_CHECKPOINT_OVERRIDE"
+        return 0
+    fi
     if [[ -f "$STEP_FILE" ]]; then
         local val
         val="$(cat "$STEP_FILE")"
@@ -251,36 +261,6 @@ run() {
     return "$rc"
 }
 
-# run_shell: execute hardcoded string via bash -c; respects dry-run.
-# SECURITY: $1 is interpolated into bash -c — only pass hardcoded strings,
-# NEVER user input.  Callsites: line ~1302 (NodeSource repo setup) only.
-# If adding new callsites, verify the string is fully hardcoded.
-run_shell() {
-    if $DRY_RUN; then
-        log "[DRY-RUN] $1"
-        return 0
-    fi
-    log "[EXEC] $1"
-    local rc _prev_e=false _prev_pf=false
-    [[ "$-" == *e* ]] && _prev_e=true
-    shopt -qo pipefail 2>/dev/null && _prev_pf=true
-    set +eo pipefail
-    bash -c "set -euo pipefail; $1" 2>&1 | _tee_log
-    # Capture PIPESTATUS atomically — any subsequent command resets it
-    local _ps=("${PIPESTATUS[@]}")
-    rc=${_ps[0]}
-    local _tee_rc=${_ps[1]:-0}
-    if $_prev_pf; then set -o pipefail; fi
-    if $_prev_e; then set -e; fi
-    if [[ $_tee_rc -ne 0 ]]; then
-        warn "Log pipeline failed (tee exit $_tee_rc) during: $1"
-    fi
-    if [[ $rc -ne 0 ]]; then
-        warn "Shell command exited $rc: $1"
-    fi
-    return "$rc"
-}
-
 # write_file: atomic write stdin to path, respects dry-run
 write_file() {
     local dest="$1"
@@ -299,6 +279,8 @@ write_file() {
 }
 
 # write_file_sudo: atomic write via sudo, respects dry-run
+# Output file mode is 644 (readable by all) — appropriate for /etc/ config files.
+# Callers that need a different mode should chmod after calling.
 write_file_sudo() {
     local dest="$1"
     if $DRY_RUN; then
@@ -310,6 +292,7 @@ write_file_sudo() {
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     sudo tee "$tmp" > /dev/null || { sudo rm -f "$tmp"; die "Cannot write $dest"; }
+    sudo chmod 644 "$tmp" || { sudo rm -f "$tmp"; die "Cannot chmod tmpfile for $dest"; }
     sudo mv "$tmp" "$dest" || { sudo rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest (sudo)"
 }
@@ -520,6 +503,9 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock — fix #2)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
+    # In-memory override ensures should_run_step works even in --dry-run
+    # (where set_checkpoint is a no-op and the file is never written).
+    _CHECKPOINT_OVERRIDE="$_DEFERRED_CHECKPOINT"
     set_checkpoint "$_DEFERRED_CHECKPOINT" || die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
@@ -732,6 +718,8 @@ if should_run_step 3; then
     # Enable HTTP pipelining — sends multiple requests per TCP connection.
     # Queue-Mode "access" allows parallel connections across URIs.
     # Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint.
+    # NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default)
+    # benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -740,7 +728,6 @@ Acquire::Queue-Mode "access";
 Acquire::http::Pipeline-Depth "4";
 Acquire::Languages "none";
 EOF
-        run sudo chmod 644 "$APT_PARALLEL" || warn "chmod 644 failed on $APT_PARALLEL"
     else
         log "Parallel apt config already exists"
     fi
@@ -1155,7 +1142,7 @@ EOF
 fi
 # Step 9: GUI application essentials
 if should_run_step 9; then
-    step_banner 9 "GUI applications (Firefox, Thunar, Evince, fonts, screenshots, MIME defaults)"
+    step_banner 9 "GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults)"
 
     GUI_PKGS=(
         # Browser
@@ -1299,7 +1286,8 @@ if should_run_step 11; then
             || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "Cannot move GPG keyring into place"; }
         rm -f "$_ns_key"
         unset _ns_key _ns_gpg
-        run_shell "echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main' | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null"
+        printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
+            | write_file_sudo /etc/apt/sources.list.d/nodesource.list
         # Verify sources file was written correctly (#6)
         if [[ ! -s /etc/apt/sources.list.d/nodesource.list ]]; then
             die "NodeSource sources.list is empty or missing after write"
@@ -1341,7 +1329,10 @@ if should_run_step 12; then
             log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o /tmp/rustup-init-XXXXXXXXXX.sh"
             log "[DRY-RUN] sh /tmp/rustup-init-XXXXXXXXXX.sh -y --default-toolchain stable"
         else
-            # TOFU (HTTPS-only); download to tmpfile to prevent executing truncated script (#4)
+            # TOFU (Trust On First Use): HTTPS-only download with no signature/checksum
+            # verification — this is the official rustup install method. Unlike NodeSource
+            # (GPG fingerprint pinned), rustup.rs does not publish a stable signing key.
+            # Download to tmpfile to prevent executing truncated script (#4).
             _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)" || die "Cannot create tmpfile for rustup installer"
             if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o "$_rustup_tmp"; then
                 rm -f "$_rustup_tmp"
@@ -1376,13 +1367,13 @@ if should_run_step 13; then
         log "VS Code already installed: $(timeout 3 code --version 2>/dev/null | head -1 || true)"
     else
         if $DRY_RUN; then
-            log "[DRY-RUN] curl -fSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
+            log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
             log "[DRY-RUN] sudo dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)" || die "Cannot create tmpfile for VS Code download"
             _vscode_rc=0
-            run curl -fSL --connect-timeout 10 --max-time 120 "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
+            run curl -fsSL --connect-timeout 10 --max-time 120 "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
             if [[ "$_vscode_rc" -ne 0 ]]; then
                 warn "VS Code download failed (curl exit ${_vscode_rc}). Install manually:"
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
@@ -1432,7 +1423,6 @@ if should_run_step 14; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
 EOF
-        run sudo chmod 644 "$SYSCTL_CONF" || warn "chmod 644 failed on $SYSCTL_CONF — file may be unreadable"
         if run sudo sysctl --system; then
             $DRY_RUN || log "inotify watchers applied (524288)"
         else
@@ -1486,7 +1476,6 @@ if [ -d "$HOME/.npm-global/bin" ]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
 fi
 ENVEOF
-        run sudo chmod 644 "$PROFILE_D" || warn "chmod 644 failed on $PROFILE_D — login env may not load"
     else
         log "Environment profile already exists"
     fi
@@ -1505,7 +1494,6 @@ vm.vfs_cache_pressure=150
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 MEMEOF
-            run sudo chmod 644 "$MEM_CONF" || warn "chmod 644 failed on $MEM_CONF"
             run sudo sysctl --system || warn "memory sysctl apply failed"
         else
             warn "vm.swappiness is read-only in this container (expected in Crostini)"
@@ -1683,7 +1671,7 @@ if should_run_step 18; then
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         logprintf '  Microphone:    %b✓%b capture device present\n' "$GREEN" "$RESET"
     else
-        logprintf '  Microphone:    %b✗%b not detected — enable in ChromeOS Linux settings\n' "$YELLOW" "$RESET"
+        logprintf '  Microphone:    %b⚠%b not detected — enable in ChromeOS Linux settings\n' "$YELLOW" "$RESET"
     fi
     if command -v pactl &>/dev/null; then
         PA_STATUS="$(pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs || true)"

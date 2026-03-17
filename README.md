@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.8.4-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.8.8-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -40,31 +40,32 @@ bash crostini-setup-duet5.sh --reset                      # clear checkpoint, st
 
 | # | Step |
 |---|------|
-| 1 | Preflight (arch, Crostini, disk, network, root, sommelier) |
-| 2 | ChromeOS integration: GPU, mic, USB, folders, ports, disk (--interactive) |
-| 3 | System update + full-upgrade |
-| 4 | CLI tools (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, …) |
-| 5 | Build essentials + dev headers |
-| 6 | GPU + graphics (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
-| 7 | Audio (ALSA, PulseAudio client, GStreamer, pavucontrol) |
-| 8 | HiDPI (sommelier, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
-| 9 | GUI apps (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME) |
-| 10 | Python 3 + pip + venv |
-| 11 | Node.js LTS arm64 (NodeSource) |
-| 12 | Rust stable aarch64 (rustup) |
-| 13 | VS Code arm64 + Wayland flags |
-| 14 | Tuning (inotify 524288, locale, env, XDG, memory if writable) |
-| 15 | Flatpak + Flathub |
+| 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
+| 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
+| 3 | System update, upgrade, and full-upgrade |
+| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, …) |
+| 5 | Build essentials and development headers |
+| 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
+| 7 | Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol) |
+| 8 | Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
+| 9 | GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults) |
+| 10 | Python ecosystem (python3, pip, venv) |
+| 11 | Node.js LTS arm64 via NodeSource |
+| 12 | Rust stable aarch64 via rustup |
+| 13 | VS Code arm64 .deb + Wayland flags |
+| 14 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
+| 15 | Flatpak + Flathub (ARM64 app source) |
 | 16 | Gaming packages (DOSBox, ScummVM, RetroArch) |
-| 17 | Container backup (--interactive) |
-| 18 | Summary + verification |
+| 17 | Container backup (`--interactive`) |
+| 18 | Summary and verification |
 
 ## Config files written
 
-GPU env, audio env, sommelier scaling, Qt theming, GTK 2/3/4 dark theme
-(Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120, fontconfig,
-Adwaita cursor, PulseAudio client, VS Code Wayland flags, inotify watchers,
-shell env + PATH. Memory tuning attempted if /proc/sys/vm/ is writable.
+Apt download tuning, GPU env, audio env, sommelier scaling, Qt theming,
+GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources
+DPI 120, fontconfig, Adwaita cursor, PulseAudio client, VS Code Wayland
+flags, inotify watchers, shell env + PATH. Memory tuning attempted if
+/proc/sys/vm/ is writable.
 
 ## Features
 
@@ -75,7 +76,7 @@ shell env + PATH. Memory tuning attempted if /proc/sys/vm/ is writable.
   * **Idempotent** — config files skip if already present
   * **Concurrent-safe** — PID-based mkdir lock
   * **Atomic writes** — tmpfile + mv for all config files
-  * **No eval** — `run()` passes `"$@"` directly; `run_shell()` uses `bash -c` with hardcoded strings only (never user input)
+  * **No eval, no bash -c** — `run()` passes `"$@"` directly; no shell string interpolation anywhere
   * **Colored output** — respects `NO_COLOR`
   * **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600)
 
@@ -95,8 +96,12 @@ Always download the **arm64** `.deb` variant.
 ```bash
 glxgears                        # GPU
 glmark2-es2-wayland             # GPU benchmark
+vulkaninfo --summary            # Vulkan
 pactl info                      # audio
+speaker-test -t wav -c 2        # audio playback
+xdpyinfo | grep resolution      # display
 fc-match sans-serif             # fonts
+fc-match monospace              # fonts
 ```
 
 ## Files
@@ -105,6 +110,7 @@ fc-match sans-serif             # fonts
 crostini-setup-duet5.sh    main script (bash)
 README.md                  this file
 CHANGELOG.txt              version history
+LICENSE                    MIT license
 ```
 
 See [CHANGELOG.txt](CHANGELOG.txt) for the full version history.
