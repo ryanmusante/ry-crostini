@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.0
+# Version: 3.8.1
 # Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -14,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.0"
+readonly SCRIPT_VERSION="3.8.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -122,6 +122,16 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+# _prompt: interactive prompt — displays on stderr (user-facing) and appends to log.
+# Usage identical to printf.  All interactive instructions and "Press Enter" lines
+# go through here so the audit trail is complete.
+_prompt() {
+    # shellcheck disable=SC2059
+    printf "$@" >&2
+    # shellcheck disable=SC2059
+    printf "$@" >> "$LOG_FILE" 2>/dev/null || true
+}
+
 # _strip_log_ansi: single-pass ANSI-escape removal from the log file.
 # Called once at script exit (cleanup) rather than per-line, avoiding both
 # process-substitution races and per-call sed forks.
@@ -207,14 +217,19 @@ run() {
     #   2) PIPESTATUS is not reset by an || guard
     set +eo pipefail
     "$@" 2>&1 | _tee_log
-    # Capture both pipeline stages: [0]=command, [1]=tee/log
-    rc=${PIPESTATUS[0]}
-    local _tee_rc=${PIPESTATUS[1]:-0}
+    # Capture PIPESTATUS atomically — any subsequent command resets it
+    local _ps=("${PIPESTATUS[@]}")
+    rc=${_ps[0]}
+    local _tee_rc=${_ps[1]:-0}
     # Restore caller's shell options — never force-enable what wasn't set
     $_prev_e && set -e
     $_prev_pf && set -o pipefail
-    [[ $_tee_rc -ne 0 ]] && warn "Log pipeline failed (tee exit $_tee_rc) during: $*" || true
-    [[ $rc -ne 0 ]] && warn "Command exited $rc: $*" || true
+    if [[ $_tee_rc -ne 0 ]]; then
+        warn "Log pipeline failed (tee exit $_tee_rc) during: $*"
+    fi
+    if [[ $rc -ne 0 ]]; then
+        warn "Command exited $rc: $*"
+    fi
     return "$rc"
 }
 
@@ -233,13 +248,18 @@ run_shell() {
     shopt -qo pipefail 2>/dev/null && _prev_pf=true
     set +eo pipefail
     bash -c "set -euo pipefail; $1" 2>&1 | _tee_log
-    # Capture both pipeline stages: [0]=command, [1]=tee/log
-    rc=${PIPESTATUS[0]}
-    local _tee_rc=${PIPESTATUS[1]:-0}
+    # Capture PIPESTATUS atomically — any subsequent command resets it
+    local _ps=("${PIPESTATUS[@]}")
+    rc=${_ps[0]}
+    local _tee_rc=${_ps[1]:-0}
     $_prev_e && set -e
     $_prev_pf && set -o pipefail
-    [[ $_tee_rc -ne 0 ]] && warn "Log pipeline failed (tee exit $_tee_rc) during: $1" || true
-    [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1" || true
+    if [[ $_tee_rc -ne 0 ]]; then
+        warn "Log pipeline failed (tee exit $_tee_rc) during: $1"
+    fi
+    if [[ $rc -ne 0 ]]; then
+        warn "Shell command exited $rc: $1"
+    fi
     return "$rc"
 }
 
@@ -325,7 +345,9 @@ check_tool() {
         local ver
         # Some tools (java, scummvm) output version to stderr; try stdout first
         ver="$(timeout 3 "$cmd" --version 2>/dev/null | head -1)" || true
-        [[ -z "$ver" ]] && ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null | head -1)" || true
+        if [[ -z "$ver" ]]; then
+            ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null | head -1)" || true
+        fi
         logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
         ((_verify_pass++)) || true
     else
@@ -570,13 +592,13 @@ if should_run_step 2; then
         log "GPU acceleration not detected."
         if ! $DRY_RUN; then
             if ! $UNATTENDED; then
-                printf '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET" >&2
-                printf '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET" >&2
-                printf '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET" >&2
-                printf '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET" >&2
+                _prompt '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
+                _prompt '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
+                _prompt '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
+                _prompt '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
                 open_chromeos_url "chrome://flags/#crostini-gpu-support"
                 sleep 2
-                printf '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET" >&2
+                _prompt '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
                 read -r _ </dev/tty || true
             fi
             if [[ -e /dev/dri/renderD128 ]]; then
@@ -596,10 +618,10 @@ if should_run_step 2; then
         log "Microphone not detected."
         if ! $DRY_RUN; then
             if ! $UNATTENDED; then
-                printf '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET" >&2
+                _prompt '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
                 open_chromeos_url "chrome://os-settings/crostini"
                 sleep 2
-                printf '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET" >&2
+                _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
                 read -r _ </dev/tty || true
             fi
             if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
@@ -615,10 +637,10 @@ if should_run_step 2; then
     # 2c. USB device passthrough
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening USB device management..."
-        printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET" >&2
+        _prompt '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
         open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
         sleep 2
-        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+        _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
@@ -632,10 +654,10 @@ if should_run_step 2; then
         else
             log "No shared folders."
             if ! $DRY_RUN && ! $UNATTENDED; then
-                printf '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET" >&2
+                _prompt '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET"
                 open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
                 sleep 2
-                printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+                _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
                 read -r _ </dev/tty || true
             elif $DRY_RUN; then
                 log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
@@ -647,11 +669,11 @@ if should_run_step 2; then
     # 2e. Port forwarding
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening port forwarding settings..."
-        printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET" >&2
-        printf '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET" >&2
+        _prompt '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
+        _prompt '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET"
         open_chromeos_url "chrome://os-settings/crostini/portForwarding"
         sleep 2
-        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+        _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
@@ -669,10 +691,10 @@ if should_run_step 2; then
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
         if ! $DRY_RUN && ! $UNATTENDED; then
-            printf '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET" >&2
+            _prompt '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
-            printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+            _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
             read -r _ </dev/tty || true
         elif $DRY_RUN; then
             log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
@@ -1302,7 +1324,7 @@ if should_run_step 12; then
             log "[DRY-RUN] sh /tmp/rustup-init-XXXXXXXXXX.sh -y --default-toolchain stable"
         else
             # TOFU (HTTPS-only); download to tmpfile to prevent executing truncated script (#4)
-            _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)"
+            _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)" || die "Cannot create tmpfile for rustup installer"
             if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o "$_rustup_tmp"; then
                 rm -f "$_rustup_tmp"
                 die "Rustup download failed"
@@ -1340,7 +1362,7 @@ if should_run_step 13; then
             log "[DRY-RUN] sudo dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
             log "Downloading VS Code arm64 .deb..."
-            _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)"
+            _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)" || die "Cannot create tmpfile for VS Code download"
             _vscode_rc=0
             run curl -fSL --connect-timeout 10 --max-time 120 "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
             if [[ "$_vscode_rc" -ne 0 ]]; then
@@ -1545,11 +1567,11 @@ if should_run_step 17; then
 
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening ChromeOS backup page to snapshot this fresh setup..."
-        printf '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET" >&2
-        printf '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET" >&2
+        _prompt '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET"
+        _prompt '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET"
         open_chromeos_url "chrome://os-settings/crostini/exportImport"
         sleep 2
-        printf '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET" >&2
+        _prompt '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
         read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"

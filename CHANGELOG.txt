@@ -8,6 +8,28 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.1  2026-03-16
+
+  * fix PIPESTATUS race in run() and run_shell(): rc=${PIPESTATUS[0]}
+    reset the array before _tee_rc=${PIPESTATUS[1]} could read it;
+    tee failure detection was dead code (_tee_rc always 0).  Now saves
+    entire PIPESTATUS array atomically into local _ps before any reads.
+  * fix A&&B||C anti-pattern in run() and run_shell(): the
+    [[ $rc -ne 0 ]] && warn "..." || true construct masks warn()
+    failures; replaced with explicit if/fi blocks.
+  * fix check_tool || true operator precedence: the line
+    [[ -z "$ver" ]] && ver="$(...)" || true would skip the fallback
+    when ver was non-empty (|| true bound to &&, not to $(...));
+    replaced with explicit if/fi.
+  * fix missing || die on mktemp in steps 12 and 13: _rustup_tmp and
+    _VSCODE_DEB mktemp calls had no failure guard; under set -e the
+    error message was cryptic; now die with clear tmpfile context.
+  * add _prompt() function: interactive printf-to-stderr calls in
+    steps 2 and 17 (25 lines) bypassed the log file entirely, leaving
+    no audit trail of user-facing instructions and "Press Enter"
+    prompts; _prompt() writes to both stderr and the log file.
+  * bump version 3.8.0 → 3.8.1
+
 3.8.0  2026-03-16
 
   * fix cleanup() recursive invocation: nested signal during cleanup
