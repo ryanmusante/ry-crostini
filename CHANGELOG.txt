@@ -8,6 +8,53 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.4  2026-03-16
+
+  * fix: guard 7 pipeline assignments against set -eo pipefail early
+    abort.  Under pipefail, `VAR="$(cmd1 | cmd2)"` kills the script if
+    cmd1 exits non-zero — the graceful validation on the next line never
+    executes.  Affected pipelines: df|tail|tr (steps 1d, 2f, 18),
+    find|wc (steps 2d, 7, 18), gpg|awk (step 11 fingerprint verify).
+    Fix: append `|| true` to each outer assignment so downstream
+    validation/fallback code runs as intended.
+  * fix: run_shell security comment cross-reference said "line ~1245"
+    but actual (and only) callsite is at line ~1302 (NodeSource repo
+    setup).  Updated to prevent stale cross-ref from misleading future
+    audits.
+  * fix: README version badge was stuck at 3.8.0; updated to 3.8.4 to
+    match SCRIPT_VERSION and CHANGELOG.
+
+3.8.3  2026-03-16
+
+  * fix _strip_log_ansi sed pattern: \?* is ambiguous in GNU BRE (\? is
+    a quantifier, not a literal question mark), so DEC private mode
+    sequences like \e[?25h (show/hide cursor) were not stripped from the
+    log file.  Fix: replace \?* with character class [?]* which is
+    unambiguous across all sed implementations.
+  * fix df stderr leak in step 1d (line 548): df could emit warnings to
+    stderr (e.g. on unusual filesystems) that leaked to the terminal.
+    Steps 2f and 18 already suppressed this with 2>/dev/null — now
+    consistent across all three df call sites.
+  * fix signal exit codes: cleanup() exited with $? from the failing
+    command, not 128+signum.  Parent processes (CI runners, wrapper
+    scripts) could not distinguish a signal death (SIGINT/SIGTERM) from
+    a normal non-zero exit.  Fix: separate _handle_signal() stores the
+    signal name, cleanup re-raises with kill -SIG $$ after all cleanup
+    completes, producing the standard 128+N exit code.  EXIT trap is now
+    registered separately from signal traps to avoid masking the signal.
+  * bump version 3.8.2 → 3.8.3
+
+3.8.2  2026-03-16
+
+  * fix CRITICAL: set -e/pipefail restoration order crash in run() and
+    run_shell(): `$_prev_e && set -e` before `$_prev_pf && set -o pipefail`
+    caused a latent crash — if caller had set -e ON but pipefail OFF, the
+    `false && set -o pipefail` short-circuit returned 1 under the
+    just-restored errexit, killing the script.  Fix: (a) use if/then
+    instead of && to eliminate non-zero exit from false conditions,
+    (b) restore pipefail BEFORE errexit for defense-in-depth.
+  * bump version 3.8.1 → 3.8.2
+
 3.8.1  2026-03-16
 
   * fix PIPESTATUS race in run() and run_shell(): rc=${PIPESTATUS[0]}

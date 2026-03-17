@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.1
+# Version: 3.8.4
 # Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -14,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.1"
+readonly SCRIPT_VERSION="3.8.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -42,6 +42,11 @@ MINIMAL=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _LOCK_ACQUIRED=false
+_received_signal=""
+
+# Signal handler — stores signal name, triggers EXIT trap via exit
+# shellcheck disable=SC2317
+_handle_signal() { _received_signal="$1"; exit 1; }
 
 # Cleanup trap
 # shellcheck disable=SC2317,SC2329
@@ -76,9 +81,18 @@ cleanup() {
         fi
         warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
     fi
+    # Re-raise caught signal for correct 128+N exit code to parent
+    if [[ -n "${_received_signal:-}" ]]; then
+        kill -"$_received_signal" "$$"
+    fi
     exit "$rc"
 }
-trap cleanup EXIT INT TERM HUP PIPE QUIT
+trap cleanup EXIT
+trap '_handle_signal INT' INT
+trap '_handle_signal TERM' TERM
+trap '_handle_signal HUP' HUP
+trap '_handle_signal PIPE' PIPE
+trap '_handle_signal QUIT' QUIT
 
 # Colors
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -139,7 +153,7 @@ _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { warn "Cannot create tmpfile for ANSI strip"; return 1; }
-    if sed 's/\x1b\[\?*[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
+    if sed 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; warn "Cannot replace log after ANSI strip"; return 1; }
     else
         rm -f "$_tmp"
@@ -221,9 +235,13 @@ run() {
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    # Restore caller's shell options — never force-enable what wasn't set
-    $_prev_e && set -e
-    $_prev_pf && set -o pipefail
+    # Restore caller's shell options — never force-enable what wasn't set.
+    # Restore pipefail BEFORE errexit: if pipefail was off, the old
+    # `false && set -o pipefail` returned 1, which killed the script
+    # under the just-restored set -e.  Using if/then avoids the non-zero
+    # exit code from a false && short-circuit entirely.
+    if $_prev_pf; then set -o pipefail; fi
+    if $_prev_e; then set -e; fi
     if [[ $_tee_rc -ne 0 ]]; then
         warn "Log pipeline failed (tee exit $_tee_rc) during: $*"
     fi
@@ -235,7 +253,7 @@ run() {
 
 # run_shell: execute hardcoded string via bash -c; respects dry-run.
 # SECURITY: $1 is interpolated into bash -c — only pass hardcoded strings,
-# NEVER user input.  Callsites: line ~1245 (NodeSource repo setup) only.
+# NEVER user input.  Callsites: line ~1302 (NodeSource repo setup) only.
 # If adding new callsites, verify the string is fully hardcoded.
 run_shell() {
     if $DRY_RUN; then
@@ -252,8 +270,8 @@ run_shell() {
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    $_prev_e && set -e
-    $_prev_pf && set -o pipefail
+    if $_prev_pf; then set -o pipefail; fi
+    if $_prev_e; then set -e; fi
     if [[ $_tee_rc -ne 0 ]]; then
         warn "Log pipeline failed (tee exit $_tee_rc) during: $1"
     fi
@@ -541,7 +559,7 @@ if should_run_step 1; then
     fi
 
     # 1d. Disk space check (need at least 2 GB free)
-    AVAIL_KB="$(df --output=avail / | tail -1 | tr -d ' ')"
+    AVAIL_KB="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ ! "$AVAIL_KB" =~ ^[0-9]+$ ]]; then
         die "Cannot determine available disk space (df returned '${AVAIL_KB:-empty}')"
     fi
@@ -648,7 +666,7 @@ if should_run_step 2; then
 
     # 2d. Shared folders
     if [[ -d /mnt/chromeos ]]; then
-        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)"
+        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)" || true
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
@@ -680,7 +698,7 @@ if should_run_step 2; then
     fi
 
     # 2f. Disk size check
-    _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+    _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ "$_avail_raw" =~ ^[0-9]+$ ]]; then
         AVAIL_MB_NOW=$((_avail_raw / 1024))
     else
@@ -921,7 +939,7 @@ EOF
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
         log "Audio devices in /dev/snd: ${SND_DEV_COUNT} ✓"
         if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
             log "Microphone capture device: detected ✓"
@@ -1265,7 +1283,7 @@ if should_run_step 11; then
         fi
         # Verify GPG key fingerprint to prevent supply-chain substitution
         _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
-            | awk -F: '/^fpr:/{print $10; exit}')"
+            | awk -F: '/^fpr:/{print $10; exit}')" || true
         if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
             rm -f "$_ns_key"
             die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp:-empty}. Possible key rotation or supply-chain compromise."
@@ -1597,7 +1615,7 @@ if should_run_step 18; then
     if [[ -f /dev/.cros_milestone ]]; then
         logprintf '  ChromeOS:      milestone %s\n' "$(cat /dev/.cros_milestone)"
     fi
-    _disk_avail="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+    _disk_avail="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ "$_disk_avail" =~ ^[0-9]+$ ]]; then
         logprintf '  Disk free:     %s MB\n' "$((_disk_avail / 1024))"
     else
@@ -1657,7 +1675,7 @@ if should_run_step 18; then
     # Audio
     logprintf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
         logprintf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
     else
         logprintf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"
