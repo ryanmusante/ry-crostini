@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.3.7
+# Version: 3.8.0
 # Date:    2026-03-16
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
 #              [--from-step=N] [--verify] [--reset] [--help] [--version]
-#              [--git-name=NAME] [--git-email=EMAIL] [--ssh-comment=TXT]
-#              [--ssh-passphrase=PASS]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 
@@ -16,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.3.7"
+readonly SCRIPT_VERSION="3.8.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -28,6 +26,9 @@ readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
 _cros_uid="$(id -u)" || { printf 'FATAL: cannot determine UID\n' >&2; exit 1; }
 readonly CROS_UID="$_cros_uid"
 unset _log_ts _cros_uid
+_start_epoch="$(date +%s)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
+readonly _START_EPOCH="$_start_epoch"
+unset _start_epoch
 
 # Create log file with restrictive permissions before any writes
 if ! touch "$LOG_FILE" || ! chmod 600 "$LOG_FILE"; then
@@ -38,10 +39,6 @@ fi
 DRY_RUN=false
 UNATTENDED=true
 MINIMAL=false
-_GIT_NAME=""
-_GIT_EMAIL=""
-_SSH_COMMENT=""
-_SSH_PASSPHRASE=""
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _LOCK_ACQUIRED=false
@@ -50,6 +47,14 @@ _LOCK_ACQUIRED=false
 # shellcheck disable=SC2317,SC2329
 cleanup() {
     local rc=$?
+    # Prevent recursive cleanup from nested signals
+    trap - EXIT INT TERM HUP PIPE QUIT
+    # Disable set -e inside cleanup to guarantee full execution
+    set +e
+    # Strip ANSI escape codes from the log file in a single pass.
+    # This replaces the previous per-line sed approach (via process substitution)
+    # which was racy — the background sed could be killed before flushing.
+    _strip_log_ansi
     # Remove temp files
     [[ -n "${_VSCODE_DEB:-}" ]] && rm -f "$_VSCODE_DEB" 2>/dev/null
     [[ -n "${_ns_key:-}" ]] && rm -f "$_ns_key" 2>/dev/null
@@ -57,14 +62,23 @@ cleanup() {
     [[ -n "${_rustup_tmp:-}" ]] && rm -f "$_rustup_tmp" 2>/dev/null
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
-        rm -rf "$LOCK_FILE" 2>/dev/null || true
+        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ $rc -ne 0 ]]; then
-        warn "Script exited with code $rc. Re-run to resume from checkpoint."
+        # Prefer date for consistency, fall back to $SECONDS if date hangs/fails
+        local _now _elapsed
+        _now="$(date +%s 2>/dev/null)" || _now=""
+        if [[ -n "$_now" ]]; then
+            _elapsed=$(( _now - ${_START_EPOCH:-0} ))
+        else
+            _elapsed="${SECONDS:-unknown}"
+        fi
+        warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
     fi
     exit "$rc"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT INT TERM HUP PIPE QUIT
 
 # Colors
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -98,6 +112,32 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
+# logprintf: printf to both stdout and log file (for verification output)
+# MUST be defined before step_banner (which calls it).
+# ANSI codes are stripped from the log in a single pass at exit (see _strip_log_ansi).
+logprintf() {
+    # shellcheck disable=SC2059
+    printf "$@"
+    # shellcheck disable=SC2059
+    printf "$@" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# _strip_log_ansi: single-pass ANSI-escape removal from the log file.
+# Called once at script exit (cleanup) rather than per-line, avoiding both
+# process-substitution races and per-call sed forks.
+_strip_log_ansi() {
+    [[ -f "$LOG_FILE" ]] || return 0
+    local _tmp
+    _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { warn "Cannot create tmpfile for ANSI strip"; return 1; }
+    if sed 's/\x1b\[\?*[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
+        mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; warn "Cannot replace log after ANSI strip"; return 1; }
+    else
+        rm -f "$_tmp"
+        warn "ANSI strip failed — log file retains escape codes"
+        return 1
+    fi
+}
+
 step_banner() {
     local num="$1" title="$2"
     logprintf '\n%bSTEP %s: %s%b\n\n' "$BOLD" "$num" "$title" "$RESET"
@@ -124,45 +164,83 @@ set_checkpoint() {
         log "[DRY-RUN] set checkpoint $1"
         return 0
     fi
-    # Non-atomic write accepted — data is 1-2 digits; partial write
-    echo "$1" > "$STEP_FILE"
+    # Atomic write: tmpfile + mv prevents empty/partial checkpoint on crash
+    local _ckpt_tmp
+    _ckpt_tmp="$(mktemp "${STEP_FILE}.tmp_XXXXXXXX")" || { warn "Cannot create checkpoint tmpfile"; return 1; }
+    printf '%s\n' "$1" > "$_ckpt_tmp" || { rm -f "$_ckpt_tmp"; warn "Cannot write checkpoint"; return 1; }
+    mv "$_ckpt_tmp" "$STEP_FILE" || { rm -f "$_ckpt_tmp"; warn "Cannot move checkpoint into place"; return 1; }
 }
 
 should_run_step() {
     local step_num="$1"
     local checkpoint
-    checkpoint=$(get_checkpoint)
+    checkpoint="$(get_checkpoint)"
     [[ "$step_num" -gt "$checkpoint" ]]
 }
 
-# run: execute "$@" directly; respects dry-run; wait flushes async tee.
+# _tee_log: tee stdin to terminal (raw) + log file (raw).
+# Terminal output preserves color; log file receives raw output (ANSI codes
+# are stripped in a single pass at script exit via _strip_log_ansi).
+# Previous versions used process substitution >(sed ...) which created an
+# asynchronous subprocess not tracked by wait — log data could be lost on
+# early exit.  Synchronous tee -a eliminates that race entirely.
+_tee_log() {
+    tee -a "$LOG_FILE"
+}
+
+# run: execute "$@" directly; respects dry-run.
+# NOTE: stderr is merged into stdout (2>&1) so both streams are captured in
+# the log file and displayed in execution order.  This is a deliberate
+# trade-off: callers that need separated stderr should capture it themselves.
 run() {
     if $DRY_RUN; then
         log "[DRY-RUN] $*"
         return 0
     fi
     log "[EXEC] $*"
-    local rc=0
-    "$@" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
-    # Flush tee subprocesses before checking exit code
-    wait
-    [[ $rc -ne 0 ]] && warn "Command exited $rc: $*"
-    return $rc
+    local rc _prev_e=false _prev_pf=false
+    # Save caller's shell option state before disabling
+    [[ "$-" == *e* ]] && _prev_e=true
+    shopt -qo pipefail 2>/dev/null && _prev_pf=true
+    # Temporarily disable errexit+pipefail so:
+    #   1) set -e doesn't kill us on pipeline failure
+    #   2) PIPESTATUS is not reset by an || guard
+    set +eo pipefail
+    "$@" 2>&1 | _tee_log
+    # Capture both pipeline stages: [0]=command, [1]=tee/log
+    rc=${PIPESTATUS[0]}
+    local _tee_rc=${PIPESTATUS[1]:-0}
+    # Restore caller's shell options — never force-enable what wasn't set
+    $_prev_e && set -e
+    $_prev_pf && set -o pipefail
+    [[ $_tee_rc -ne 0 ]] && warn "Log pipeline failed (tee exit $_tee_rc) during: $*" || true
+    [[ $rc -ne 0 ]] && warn "Command exited $rc: $*" || true
+    return "$rc"
 }
 
-# run_shell: execute hardcoded string via bash -c; respects dry-run; tee to terminal+log.
+# run_shell: execute hardcoded string via bash -c; respects dry-run.
+# SECURITY: $1 is interpolated into bash -c — only pass hardcoded strings,
+# NEVER user input.  Callsites: line ~1245 (NodeSource repo setup) only.
+# If adding new callsites, verify the string is fully hardcoded.
 run_shell() {
     if $DRY_RUN; then
         log "[DRY-RUN] $1"
         return 0
     fi
     log "[EXEC] $1"
-    local rc=0
-    bash -c "set -euo pipefail; $1" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2) || rc=$?
-    # Flush tee subprocesses before checking exit code
-    wait
-    [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1"
-    return $rc
+    local rc _prev_e=false _prev_pf=false
+    [[ "$-" == *e* ]] && _prev_e=true
+    shopt -qo pipefail 2>/dev/null && _prev_pf=true
+    set +eo pipefail
+    bash -c "set -euo pipefail; $1" 2>&1 | _tee_log
+    # Capture both pipeline stages: [0]=command, [1]=tee/log
+    rc=${PIPESTATUS[0]}
+    local _tee_rc=${PIPESTATUS[1]:-0}
+    $_prev_e && set -e
+    $_prev_pf && set -o pipefail
+    [[ $_tee_rc -ne 0 ]] && warn "Log pipeline failed (tee exit $_tee_rc) during: $1" || true
+    [[ $rc -ne 0 ]] && warn "Shell command exited $rc: $1" || true
+    return "$rc"
 }
 
 # write_file: atomic write stdin to path, respects dry-run
@@ -198,48 +276,80 @@ write_file_sudo() {
     log "Wrote $dest (sudo)"
 }
 
+# install_pkgs_best_effort: batch install, fallback to per-package on failure
+# Usage: install_pkgs_best_effort pkg1 pkg2 ...
+# Returns: 0 if all succeeded (batch or individual), 1 if any individual installs failed
+install_pkgs_best_effort() {
+    if $DRY_RUN; then
+        log "[DRY-RUN] apt-get install -y $*"
+        return 0
+    fi
+    # Try batch first — succeeds in the common case (O(1) apt call)
+    if run sudo apt-get install -y "$@"; then
+        return 0
+    fi
+    # Batch failed — one or more packages unavailable; install individually
+    warn "Batch install failed — falling back to per-package install"
+    local pkg _fail_count=0 _total=$#
+    for pkg in "$@"; do
+        run sudo apt-get install -y "$pkg" || { warn "Skipped unavailable: $pkg"; ((_fail_count++)) || true; }
+    done
+    if [[ "$_fail_count" -gt 0 ]]; then
+        warn "install_pkgs_best_effort: ${_fail_count}/${_total} packages failed"
+        return 1
+    fi
+    return 0
+}
+
 # Open URL in ChromeOS browser
 open_chromeos_url() {
     local url="$1"
+    log "Opening URL: $url"
     if command -v garcon-url-handler &>/dev/null; then
-        garcon-url-handler "$url" 2>/dev/null || true
+        garcon-url-handler "$url" 2>>"$LOG_FILE" || true
     elif command -v xdg-open &>/dev/null; then
-        xdg-open "$url" 2>/dev/null || true
+        xdg-open "$url" 2>>"$LOG_FILE" || true
     else
         warn "Cannot auto-open URL. Manually navigate to: $url"
     fi
 }
 
+# Verification counters (used by check_tool / check_config in step 18)
+_verify_pass=0
+_verify_fail=0
+_verify_warn=0
+
 check_tool() {
     local name="$1" cmd="$2"
     if command -v "$cmd" &>/dev/null; then
         local ver
-        ver=$("$cmd" --version 2>/dev/null | head -1) || true
+        # Some tools (java, scummvm) output version to stderr; try stdout first
+        ver="$(timeout 3 "$cmd" --version 2>/dev/null | head -1)" || true
+        [[ -z "$ver" ]] && ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null | head -1)" || true
         logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
+        ((_verify_pass++)) || true
     else
         logprintf '  %-14s %b✗%b  not found\n' "$name" "$RED" "$RESET"
+        ((_verify_fail++)) || true
     fi
 }
 
 check_config() {
     local path="$1" desc="$2"
-    if [[ -f "$path" ]]; then
+    if [[ -s "$path" ]]; then
         logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "$desc" "$path"
+        ((_verify_pass++)) || true
+    elif [[ -f "$path" ]]; then
+        logprintf '  %b⚠%b  %-44s %s (empty)\n' "$YELLOW" "$RESET" "$desc" "$path"
+        ((_verify_warn++)) || true
     else
         logprintf '  %b✗%b  %-44s %s\n' "$RED" "$RESET" "$desc" "$path"
+        ((_verify_fail++)) || true
     fi
 }
 
-# logprintf: printf to both stdout and log file (for verification output)
-logprintf() {
-    # shellcheck disable=SC2059
-    printf "$@"
-    # Strip ANSI escapes for the log file
-    # shellcheck disable=SC2059
-    printf "$@" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE" 2>/dev/null || true
-}
 
-# Usage / Help
+
 usage() {
     cat <<EOF
 ${SCRIPT_NAME} v${SCRIPT_VERSION}
@@ -250,18 +360,14 @@ USAGE:
 
 OPTIONS:
     --dry-run    Print commands without executing
-    --interactive  Prompt for ChromeOS toggles, git config, SSH key (default: unattended)
-    --git-name=NAME    Git user.name (unattended mode; ignored with --interactive)
-    --git-email=EMAIL  Git user.email (unattended mode; ignored with --interactive)
-    --ssh-comment=TXT  SSH key comment (unattended mode; default: none)
-    --ssh-passphrase=PASS  SSH key passphrase (unattended mode; default: empty/none)
-                           NOTE: visible in /proc/*/cmdline while script runs
-    --from-step=N  Start (or restart) from step N (1–20)
-    --verify       Run only step 20 (summary and verification)
+    --interactive  Prompt for ChromeOS toggles (default: unattended)
+    --from-step=N  Start (or restart) from step N (1–18)
+    --verify       Run only step 18 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
     --help       Show this help message
     --version    Show version
     --reset      Clear checkpoint and start from step 1
+    --           Stop processing options (remaining args ignored)
 
 STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
@@ -277,14 +383,12 @@ STEPS PERFORMED:
     10  Python ecosystem (python3, pip, venv)
     11  Node.js via NodeSource (LTS, arm64)
     12  Rust via rustup (aarch64)
-    13  Git configuration
-    14  VS Code (arm64 .deb + Wayland flags)
-    15  Container resource tuning (sysctl, locale, env, XDG, paths)
-    16  Flatpak + Flathub (ARM64 app source)
-    17  Gaming packages (DOSBox, ScummVM, RetroArch)
-    18  SSH key generation
-    19  Container backup (opens ChromeOS backup page with --interactive)
-    20  Summary and verification
+    13  VS Code (arm64 .deb + Wayland flags)
+    14  Container resource tuning (sysctl, locale, env, XDG, paths)
+    15  Flatpak + Flathub (ARM64 app source)
+    16  Gaming packages (DOSBox, ScummVM, RetroArch)
+    17  Container backup (opens ChromeOS backup page with --interactive)
+    18  Summary and verification
 
 CHECKPOINT:
     Progress is saved after each step to ${STEP_FILE}.
@@ -302,15 +406,13 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --interactive) UNATTENDED=false ;;
-        --git-name=*)  _GIT_NAME="${arg#*=}" ;;
-        --git-email=*) _GIT_EMAIL="${arg#*=}" ;;
-        --ssh-comment=*) _SSH_COMMENT="${arg#*=}" ;;
-        --ssh-passphrase=*) _SSH_PASSPHRASE="${arg#*=}" ;;
         --from-step=*)
-            [[ -n "$_DEFERRED_CHECKPOINT" ]] && die "Cannot combine --from-step with --verify"
+            if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
+                die "Cannot specify --from-step more than once, or combine with --verify"
+            fi
             _from="${arg#*=}"
-            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 20 ]]; then
-                die "--from-step requires a number 1–20 (got '${_from}')"
+            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 18 ]]; then
+                die "--from-step requires a number 1–18 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (#2)
             _DEFERRED_CHECKPOINT="$((_from - 1))"
@@ -318,10 +420,12 @@ for arg in "$@"; do
             unset _from
             ;;
         --verify)
-            [[ -n "$_DEFERRED_CHECKPOINT" ]] && die "Cannot combine --verify with --from-step"
+            if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
+                die "Cannot specify --verify more than once, or combine with --from-step"
+            fi
             # Defer checkpoint write until after lock acquisition (#2)
-            _DEFERRED_CHECKPOINT="19"
-            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 19; running verification only."
+            _DEFERRED_CHECKPOINT="17"
+            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 17; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
         --help)    rm -f "$LOG_FILE" 2>/dev/null; usage ;;
@@ -332,10 +436,17 @@ for arg in "$@"; do
                 if [[ -n "$_rpid" ]] && kill -0 "$_rpid" 2>/dev/null; then
                     die "Another instance (PID ${_rpid}) is running. Cannot reset while active."
                 fi
+                # Process dead or no PID — remove stale lock
+                rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+                rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove lock dir ${LOCK_FILE} — remove manually"
                 unset _rpid
             fi
-            rm -f "$STEP_FILE"; rm -f "$LOG_FILE" 2>/dev/null; echo "Checkpoint cleared."; exit 0
+            rm -f "$STEP_FILE"; rm -f "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
             ;;
+        --)        break ;;
+        --from-step)
+            die "--from-step requires =N syntax, e.g. --from-step=5" ;;
+        -*)        die "Unknown option: $arg. Use --help for usage." ;;
         *)         die "Unknown argument: $arg. Use --help for usage." ;;
     esac
 done
@@ -346,11 +457,13 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     if [[ -z "$_old_pid" ]]; then
         # PID file missing/empty (crash between mkdir and PID write) — treat as stale
         warn "Removing stale lock (no PID file — likely prior crash)"
-        rm -rf "$LOCK_FILE"
+        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove stale lock dir ${LOCK_FILE} — remove manually"
         mkdir "$LOCK_FILE" || die "Cannot re-acquire lock after stale removal"
     elif ! kill -0 "$_old_pid" 2>/dev/null; then
         warn "Removing stale lock from dead PID $_old_pid"
-        rm -rf "$LOCK_FILE"
+        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove stale lock dir ${LOCK_FILE} — remove manually"
         mkdir "$LOCK_FILE" || die "Cannot re-acquire lock after stale removal"
     else
         die "Another instance (PID ${_old_pid}) is running (lock: ${LOCK_FILE}). Remove manually if stale."
@@ -359,7 +472,7 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
 fi
 _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
     || die "Cannot create PID tmpfile"
-printf '%s\n' $$ > "$_pid_tmp"
+printf '%s\n' "$$" > "$_pid_tmp"
 mv "$_pid_tmp" "$LOCK_FILE/pid" \
     || { rm -f "$_pid_tmp"; die "Cannot write PID file"; }
 _LOCK_ACQUIRED=true
@@ -367,11 +480,7 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock — fix #2)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
-    if $DRY_RUN; then
-        log "[DRY-RUN] set checkpoint $_DEFERRED_CHECKPOINT"
-    elif ! echo "$_DEFERRED_CHECKPOINT" > "$STEP_FILE" 2>/dev/null; then
-        die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
-    fi
+    set_checkpoint "$_DEFERRED_CHECKPOINT" || die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
@@ -410,7 +519,10 @@ if should_run_step 1; then
     fi
 
     # 1d. Disk space check (need at least 2 GB free)
-    AVAIL_KB=$(df --output=avail / | tail -1 | tr -d ' ')
+    AVAIL_KB="$(df --output=avail / | tail -1 | tr -d ' ')"
+    if [[ ! "$AVAIL_KB" =~ ^[0-9]+$ ]]; then
+        die "Cannot determine available disk space (df returned '${AVAIL_KB:-empty}')"
+    fi
     AVAIL_MB=$((AVAIL_KB / 1024))
     if [[ "$AVAIL_MB" -lt 2048 ]]; then
         die "Insufficient disk space: ${AVAIL_MB} MB available, need at least 2048 MB. Resize: Settings → Developers → Linux → Disk size."
@@ -458,14 +570,14 @@ if should_run_step 2; then
         log "GPU acceleration not detected."
         if ! $DRY_RUN; then
             if ! $UNATTENDED; then
-                printf '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
-                printf '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
-                printf '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
-                printf '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
+                printf '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET" >&2
+                printf '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET" >&2
+                printf '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET" >&2
+                printf '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET" >&2
                 open_chromeos_url "chrome://flags/#crostini-gpu-support"
                 sleep 2
-                printf '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r _
+                printf '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET" >&2
+                read -r _ </dev/tty || true
             fi
             if [[ -e /dev/dri/renderD128 ]]; then
                 log "GPU acceleration now active ✓"
@@ -484,11 +596,11 @@ if should_run_step 2; then
         log "Microphone not detected."
         if ! $DRY_RUN; then
             if ! $UNATTENDED; then
-                printf '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
+                printf '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET" >&2
                 open_chromeos_url "chrome://os-settings/crostini"
                 sleep 2
-                printf '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r _
+                printf '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET" >&2
+                read -r _ </dev/tty || true
             fi
             if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
                 log "Microphone now available ✓"
@@ -503,28 +615,28 @@ if should_run_step 2; then
     # 2c. USB device passthrough
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening USB device management..."
-        printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
+        printf '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET" >&2
         open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
         sleep 2
-        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r _
+        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+        read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
     # 2d. Shared folders
     if [[ -d /mnt/chromeos ]]; then
-        SHARED_COUNT=$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)
+        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)"
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
             log "No shared folders."
             if ! $DRY_RUN && ! $UNATTENDED; then
-                printf '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET"
+                printf '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET" >&2
                 open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
                 sleep 2
-                printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-                read -r _
+                printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+                read -r _ </dev/tty || true
             elif $DRY_RUN; then
                 log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
             fi
@@ -535,26 +647,33 @@ if should_run_step 2; then
     # 2e. Port forwarding
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening port forwarding settings..."
-        printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
-        printf '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET"
+        printf '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET" >&2
+        printf '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET" >&2
         open_chromeos_url "chrome://os-settings/crostini/portForwarding"
         sleep 2
-        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r _
+        printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+        read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
     # 2f. Disk size check
-    AVAIL_MB_NOW=$(($(df --output=avail / | tail -1 | tr -d ' ') / 1024))
+    _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+    if [[ "$_avail_raw" =~ ^[0-9]+$ ]]; then
+        AVAIL_MB_NOW=$((_avail_raw / 1024))
+    else
+        warn "Cannot determine available disk space"
+        AVAIL_MB_NOW=99999  # Skip resize advisory on df failure
+    fi
+    unset _avail_raw
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
         if ! $DRY_RUN && ! $UNATTENDED; then
-            printf '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
+            printf '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET" >&2
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
-            printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-            read -r _
+            printf '%bPress Enter to continue...%b' "$YELLOW" "$RESET" >&2
+            read -r _ </dev/tty || true
         elif $DRY_RUN; then
             log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
         fi
@@ -570,10 +689,30 @@ fi
 if should_run_step 3; then
     step_banner 3 "System update and upgrade"
 
-    run sudo apt-get update || warn "apt update failed"
-    run sudo apt-get upgrade -y || warn "apt upgrade had issues"
-    run sudo apt-get full-upgrade -y || warn "apt-get full-upgrade had issues"
-    run sudo apt-get autoremove -y || true
+    # Enable HTTP pipelining — sends multiple requests per TCP connection.
+    # Queue-Mode "access" allows parallel connections across URIs.
+    # Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint.
+    APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
+    if [[ ! -f "$APT_PARALLEL" ]]; then
+        write_file_sudo "$APT_PARALLEL" <<'EOF'
+// apt download tuning — managed by crostini-setup-duet5.sh
+Acquire::Queue-Mode "access";
+Acquire::http::Pipeline-Depth "4";
+Acquire::Languages "none";
+EOF
+        run sudo chmod 644 "$APT_PARALLEL" || warn "chmod 644 failed on $APT_PARALLEL"
+    else
+        log "Parallel apt config already exists"
+    fi
+    unset APT_PARALLEL
+
+    if run sudo apt-get update; then
+        run sudo apt-get upgrade -y || warn "apt upgrade had issues"
+        run sudo apt-get full-upgrade -y || warn "apt-get full-upgrade had issues"
+    else
+        warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
+    fi
+    run sudo apt-get autoremove -y || warn "apt autoremove had issues"
 
     set_checkpoint 3
     log "Step 3 complete."
@@ -604,16 +743,22 @@ if should_run_step 4; then
         software-properties-common
     )
 
-    run sudo apt-get install -y "${CORE_PKGS[@]}" || warn "Some core packages failed to install — continuing"
+    install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
 
     # Create common symlinks for renamed Debian packages
     if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
-        run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd || true
-        $DRY_RUN || log "Symlinked fdfind → fd"
+        if run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd; then
+            $DRY_RUN || log "Symlinked fdfind → fd"
+        else
+            warn "Symlink fdfind → fd failed"
+        fi
     fi
     if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
-        run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat || true
-        $DRY_RUN || log "Symlinked batcat → bat"
+        if run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat; then
+            $DRY_RUN || log "Symlinked batcat → bat"
+        else
+            warn "Symlink batcat → bat failed"
+        fi
     fi
 
     unset CORE_PKGS
@@ -632,7 +777,7 @@ if should_run_step 5; then
         libxml2-dev libxslt1-dev liblzma-dev libgdbm-dev
     )
 
-    run sudo apt-get install -y "${DEV_PKGS[@]}" || warn "Some dev packages failed to install — continuing"
+    install_pkgs_best_effort "${DEV_PKGS[@]}" || warn "Some dev packages unavailable — non-fatal"
 
     unset DEV_PKGS
     set_checkpoint 5
@@ -657,7 +802,7 @@ if should_run_step 6; then
         xdg-desktop-portal-gtk
     )
 
-    run sudo apt-get install -y "${GPU_STABLE_PKGS[@]}" || warn "Some stable GPU packages failed — continuing"
+    install_pkgs_best_effort "${GPU_STABLE_PKGS[@]}" || warn "Some GPU packages unavailable — non-fatal"
 
     # Volatile packages — names may differ across Debian versions
     # libgl1 replaces the transitional libgl1-mesa-glx
@@ -669,18 +814,18 @@ if should_run_step 6; then
         glmark2-es2-wayland
     )
 
-    # Per-package loop for volatile names — GPU package names change between
-    for pkg in "${GPU_VOLATILE_PKGS[@]}"; do
-        run sudo apt-get install -y "$pkg" || warn "Skipped unavailable: $pkg"
-    done
+    # Per-package fallback for volatile names — GPU package names change between versions
+    install_pkgs_best_effort "${GPU_VOLATILE_PKGS[@]}" || warn "Some volatile GPU packages unavailable — expected across Debian versions"
 
     # Verify GPU
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU render node: /dev/dri/renderD128 ✓"
         if command -v glxinfo &>/dev/null; then
-            GL_VENDOR="$(glxinfo 2>/dev/null | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_RENDERER="$(glxinfo 2>/dev/null | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_VERSION="$(glxinfo 2>/dev/null | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs || true)"
+            _glx_out="$(glxinfo 2>/dev/null || true)"
+            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs || true)"
+            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs || true)"
+            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs || true)"
+            unset _glx_out
             log "GL vendor:   ${GL_VENDOR:-unknown}"
             log "GL renderer: ${GL_RENDERER:-unknown}"
             log "GL version:  ${GL_VERSION:-unknown}"
@@ -738,9 +883,7 @@ if should_run_step 7; then
         libavcodec-extra
     )
 
-    for pkg in "${AUDIO_PKGS[@]}"; do
-        run sudo apt-get install -y "$pkg" || warn "Skipped unavailable: $pkg"
-    done
+    install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
     # PulseAudio config — point to Crostini host socket
     PA_CLIENT="${HOME}/.config/pulse/client.conf"
@@ -756,7 +899,7 @@ EOF
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT=$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
         log "Audio devices in /dev/snd: ${SND_DEV_COUNT} ✓"
         if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
             log "Microphone capture device: detected ✓"
@@ -906,8 +1049,11 @@ EOF
     fi
     # Apply Xresources
     if command -v xrdb &>/dev/null; then
-        run xrdb -merge "$XRESOURCES" || true
-        $DRY_RUN || log "Xresources merged"
+        if run xrdb -merge "$XRESOURCES"; then
+            $DRY_RUN || log "Xresources merged"
+        else
+            warn "xrdb merge failed — Xresources not applied until next session"
+        fi
     fi
 
     # 8g. Fontconfig (grayscale AA for OLED, Noto defaults)
@@ -945,8 +1091,11 @@ FCEOF
         log "Fontconfig already exists — skipping"
     fi
     if command -v fc-cache &>/dev/null; then
-        run fc-cache -f || true
-        $DRY_RUN || log "Font cache rebuilt"
+        if run fc-cache -f; then
+            $DRY_RUN || log "Font cache rebuilt"
+        else
+            warn "fc-cache failed — font cache not rebuilt"
+        fi
     fi
 
     # 8h. Cursor theme (ensure consistency across toolkits)
@@ -1004,9 +1153,7 @@ if should_run_step 9; then
         adwaita-icon-theme
     )
 
-    for pkg in "${GUI_PKGS[@]}"; do
-        run sudo apt-get install -y "$pkg" || warn "Skipped unavailable: $pkg"
-    done
+    install_pkgs_best_effort "${GUI_PKGS[@]}" || warn "Some GUI packages unavailable — non-fatal"
 
     # gnome-disk-utility has heavy GNOME deps — skip with --minimal
     if ! $MINIMAL; then
@@ -1021,31 +1168,42 @@ if should_run_step 9; then
 
     # Set Firefox ESR as default browser
     if command -v firefox-esr &>/dev/null; then
-        run sudo update-alternatives --set x-www-browser /usr/bin/firefox-esr || true
-        $DRY_RUN || log "Firefox ESR set as default browser"
+        if run sudo update-alternatives --set x-www-browser /usr/bin/firefox-esr; then
+            $DRY_RUN || log "Firefox ESR set as default browser"
+        else
+            warn "update-alternatives for Firefox ESR failed"
+        fi
     fi
 
     # Set default file manager
     if command -v thunar &>/dev/null; then
-        run xdg-mime default thunar.desktop inode/directory || true
-        $DRY_RUN || log "Thunar set as default file manager"
+        if run xdg-mime default thunar.desktop inode/directory; then
+            $DRY_RUN || log "Thunar set as default file manager"
+        else
+            warn "xdg-mime default for Thunar failed"
+        fi
     fi
 
     # Set default PDF viewer
     if command -v evince &>/dev/null; then
-        run xdg-mime default org.gnome.Evince.desktop application/pdf || true
-        $DRY_RUN || log "Evince set as default PDF viewer"
+        if run xdg-mime default org.gnome.Evince.desktop application/pdf; then
+            $DRY_RUN || log "Evince set as default PDF viewer"
+        else
+            warn "xdg-mime default for Evince failed"
+        fi
     fi
 
     # Set default image viewer
     if command -v eog &>/dev/null; then
-        run xdg-mime default org.gnome.eog.desktop image/png || true
-        run xdg-mime default org.gnome.eog.desktop image/jpeg || true
-        $DRY_RUN || log "Eye of GNOME set as default image viewer"
+        _eog_ok=true
+        run xdg-mime default org.gnome.eog.desktop image/png || { warn "xdg-mime default for eog/png failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/jpeg || { warn "xdg-mime default for eog/jpeg failed"; _eog_ok=false; }
+        $_eog_ok && { $DRY_RUN || log "Eye of GNOME set as default image viewer"; }
+        unset _eog_ok
     fi
 
     # Ensure desktop applications directory exists (garcon integration)
-    run mkdir -p "${HOME}/.local/share/applications"
+    run mkdir -p "${HOME}/.local/share/applications" || warn "Cannot create desktop applications directory"
     $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
 
     unset GUI_PKGS
@@ -1056,13 +1214,13 @@ fi
 if should_run_step 10; then
     step_banner 10 "Python ecosystem"
 
-    run sudo apt-get install -y python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
+    install_pkgs_best_effort python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
         || warn "Some Python packages failed — continuing"
 
-    run mkdir -p "${HOME}/.local/bin"
+    run mkdir -p "${HOME}/.local/bin" || warn "Cannot create ~/.local/bin"
 
-    log "Python version: $(python3 --version 2>/dev/null || echo 'not installed')"
-    log "pip version: $(python3 -m pip --version 2>/dev/null || echo 'not installed')"
+    log "Python version: $(timeout 3 python3 --version 2>/dev/null || echo 'not installed')"
+    log "pip version: $(timeout 3 python3 -m pip --version 2>/dev/null || echo 'not installed')"
 
     set_checkpoint 10
     log "Step 10 complete."
@@ -1072,13 +1230,13 @@ if should_run_step 11; then
     step_banner 11 "Node.js LTS (arm64)"
 
     if command -v node &>/dev/null; then
-        log "Node.js already installed: $(node --version)"
+        log "Node.js already installed: $(timeout 3 node --version 2>/dev/null || echo 'unknown')"
     else
         log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
 
         run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
-        _ns_key="$(mktemp)"
-        run curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
+        _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
+        run curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
             || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
         if [[ ! -s "$_ns_key" ]]; then
             rm -f "$_ns_key"; die "NodeSource GPG key is empty"
@@ -1109,20 +1267,23 @@ if should_run_step 11; then
         if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
             die "NodeSource sources.list content invalid"
         fi
-        run sudo apt-get update  || warn "apt update failed"
+        run sudo apt-get update || warn "apt update failed"
         run sudo apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
     fi
 
     # Configure npm global prefix to avoid sudo for global installs
     NPM_GLOBAL="${HOME}/.npm-global"
     if command -v npm &>/dev/null; then
-        run mkdir -p "$NPM_GLOBAL"
-        run npm config set prefix "${NPM_GLOBAL}"
-        $DRY_RUN || log "npm global prefix set to ${NPM_GLOBAL}"
+        run mkdir -p "$NPM_GLOBAL" || warn "Cannot create npm global dir"
+        if run npm config set prefix "${NPM_GLOBAL}"; then
+            $DRY_RUN || log "npm global prefix set to ${NPM_GLOBAL}"
+        else
+            warn "npm config set prefix failed"
+        fi
     fi
 
-    log "Node version: $(node --version 2>/dev/null || echo 'not installed')"
-    log "npm version: $(npm --version 2>/dev/null || echo 'not installed')"
+    log "Node version: $(timeout 3 node --version 2>/dev/null || echo 'not installed')"
+    log "npm version: $(timeout 3 npm --version 2>/dev/null || echo 'not installed')"
 
     unset NPM_GLOBAL
     set_checkpoint 11
@@ -1133,16 +1294,16 @@ if should_run_step 12; then
     step_banner 12 "Rust toolchain (aarch64)"
 
     if command -v rustc &>/dev/null; then
-        log "Rust already installed: $(rustc --version)"
+        log "Rust already installed: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
     else
         log "Installing Rust via rustup (non-interactive)..."
         if $DRY_RUN; then
-            log "[DRY-RUN] curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init-XXXXXXXXXX.sh"
+            log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o /tmp/rustup-init-XXXXXXXXXX.sh"
             log "[DRY-RUN] sh /tmp/rustup-init-XXXXXXXXXX.sh -y --default-toolchain stable"
         else
             # TOFU (HTTPS-only); download to tmpfile to prevent executing truncated script (#4)
             _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)"
-            if ! run curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$_rustup_tmp"; then
+            if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o "$_rustup_tmp"; then
                 rm -f "$_rustup_tmp"
                 die "Rustup download failed"
             fi
@@ -1150,137 +1311,38 @@ if should_run_step 12; then
                 rm -f "$_rustup_tmp"
                 die "Rustup installer is empty"
             fi
-            run_shell "sh '${_rustup_tmp}' -y --default-toolchain stable"
+            run sh "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
             rm -f "$_rustup_tmp"
             unset _rustup_tmp
         fi
 
         if [[ -f "${HOME}/.cargo/env" ]]; then
             # shellcheck source=/dev/null
-            source "${HOME}/.cargo/env"
+            source "${HOME}/.cargo/env" || warn "Failed to source ${HOME}/.cargo/env — PATH may not include cargo/rustc"
         fi
     fi
 
-    log "rustc version: $(rustc --version 2>/dev/null || echo 'not installed')"
-    log "cargo version: $(cargo --version 2>/dev/null || echo 'not installed')"
+    log "rustc version: $(timeout 3 rustc --version 2>/dev/null || echo 'not installed')"
+    log "cargo version: $(timeout 3 cargo --version 2>/dev/null || echo 'not installed')"
 
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Git configuration
+# Step 13: VS Code (arm64 .deb)
 if should_run_step 13; then
-    step_banner 13 "Git configuration"
-
-    run sudo apt-get install -y git git-lfs || warn "git install had issues"
-
-    CURRENT_NAME="$(git config --global user.name 2>/dev/null || true)"
-    CURRENT_EMAIL="$(git config --global user.email 2>/dev/null || true)"
-
-    if [[ -z "$CURRENT_NAME" ]]; then
-        if ! $DRY_RUN; then
-            if $UNATTENDED; then
-                GIT_NAME="$_GIT_NAME"
-            else
-                printf '%bEnter your Git name (e.g. Ryan Musante): %b' "$YELLOW" "$RESET"
-                read -r GIT_NAME
-            fi
-            if [[ -n "$GIT_NAME" ]]; then
-                run git config --global user.name "${GIT_NAME}"
-            else
-                warn "Git user.name not set (pass --git-name=NAME in unattended mode)"
-            fi
-        else
-            log "[DRY-RUN] would prompt for git user.name"
-        fi
-    else
-        log "Git user.name already set: ${CURRENT_NAME}"
-    fi
-
-    if [[ -z "$CURRENT_EMAIL" ]]; then
-        if ! $DRY_RUN; then
-            if $UNATTENDED; then
-                GIT_EMAIL="$_GIT_EMAIL"
-            else
-                printf '%bEnter your Git email: %b' "$YELLOW" "$RESET"
-                read -r GIT_EMAIL
-            fi
-            if [[ -n "$GIT_EMAIL" ]]; then
-                run git config --global user.email "${GIT_EMAIL}"
-            else
-                warn "Git user.email not set (pass --git-email=EMAIL in unattended mode)"
-            fi
-        else
-            log "[DRY-RUN] would prompt for git user.email"
-        fi
-    else
-        log "Git user.email already set: ${CURRENT_EMAIL}"
-    fi
-
-    _gval="$(git config --global init.defaultBranch 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global init.defaultBranch main
-    else
-        log "Git init.defaultBranch already set: ${_gval}"
-    fi
-
-    _gval="$(git config --global pull.rebase 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global pull.rebase true
-    else
-        log "Git pull.rebase already set: ${_gval}"
-    fi
-
-    _gval="$(git config --global core.autocrlf 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global core.autocrlf input
-    else
-        log "Git core.autocrlf already set: ${_gval}"
-    fi
-
-    _gval="$(git config --global core.editor 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global core.editor vim
-    else
-        log "Git core.editor already set: ${_gval}"
-    fi
-
-    _gval="$(git config --global color.ui 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global color.ui auto
-    else
-        log "Git color.ui already set: ${_gval}"
-    fi
-
-    _gval="$(git config --global push.autoSetupRemote 2>/dev/null || true)"
-    if [[ -z "$_gval" ]]; then
-        run git config --global push.autoSetupRemote true
-    else
-        log "Git push.autoSetupRemote already set: ${_gval}"
-    fi
-    unset _gval
-    run git lfs install || warn "git-lfs init failed — install git-lfs manually"
-    unset GIT_NAME GIT_EMAIL CURRENT_NAME CURRENT_EMAIL
-
-    log "Git version: $(git --version 2>/dev/null || echo 'not installed')"
-
-    set_checkpoint 13
-    log "Step 13 complete."
-fi
-# Step 14: VS Code (arm64 .deb)
-if should_run_step 14; then
-    step_banner 14 "Visual Studio Code (arm64)"
+    step_banner 13 "Visual Studio Code (arm64)"
 
     if command -v code &>/dev/null; then
-        log "VS Code already installed: $(code --version 2>/dev/null | head -1 || true)"
+        log "VS Code already installed: $(timeout 3 code --version 2>/dev/null | head -1 || true)"
     else
         if $DRY_RUN; then
-            log "[DRY-RUN] curl -fSL https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
+            log "[DRY-RUN] curl -fSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
             log "[DRY-RUN] sudo dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)"
             _vscode_rc=0
-            run curl -fSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
+            run curl -fSL --connect-timeout 10 --max-time 120 "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
             if [[ "$_vscode_rc" -ne 0 ]]; then
                 warn "VS Code download failed (curl exit ${_vscode_rc}). Install manually:"
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
@@ -1318,19 +1380,19 @@ EOF
     fi
 
     unset VSCODE_FLAGS _VSCODE_DEB _vscode_rc
-    set_checkpoint 14
-    log "Step 14 complete."
+    set_checkpoint 13
+    log "Step 13 complete."
 fi
-# Step 15: Container resource tuning
-if should_run_step 15; then
-    step_banner 15 "Container resource tuning (sysctl, locale, env, XDG, paths)"
+# Step 14: Container resource tuning
+if should_run_step 14; then
+    step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths)"
 
-    # 15a. Increase inotify watchers (VS Code and file-heavy tools need this)
+    # 14a. Increase inotify watchers (VS Code and file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
 EOF
-        run sudo chmod 644 "$SYSCTL_CONF" || true
+        run sudo chmod 644 "$SYSCTL_CONF" || warn "chmod 644 failed on $SYSCTL_CONF — file may be unreadable"
         if run sudo sysctl --system; then
             $DRY_RUN || log "inotify watchers applied (524288)"
         else
@@ -1340,21 +1402,24 @@ EOF
         log "sysctl tuning already applied"
     fi
 
-    # 15b. Set locale to en_US.UTF-8
+    # 14b. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # sed -i is not atomic; backup first in case of partial write or interruption
         run sudo cp /etc/locale.gen /etc/locale.gen.bak || warn "locale.gen backup failed"
-        if ! run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
+        if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
+            run sudo locale-gen || warn "locale-gen failed"
+            sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+            $DRY_RUN || log "en_US.UTF-8 locale generated"
+        else
             warn "locale.gen edit failed — restoring backup"
             sudo cp /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
+            sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
         fi
-        run sudo locale-gen || warn "locale-gen failed"
-        $DRY_RUN || log "en_US.UTF-8 locale generated"
     else
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 15c. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 14c. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1381,12 +1446,12 @@ if [ -d "$HOME/.npm-global/bin" ]; then
     export PATH="$HOME/.npm-global/bin:$PATH"
 fi
 ENVEOF
-        run sudo chmod 644 "$PROFILE_D" || true
+        run sudo chmod 644 "$PROFILE_D" || warn "chmod 644 failed on $PROFILE_D — login env may not load"
     else
         log "Environment profile already exists"
     fi
 
-    # 15d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
+    # 14d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if [[ -w /proc/sys/vm/swappiness ]]; then
@@ -1400,7 +1465,7 @@ vm.vfs_cache_pressure=150
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 MEMEOF
-            run sudo chmod 644 "$MEM_CONF" || true
+            run sudo chmod 644 "$MEM_CONF" || warn "chmod 644 failed on $MEM_CONF"
             run sudo sysctl --system || warn "memory sysctl apply failed"
         else
             warn "vm.swappiness is read-only in this container (expected in Crostini)"
@@ -1410,20 +1475,24 @@ MEMEOF
         log "Memory tuning config already exists"
     fi
 
-    # 15e. Ensure XDG dirs exist
-    run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache"
+    # 14e. Ensure XDG dirs exist
+    run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
+        || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
-        run xdg-user-dirs-update || true
-        $DRY_RUN || log "XDG user directories updated"
+        if run xdg-user-dirs-update; then
+            $DRY_RUN || log "XDG user directories updated"
+        else
+            warn "xdg-user-dirs-update failed"
+        fi
     fi
 
     unset PROFILE_D MEM_CONF
-    set_checkpoint 15
-    log "Step 15 complete."
+    set_checkpoint 14
+    log "Step 14 complete."
 fi
-# Step 16: Flatpak + Flathub
-if should_run_step 16; then
-    step_banner 16 "Flatpak + Flathub (ARM64 app source)"
+# Step 15: Flatpak + Flathub
+if should_run_step 15; then
+    step_banner 15 "Flatpak + Flathub (ARM64 app source)"
 
     run sudo apt-get install -y flatpak || warn "flatpak install failed"
     run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
@@ -1431,15 +1500,15 @@ if should_run_step 16; then
     $DRY_RUN || log "Flatpak installed with Flathub remote."
     log "Install apps: flatpak install flathub <app-id>"
 
-    set_checkpoint 16
-    log "Step 16 complete."
+    set_checkpoint 15
+    log "Step 15 complete."
 fi
-# Step 17: Gaming packages
-if should_run_step 17; then
-    step_banner 17 "Gaming packages (DOSBox, ScummVM, RetroArch)"
+# Step 16: Gaming packages
+if should_run_step 16; then
+    step_banner 16 "Gaming packages (DOSBox, ScummVM, RetroArch)"
 
     # Phase 2: native ARM packages (no translation layer needed)
-    run sudo apt-get install -y dosbox scummvm || warn "Some gaming packages failed"
+    install_pkgs_best_effort dosbox scummvm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub)
     if command -v flatpak &>/dev/null; then
@@ -1450,12 +1519,12 @@ if should_run_step 17; then
 
     # Verify
     if command -v dosbox &>/dev/null; then
-        log "dosbox: $(dosbox --version 2>/dev/null | head -1 || true) ✓"
+        log "dosbox: $(timeout 3 dosbox --version 2>/dev/null | head -1 || true) ✓"
     else
         warn "dosbox not found"
     fi
     if command -v scummvm &>/dev/null; then
-        log "scummvm: $(scummvm --version 2>/dev/null | head -1 || true) ✓"
+        log "scummvm: $(timeout 3 scummvm --version 2>/dev/null | head -1 || true) ✓"
     else
         warn "scummvm not found"
     fi
@@ -1467,110 +1536,33 @@ if should_run_step 17; then
 
     log "For advanced gaming (box86/Wine/GOG): see crostini-gaming-packages.txt"
 
-    set_checkpoint 17
-    log "Step 17 complete."
+    set_checkpoint 16
+    log "Step 16 complete."
 fi
-# Step 18: SSH key generation
-if should_run_step 18; then
-    step_banner 18 "SSH key generation"
-
-    SSH_KEY="${HOME}/.ssh/id_ed25519"
-    if [[ -f "$SSH_KEY" ]]; then
-        log "SSH key already exists at ${SSH_KEY}"
-    else
-        if ! $DRY_RUN; then
-            if $UNATTENDED; then
-                GEN_SSH="y"
-                SSH_COMMENT="$_SSH_COMMENT"
-                SSH_PASS="$_SSH_PASSPHRASE"
-                _SSH_PASSPHRASE=""
-            else
-                printf '%bGenerate an Ed25519 SSH key? [Y/n]: %b' "$YELLOW" "$RESET"
-                read -r GEN_SSH
-
-                if [[ "${GEN_SSH,,}" != "n" ]]; then
-                    printf '%bEmail for SSH key comment (blank for none): %b' "$YELLOW" "$RESET"
-                    read -r SSH_COMMENT
-
-                    printf '%bPassphrase for SSH key (blank = no passphrase): %b' "$YELLOW" "$RESET"
-                    read -rs SSH_PASS
-                    printf '\n'
-                fi
-            fi
-
-            if [[ "${GEN_SSH,,}" != "n" ]]; then
-                if [[ -z "${SSH_PASS:-}" ]]; then
-                    warn "SSH key has no passphrase — key is unprotected at rest"
-                fi
-
-                run mkdir -p "${HOME}/.ssh"
-                run chmod 700 "${HOME}/.ssh"
-
-                # NOTE: ssh-keygen only accepts the passphrase via -N flag
-                # (it reads from /dev/tty, NOT stdin or SSH_ASKPASS).
-                # The -N value is transiently visible in /proc/*/cmdline.
-                # Acceptable risk: Crostini is single-user, exposure is
-                # sub-second, and the variable is zeroed immediately after.
-                log "[EXEC] ssh-keygen -t ed25519 -f $SSH_KEY (passphrase redacted)"
-                _keygen_rc=0
-                if [[ -n "${SSH_COMMENT:-}" ]]; then
-                    ssh-keygen -t ed25519 -C "${SSH_COMMENT}" -f "$SSH_KEY" \
-                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1 || _keygen_rc=$?
-                else
-                    ssh-keygen -t ed25519 -f "$SSH_KEY" \
-                        -N "${SSH_PASS:-}" >> "$LOG_FILE" 2>&1 || _keygen_rc=$?
-                fi
-                # Zero passphrase from memory immediately (must run even on failure)
-                SSH_PASS=""
-
-                if [[ "$_keygen_rc" -ne 0 ]]; then
-                    warn "ssh-keygen failed (exit ${_keygen_rc})"
-                elif [[ -f "$SSH_KEY" ]]; then
-                    run chmod 600 "$SSH_KEY"
-                    run chmod 644 "${SSH_KEY}.pub"
-
-                    log "SSH public key:"
-                    tee -a "$LOG_FILE" < "${SSH_KEY}.pub" || true
-                    logprintf '\n'
-                    log "Add to GitHub/GitLab/servers as needed."
-                fi
-            else
-                log "Skipping SSH key generation"
-            fi
-            unset GEN_SSH SSH_COMMENT SSH_PASS _keygen_rc
-        else
-            log "[DRY-RUN] would prompt for SSH key generation"
-        fi
-    fi
-
-    unset SSH_KEY
-    set_checkpoint 18
-    log "Step 18 complete."
-fi
-# Step 19: Container backup — opens ChromeOS backup page (--interactive)
-if should_run_step 19; then
-    step_banner 19 "Container backup"
+# Step 17: Container backup — opens ChromeOS backup page (--interactive)
+if should_run_step 17; then
+    step_banner 17 "Container backup"
 
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening ChromeOS backup page to snapshot this fresh setup..."
-        printf '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET"
-        printf '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET"
+        printf '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET" >&2
+        printf '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET" >&2
         open_chromeos_url "chrome://os-settings/crostini/exportImport"
         sleep 2
-        printf '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
-        read -r _
+        printf '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET" >&2
+        read -r _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"
     else
         log "Skipping interactive backup prompt (unattended mode)"
     fi
 
-    set_checkpoint 19
-    log "Step 19 complete."
+    set_checkpoint 17
+    log "Step 17 complete."
 fi
-# Step 20: Summary and verification
-if should_run_step 20; then
-    step_banner 20 "Summary and verification"
+# Step 18: Summary and verification
+if should_run_step 18; then
+    step_banner 18 "Summary and verification"
 
     logprintf '\n%bCROSTINI SETUP COMPLETE%b\n\n' "$GREEN" "$RESET"
 
@@ -1583,7 +1575,13 @@ if should_run_step 20; then
     if [[ -f /dev/.cros_milestone ]]; then
         logprintf '  ChromeOS:      milestone %s\n' "$(cat /dev/.cros_milestone)"
     fi
-    logprintf '  Disk free:     %s MB\n' "$(($(df --output=avail / | tail -1 | tr -d ' ') / 1024))"
+    _disk_avail="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')"
+    if [[ "$_disk_avail" =~ ^[0-9]+$ ]]; then
+        logprintf '  Disk free:     %s MB\n' "$((_disk_avail / 1024))"
+    else
+        logprintf '  Disk free:     unknown\n'
+    fi
+    unset _disk_avail
     logprintf '\n'
 
     # GPU
@@ -1629,15 +1627,15 @@ if should_run_step 20; then
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"
-    logprintf '  GTK theme:     %s\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | cut -d= -f2 || echo 'default')"
-    logprintf '  Xft DPI:       %s\n' "$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | awk '{print $2}' || echo 'default')"
-    logprintf '  Font:          %s\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | cut -d= -f2 || echo 'default')"
+    logprintf '  GTK theme:     %s\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
+    logprintf '  Xft DPI:       %s\n' "$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | head -1 | awk '{print $2}' || echo 'default')"
+    logprintf '  Font:          %s\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
     logprintf '\n'
 
     # Audio
     logprintf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT=$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
         logprintf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
     else
         logprintf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"
@@ -1677,7 +1675,6 @@ if should_run_step 20; then
     # Installed tools
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
-    check_tool "git"         git
     check_tool "python3"     python3
     check_tool "pip"         pip3
     check_tool "node"        node
@@ -1709,6 +1706,7 @@ if should_run_step 20; then
     check_tool "gnome-screenshot" gnome-screenshot
     if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
     fi
     logprintf '\n'
 
@@ -1732,6 +1730,7 @@ if should_run_step 20; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else
         logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "Memory tuning (4 GB)" "skipped (vm.* read-only in container)"
+        ((_verify_warn++)) || true
     fi
     if command -v code &>/dev/null; then
         check_config "${HOME}/.config/code-flags.conf"           "VS Code Wayland"
@@ -1760,6 +1759,13 @@ if should_run_step 20; then
 
     logprintf '%bLog file:%b %s\n' "$BOLD" "$RESET" "$LOG_FILE"
 
+    # Verification summary
+    logprintf '\n%bVerification totals:%b  ' "$BOLD" "$RESET"
+    logprintf '%b%s passed%b' "$GREEN" "$_verify_pass" "$RESET"
+    [[ "$_verify_warn" -gt 0 ]] && logprintf '  %b%s warnings%b' "$YELLOW" "$_verify_warn" "$RESET"
+    [[ "$_verify_fail" -gt 0 ]] && logprintf '  %b%s failed%b' "$RED" "$_verify_fail" "$RESET"
+    logprintf '\n'
+
     # Clean up checkpoint
     if $DRY_RUN; then
         log "[DRY-RUN] would remove checkpoint file"
@@ -1768,8 +1774,19 @@ if should_run_step 20; then
         log "Checkpoint file removed. Setup fully complete."
     fi
 
-    # Clean up step 20 variables
+    # Clean up step 18 variables
     unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
+    unset _verify_pass _verify_fail _verify_warn
+
+    # Elapsed time
+    _now_epoch="$(date +%s 2>/dev/null)" || _now_epoch=""
+    if [[ -n "$_now_epoch" ]]; then
+        _elapsed=$(( _now_epoch - _START_EPOCH ))
+    else
+        _elapsed="${SECONDS:-0}"
+    fi
+    logprintf '%bElapsed time:%b  %dm %ds\n' "$BOLD" "$RESET" "$((_elapsed / 60))" "$((_elapsed % 60))"
+    unset _now_epoch _elapsed
 
     logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
 fi

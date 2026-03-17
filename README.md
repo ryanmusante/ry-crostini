@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.3.7-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.8.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -22,9 +22,6 @@ configured dev environment in one unattended run.
 
 ```bash
 bash crostini-setup-duet5.sh                              # unattended (default)
-bash crostini-setup-duet5.sh --git-name="…" --git-email="…"  # with git identity
-bash crostini-setup-duet5.sh --ssh-comment="…"            # SSH key comment
-bash crostini-setup-duet5.sh --ssh-passphrase="…"         # SSH key passphrase
 bash crostini-setup-duet5.sh --interactive                # prompt for toggles
 bash crostini-setup-duet5.sh --dry-run                    # preview, zero side effects
 bash crostini-setup-duet5.sh --minimal                    # skip heavy optional packages
@@ -55,14 +52,12 @@ bash crostini-setup-duet5.sh --reset                      # clear checkpoint, st
 | 10 | Python 3 + pip + venv |
 | 11 | Node.js LTS arm64 (NodeSource) |
 | 12 | Rust stable aarch64 (rustup) |
-| 13 | Git + git-lfs + defaults |
-| 14 | VS Code arm64 + Wayland flags |
-| 15 | Tuning (inotify 524288, locale, env, XDG, memory if writable) |
-| 16 | Flatpak + Flathub |
-| 17 | Gaming packages (DOSBox, ScummVM, RetroArch) |
-| 18 | SSH Ed25519 key |
-| 19 | Container backup (--interactive) |
-| 20 | Summary + verification |
+| 13 | VS Code arm64 + Wayland flags |
+| 14 | Tuning (inotify 524288, locale, env, XDG, memory if writable) |
+| 15 | Flatpak + Flathub |
+| 16 | Gaming packages (DOSBox, ScummVM, RetroArch) |
+| 17 | Container backup (--interactive) |
+| 18 | Summary + verification |
 
 ## Config files written
 
@@ -73,7 +68,7 @@ shell env + PATH. Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Features
 
-  * **Unattended by default** — all 12 prompts auto-answered; `--interactive` restores them
+  * **Unattended by default** — all 7 prompts auto-answered; `--interactive` restores them
   * **Checkpoint resume** — re-run to continue from last completed step
   * **`--dry-run`** — zero side effects, zero network, zero interaction
   * **`--minimal`** — skip heavy optional packages (e.g. gnome-disk-utility) for RAM-constrained devices
