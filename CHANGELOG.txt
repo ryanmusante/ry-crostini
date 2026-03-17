@@ -8,6 +8,36 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.10  2026-03-17
+
+  * sync step 13 banner: "Visual Studio Code (arm64)" → "VS Code
+    (arm64 .deb + Wayland flags)" — banner was the only source using
+    the full product name while usage() and README both used "VS Code";
+    now all three sources match.
+  * sync README usage block: add --help and --version examples — both
+    flags were documented in usage() and handled by the arg parser but
+    missing from the README usage block.
+  * bump version 3.8.9 → 3.8.10
+
+3.8.9  2026-03-17
+
+  * fix M1: step 8 Qt GTK theme fallback chain used raw `run sudo
+    apt-get install` instead of install_pkgs_best_effort(); broken-dep
+    failures were indistinguishable from package-not-found.  Replaced
+    with install_pkgs_best_effort for consistent diagnostics and
+    dry-run handling.
+  * fix L1: preflight curl (step 1e) missing --connect-timeout; all
+    other curl download calls already used both --connect-timeout and
+    --max-time.  Added --connect-timeout 3 for consistency.
+  * fix L2: check_tool() stderr-only fallback piped through head -1,
+    creating a theoretical SIGPIPE risk on commands with large stderr
+    output.  Replaced pipe with parameter expansion (${ver%%$'\n'*})
+    to extract first line without a subprocess.
+  * fix I1: /etc/profile.d/crostini-env.sh PATH prepends accumulated
+    duplicates on repeated login sessions.  Added _crostini_path_prepend
+    helper using case ":$PATH:" dedup guard (POSIX-compatible).
+  * bump version 3.8.8 → 3.8.9
+
 3.8.8  2026-03-17
 
   * fix step 9 banner: "Firefox" → "Firefox ESR" — banner said "Firefox"

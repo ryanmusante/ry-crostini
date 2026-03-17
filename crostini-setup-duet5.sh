@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.8
+# Version: 3.8.10
 # Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -14,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.8"
+readonly SCRIPT_VERSION="3.8.10"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -347,7 +347,9 @@ check_tool() {
         # Some tools (java, scummvm) output version to stderr; try stdout first
         ver="$(timeout 3 "$cmd" --version 2>/dev/null | head -1)" || true
         if [[ -z "$ver" ]]; then
-            ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null | head -1)" || true
+            # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
+            ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null)" || true
+            ver="${ver%%$'\n'*}"
         fi
         logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
         ((_verify_pass++)) || true
@@ -558,7 +560,7 @@ if should_run_step 1; then
     # 1e. Network connectivity
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
-    elif curl -fsS --max-time 5 https://deb.debian.org/debian/dists/bookworm/Release.gpg -o /dev/null 2>/dev/null; then
+    elif curl -fsS --connect-timeout 3 --max-time 5 https://deb.debian.org/debian/dists/bookworm/Release.gpg -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -1052,8 +1054,9 @@ EOF
 
     # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme
     run sudo apt-get install -y qt5ct || warn "qt5ct unavailable — Qt apps may not inherit dark theme"
-    run sudo apt-get install -y qt5-gtk-platformtheme || \
-        run sudo apt-get install -y qt5-style-plugins || \
+    # Try preferred package first; fall back to alternative name across Debian versions
+    install_pkgs_best_effort qt5-gtk-platformtheme || \
+        install_pkgs_best_effort qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
 
     # 8f. Xft / Xresources (for pure X11 apps)
@@ -1361,7 +1364,7 @@ if should_run_step 12; then
 fi
 # Step 13: VS Code (arm64 .deb)
 if should_run_step 13; then
-    step_banner 13 "Visual Studio Code (arm64)"
+    step_banner 13 "VS Code (arm64 .deb + Wayland flags)"
 
     if command -v code &>/dev/null; then
         log "VS Code already installed: $(timeout 3 code --version 2>/dev/null | head -1 || true)"
@@ -1461,20 +1464,24 @@ export VISUAL="vim"
 export PAGER="less"
 export LESS="-R -F -X"
 
+# PATH helper — prepend only if dir exists and is not already in PATH
+_crostini_path_prepend() {
+    case ":$PATH:" in
+        *:"$1":*) ;;
+        *) export PATH="$1:$PATH" ;;
+    esac
+}
+
 # Cargo/Rust
-if [ -d "$HOME/.cargo/bin" ]; then
-    export PATH="$HOME/.cargo/bin:$PATH"
-fi
+[ -d "$HOME/.cargo/bin" ] && _crostini_path_prepend "$HOME/.cargo/bin"
 
 # Local bin (pip, user scripts)
-if [ -d "$HOME/.local/bin" ]; then
-    export PATH="$HOME/.local/bin:$PATH"
-fi
+[ -d "$HOME/.local/bin" ] && _crostini_path_prepend "$HOME/.local/bin"
 
 # npm global
-if [ -d "$HOME/.npm-global/bin" ]; then
-    export PATH="$HOME/.npm-global/bin:$PATH"
-fi
+[ -d "$HOME/.npm-global/bin" ] && _crostini_path_prepend "$HOME/.npm-global/bin"
+
+unset -f _crostini_path_prepend
 ENVEOF
     else
         log "Environment profile already exists"

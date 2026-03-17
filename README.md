@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.8.8-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.8.10-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -28,6 +28,8 @@ bash crostini-setup-duet5.sh --minimal                    # skip heavy optional 
 bash crostini-setup-duet5.sh --from-step=6                # resume from a specific step
 bash crostini-setup-duet5.sh --verify                     # run only summary/verification
 bash crostini-setup-duet5.sh --reset                      # clear checkpoint, start over
+bash crostini-setup-duet5.sh --help                       # show usage and step list
+bash crostini-setup-duet5.sh --version                    # show version
 ```
 
 ## Prerequisites
