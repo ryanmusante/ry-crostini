@@ -8,214 +8,188 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
-
 3.8.0  2026-03-16
-
-  Audit: execution flow, bash option handling, parallel processing,
-  stderr/stdout separation, logging, and verification.  12 findings.
 
   * fix cleanup() recursive invocation: nested signal during cleanup
     re-entered the handler; now clears traps on entry with
-    trap - EXIT INT TERM HUP PIPE QUIT (F1)
+    trap - EXIT INT TERM HUP PIPE QUIT
   * fix ANSI strip regex too narrow: _strip_log_ansi sed pattern
     missed CSI sequences with ? modifier (e.g. \e[?25h cursor
-    hide/show); broadened character class to \?* (F2)
+    hide/show); broadened character class to \?*
   * rename _tee_strip_log → _tee_log: function name was stale after
-    3.7.0 removed per-line stripping; renamed all 4 references (F3)
+    3.7.0 removed per-line stripping; renamed all 4 references
   * fix check_tool version capture: tools that emit --version to
     stderr (java, scummvm) returned empty; now tries stdout first,
-    falls back to stderr-only capture (F4)
+    falls back to stderr-only capture
   * fix apt Queue-Mode "host" → "access": "host" serializes all
     requests to a given host; "access" allows parallel connections
     across URIs; updated comment to document HTTP pipelining vs
-    parallel downloads distinction (F5)
+    parallel downloads distinction
   * fix --from-step without = giving opaque "Unknown argument" error:
     added explicit --from-step case with helpful syntax hint; also
-    added -* catch-all for unknown options vs arguments (F6)
+    added -* catch-all for unknown options vs arguments
   * add open_chromeos_url logging: URL being opened was not recorded
-    in log file, making post-run debugging harder (F7)
+    in log file, making post-run debugging harder
   * fix locale.gen.bak never cleaned up on success; locale-gen ran
     unconditionally even when sed edit failed; restructured to only
     run locale-gen after successful sed, clean up backup file in both
-    success and failure paths (F8)
+    success and failure paths
   * fix steps 10/16 using raw apt-get install for multi-package
     batches: single unavailable package failed the entire batch;
     switched to install_pkgs_best_effort for per-package fallback
-    (Python ecosystem, gaming packages) (F9)
+    (Python ecosystem, gaming packages)
   * fix interactive read from stdin instead of /dev/tty: all 7 read
     calls now use </dev/tty so the script works when piped via
-    curl | bash or bash < file (F10)
+    curl | bash or bash < file
   * fix interactive prompts to stdout instead of stderr: all 19
     user-facing printf calls (arrows, "Press Enter") now redirect
-    to >&2, keeping stdout clean for piping/logging (F11)
+    to >&2, keeping stdout clean for piping/logging
   * version bump 3.7.0 → 3.8.0
 
-
 3.7.0  2026-03-16
-
-  Audit: execution flow, parallel processing, stderr/stdout, logging,
-  verification.  6 findings, all fixed.
 
   * fix _tee_strip_log race condition: process substitution >(sed ...)
     created an async subprocess not tracked by wait; on SIGTERM/SIGPIPE
     the background sed could be killed mid-write, losing buffered log
     data.  Replaced with synchronous tee -a; ANSI stripping deferred
-    to single-pass _strip_log_ansi() called once in cleanup (F1)
+    to single-pass _strip_log_ansi() called once in cleanup
   * fix logprintf forking sed on every call: ~60+ invocations in step 18
     each spawned a sed subprocess for per-line ANSI stripping; replaced
-    with raw append to log file; ANSI stripped once at exit (F2)
+    with raw append to log file; ANSI stripped once at exit
   * fix cleanup() sleep 0.1 non-deterministic race workaround: removed
     sleep; _strip_log_ansi() now runs synchronously in cleanup before
-    tempfile removal and lock release (F3)
+    tempfile removal and lock release
   * fix run()/run_shell() ignoring PIPESTATUS[1]: tee failures (disk
     full, permission denied) were silently swallowed; now captures and
-    warns on tee exit code to surface log-write failures (F4)
-  * remove dead _logprintf_warn_shown global variable (orphaned by F2
-    logprintf rewrite) (F5)
+    warns on tee exit code to surface log-write failures
+  * remove dead _logprintf_warn_shown global variable (orphaned by
+    logprintf rewrite)
   * harden run_shell() security annotation: document single callsite
-    (NodeSource repo setup) and add guidance for future callsites (F6)
+    (NodeSource repo setup) and add guidance for future callsites
   * version bump 3.6.0 → 3.7.0
-  * bash -n: clean
-  * shellcheck -S warning: clean
-
 
 3.6.0  2026-03-16
-
-  Audit: execution flow, parallel processing, options, stderr/stdout, logging,
-  verification.  Two-pass review; 11 findings total.
-
-  Pass 1 — execution flow, parallel processing, logging:
 
   * fix run()/run_shell() unconditional `set -eo pipefail` restoration:
     force-re-enabled errexit even when caller had intentionally disabled it;
     now saves $- and shopt state before disabling, restores only what was
-    previously set (F1)
+    previously set
   * fix ANSI stripping regex `\x1b\[[0-9;]*m` only strips SGR (color) codes:
     cursor movement (H, J, K, A–D), erase-line, scroll sequences leaked into
     log file as raw escape bytes; broadened terminal class to `[A-Za-z]` in
-    both _tee_strip_log and logprintf (F2)
+    both _tee_strip_log and logprintf
   * fix _tee_strip_log process substitution background sed may not flush
     before exit trap: process substitutions are not tracked by `wait`; added
     sleep 0.1 at cleanup entry to allow writers to drain before file removal
-    and lock release (F3)
+    and lock release
   * fix step 6 calls glxinfo 3 times (vendor/renderer/version): each
     invocation re-queries the GL driver; cached into _glx_out and grep from
-    cached string, matching the pattern already used in step 18 (F4)
+    cached string, matching the pattern already used in step 18
   * fix cleanup() date subprocess in signal handler can hang: `date +%s` in
     broken-pipe/SIGPIPE state can hang or fail leaving _elapsed unset and
     arithmetic expansion crashing; guarded with 2>/dev/null || fallback to
-    $SECONDS builtin (no subprocess) (F5)
-
-  Pass 2 — verification counters, stdout correctness, log consistency:
+    $SECONDS builtin (no subprocess)
 
   * fix step 18 RetroArch flatpak check outputs ✓ but never increments
     _verify_pass: verification totals undercounted by 1 when RetroArch
-    installed; added ((_verify_pass++)) || true (F6)
+    installed; added ((_verify_pass++)) || true
   * fix step 18 memory tuning "skipped" path outputs ⚠ but never increments
     _verify_warn: totals undercounted by 1 on every Crostini run (vm.* is
-    always read-only); added ((_verify_warn++)) || true (F7)
+    always read-only); added ((_verify_warn++)) || true
   * fix step 9 eog success log fires unconditionally: "Eye of GNOME set as
     default image viewer" logged even when both xdg-mime calls fail; other
     MIME handlers (Firefox, Thunar, Evince) correctly use if/else; added
-    _eog_ok flag to track and only log on actual success (F8)
+    _eog_ok flag to track and only log on actual success
   * fix step 18 grep without head -1 for GTK theme, Xft DPI, font name:
     duplicate config keys produce multi-line logprintf input corrupting
     single-line verification output; added head -1 to all 3 pipelines for
-    consistency with rest of script (F9)
+    consistency with rest of script
   * fix step 18 unguarded $(date +%s) in elapsed time arithmetic: if date
     fails (e.g. binary deleted during step 3 upgrade), empty string in
     arithmetic → bash syntax error → non-zero exit after all work completed;
-    same date || SECONDS fallback pattern as cleanup (F10)
+    same date || SECONDS fallback pattern as cleanup
   * version bump 3.5.0 → 3.6.0
-
 
 3.5.0  2026-03-16
 
-  Execution flow, parallel processing, stderr/stdout, logging, verification.
-
   * fix logprintf() defined after step_banner(): step_banner calls logprintf
     but was defined ~170 lines earlier; worked by accident at runtime but
-    fragile to refactoring.  Moved logprintf above step_banner (F1)
+    fragile to refactoring.  Moved logprintf above step_banner
   * fix ANSI escape codes leaking into log file: run() and run_shell() used
     raw `tee -a` which wrote colored output to log.  Replaced with
     _tee_strip_log helper that strips ANSI before writing; terminal retains
-    color (F2)
+    color
   * fix `[[ $rc -ne 0 ]] && warn` fragile under set -e: short-circuit &&
     returns 1 when condition is false; added `|| true` guard for robustness
-    across bash versions (F3)
+    across bash versions
   * fix install_pkgs_best_effort() missing explicit return 0: implicit
-    return was the exit code of the if-test which is fragile (F4)
+    return was the exit code of the if-test which is fragile
   * fix all install_pkgs_best_effort() callers unguarded under set -e:
     partial package failures (return 1) would abort the entire script;
-    all 6 call sites now guarded with `|| warn` (F5)
+    all 6 call sites now guarded with `|| warn`
   * fix `read -r _` unguarded under set -e: read returns non-zero on EOF
     (stdin closed/redirected), killing the script in non-interactive
-    contexts; all 7 call sites now guarded with `|| true` (F6)
+    contexts; all 7 call sites now guarded with `|| true`
   * fix bare mktemp for NodeSource key: no error handling and no template;
-    now uses explicit template and || die guard (F7)
+    now uses explicit template and || die guard
   * add _tee_strip_log helper: process substitution strips ANSI from log
-    writes while preserving terminal color; documents stderr merge (F8)
+    writes while preserving terminal color; documents stderr merge
   * add parallel apt downloads: Bookworm defaults to serial queue; new
     /etc/apt/apt.conf.d/90parallel enables Pipeline-Depth 4 and disables
-    unused translation downloads for ~2-3x fetch speedup (F9)
+    unused translation downloads for ~2-3x fetch speedup
   * add verification counters: check_tool/check_config now increment
-    pass/fail/warn counters; step 18 prints totals (F10)
+    pass/fail/warn counters; step 18 prints totals
   * add elapsed time tracking: _START_EPOCH captured at startup; reported
-    in step 18 summary and on error exit in cleanup (F11)
+    in step 18 summary and on error exit in cleanup
   * add -- option: documented in usage (was handled in arg parser but
-    undiscoverable) (F12)
+    undiscoverable)
   * version bump 3.4.2 → 3.5.0
-  * shellcheck clean (SC2155 fixed in _START_EPOCH assignment)
-
 
 3.4.2  2026-03-16
 
   * fix source cargo/env unguarded under set -e: malformed env file
-    killed the script with no diagnostic; added || warn guard (F1)
+    killed the script with no diagnostic; added || warn guard
   * fix install_pkgs_best_effort() silent total failure: no indication
     of how many per-package fallbacks failed; added failure counter
     and summary warn with N/M tally; function now returns 1 on any
-    individual failures (F2)
+    individual failures
   * fix step 3 upgrade on stale indices: apt-get upgrade/full-upgrade
     ran even after apt-get update failed, risking wrong-version
-    installs from stale package lists; now skip both if update fails (F3)
+    installs from stale package lists; now skip both if update fails
   * fix open_chromeos_url() discarding stderr to /dev/null: garcon and
     xdg-open diagnostic errors were silently lost; stderr now routes
-    to log file (F4)
+    to log file
   * fix check_config() false positive on zero-byte files: -f passes
     for empty files from truncated atomic writes; now uses -s with
-    separate "empty" warning state (F5)
+    separate "empty" warning state
   * fix logprintf() silently dropping log entries: || true on log write
     failure masked disk-full or permission errors; now warns once on
-    first failure so operator knows log is incomplete (F6)
-  * fix inconsistent whitespace before || in step 11 apt-get update (F7)
+    first failure so operator knows log is incomplete
+  * fix inconsistent whitespace before || in step 11 apt-get update
   * bump version 3.4.1 → 3.4.2
 
-
-
   * fix 5 stale sub-step comment numbers in step 14: "15a"–"15e" →
-    "14a"–"14e" (left over from 3.4.0 step renumbering) (F1)
+    "14a"–"14e" (left over from 3.4.0 step renumbering)
   * fix CRITICAL: 3 stale rm -rf fallbacks on lock directory in --reset
     and stale-lock recovery; replaced with targeted rmdir + die to
-    prevent recursive deletion if LOCK_FILE is ever mis-set (F2)
+    prevent recursive deletion if LOCK_FILE is ever mis-set
   * fix rustup installer exit code unchecked: added || die guard so
-    failed installs no longer silently proceed (F3)
+    failed installs no longer silently proceed
   * fix 10 false success logs: $DRY_RUN || log ran unconditionally after
     failed run() commands due to || true guard resetting $?; restructured
     as if/else to log success only on actual success — affected:
     fdfind/bat symlinks, xrdb merge, fc-cache, Firefox ESR, Thunar,
-    Evince, eog, desktop dir mkdir, npm config, xdg-user-dirs-update (F4)
+    Evince, eog, desktop dir mkdir, npm config, xdg-user-dirs-update
   * fix 5 missing || warn/die guards on run calls: mkdir -p for
     ~/.local/bin, ~/.local/share/applications, $NPM_GLOBAL, XDG dirs,
-    eog xdg-mime calls (F4)
+    eog xdg-mime calls
   * fix 10 inline --version calls missing timeout: python3, pip, node,
     npm, rustc, cargo, code initial checks can block indefinitely on
-    unresponsive or GUI programs; all wrapped in timeout 3 (F5)
+    unresponsive or GUI programs; all wrapped in timeout 3
   * fix 3 inline --version calls missing 2>/dev/null: node (step 11
     initial), rustc (step 12 initial), code (step 13 initial) leaked
-    stderr into log output (F5)
+    stderr into log output
   * bump version 3.4.0 → 3.4.1
-
 
 3.4.0  2026-03-16
 
@@ -234,41 +208,39 @@ represents a discrete, committed change set.
   * remove git/ssh options from usage() help text
   * bump version 3.3.10 → 3.4.0
 
-
 3.3.10  2026-03-16
 
   * fix trap signal coverage: add QUIT (Ctrl-\) — previously orphaned
-    lock/temp files on SIGQUIT (F1)
+    lock/temp files on SIGQUIT
   * fix --from-step / --verify duplicate detection: passing same flag
     twice produced misleading "Cannot combine X with Y" error; message
-    now correctly identifies the duplicate (F2)
+    now correctly identifies the duplicate
   * fix curl downloads can hang indefinitely: added --connect-timeout
     and --max-time to NodeSource GPG key (30s), rustup installer (60s),
-    and VS Code .deb (120s); preflight check already had timeout (F4)
+    and VS Code .deb (120s); preflight check already had timeout
   * fix lock acquisition uses rm -rf on lock directory — inconsistent
     with cleanup() fix from 3.3.9; replaced with targeted rm -f pid +
-    rmdir in all three stale-lock recovery paths and --reset (F5)
-  * fix unquoted $$ in PID file write (F6)
+    rmdir in all three stale-lock recovery paths and --reset
+  * fix unquoted $$ in PID file write
   * fix dry-run messages for curl commands now match actual flags
-    including --connect-timeout/--max-time (F7)
+    including --connect-timeout/--max-time
   * fix check_tool() --version can block indefinitely on GUI programs
     (dosbox, scummvm, pavucontrol open windows); wrapped in timeout 3;
-    also applied to inline version checks in step 17 (F9)
+    also applied to inline version checks in step 17
   * fix run_shell used for rustup with path interpolated into bash -c;
     replaced with direct run sh "$path" — eliminates quoting fragility
-    with paths containing special characters (F10)
+    with paths containing special characters
   * fix sudo chmod 644 on sysctl/profile.d/memory configs used || true
     silently swallowing failures; replaced with || warn to surface
-    permission issues (F11)
+    permission issues
   * fix df arithmetic in steps 1d, 2f, and 20 can crash under set -e
     if df fails or returns non-numeric; all three sites now validate
-    output before arithmetic (F12, F13)
+    output before arithmetic
   * fix 7 unquoted command substitutions (word-splitting risk under
-    modified IFS): get_checkpoint, df, find, wc -l, --version (F14)
+    modified IFS): get_checkpoint, df, find, wc -l, --version
   * fix symlink creation for fd/bat used || true; replaced with
-    || warn so failure is visible in logs (F15)
+    || warn so failure is visible in logs
   * bump version 3.3.9 → 3.3.10
-
 
 3.3.9  2026-03-16
 
@@ -276,55 +248,53 @@ represents a discrete, committed change set.
     > >(tee -a LOG) 2> >(tee -a LOG >&2) race on LOG_FILE — two
     async tee processes write the same file concurrently causing
     interleaved partial lines and data loss on fast exit; replaced
-    with single 2>&1 | tee -a pipeline (F1, F2)
+    with single 2>&1 | tee -a pipeline
   * fix CRITICAL: PIPESTATUS[0] capture — || true after pipeline
     resets PIPESTATUS to (0), so run()/run_shell() always returned
     rc=0 regardless of command failure; fixed by temporarily
-    disabling errexit+pipefail around the pipeline (F11)
+    disabling errexit+pipefail around the pipeline
   * fix set_checkpoint() non-atomic write: echo > FILE can truncate
     to empty on crash between open and write; replaced with
-    mktemp+printf+mv atomic pattern (F4)
+    mktemp+printf+mv atomic pattern
   * fix deferred checkpoint write used raw echo instead of atomic
-    set_checkpoint(); now routes through the same function (F8)
+    set_checkpoint(); now routes through the same function
   * fix install_pkgs_best_effort() batch attempt discarded stderr
     via 2>/dev/null, hiding apt diagnostics that explain why batch
     failed; removed the redirect so errors flow through run() to
-    both terminal and log (F3)
+    both terminal and log
   * fix steps 4, 5, 6-stable used raw apt-get install where a
     single missing package kills the entire batch; replaced with
     install_pkgs_best_effort() for consistent fallback behavior
-    matching steps 7 and 9 (F5)
+    matching steps 7 and 9
   * fix cleanup trap: rm -rf on lock directory replaced with
     explicit rm -f pid + rmdir to prevent recursive deletion if
-    LOCK_FILE is ever mis-set (F6)
+    LOCK_FILE is ever mis-set
   * fix --reset: did not remove stale lock directory when previous
     instance was dead; user had to manually delete or wait for
-    next-run stale detection; now cleans lock on reset (F10)
+    next-run stale detection; now cleans lock on reset
   * fix apt autoremove || true silently swallowed errors; replaced
-    with || warn for consistent logging (F13)
+    with || warn for consistent logging
   * bump version 3.3.8 → 3.3.9
-
 
 3.3.8  2026-03-16
 
   * fix cleanup trap: add set +e on entry so temp-file removal and
     lock release cannot be interrupted by stray non-zero exits under
-    set -euo pipefail (F6)
+    set -euo pipefail
   * fix signal coverage: add HUP and PIPE to trap; terminal disconnect
-    or broken-pipe no longer orphans lock/temp files (F1)
+    or broken-pipe no longer orphans lock/temp files
   * fix passphrase zeroing: _SSH_PASSPHRASE now zeroed in cleanup() on
-    abnormal exit and unset after step 18 consumes it (F2)
-  * fix option parser: add -- terminator to stop option processing (F3)
+    abnormal exit and unset after step 18 consumes it
+  * fix option parser: add -- terminator to stop option processing
   * fix wait race: run()/run_shell() wait now uses 2>/dev/null || true
     to guard against set -e when no waitable children exist; quote
-    return "$rc" for correctness (F4)
+    return "$rc" for correctness
   * add install_pkgs_best_effort(): batch apt-get install first (O(1)
     apt call), falls back to per-package on failure; replaces 3 slow
-    per-package loops in steps 6, 7, 9 (F5)
+    per-package loops in steps 6, 7, 9
   * add WARNING comment to run_shell() documenting bash -c injection
-    surface for maintainers (F7)
+    surface for maintainers
   * bump version 3.3.7 → 3.3.8
-
 
 3.3.7  2026-03-16
 
