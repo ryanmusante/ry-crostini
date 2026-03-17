@@ -8,6 +8,19 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.11  2026-03-17
+
+  * fix L1: _strip_log_ansi sed missed OSC sequences (\e]...\x07,
+    e.g. terminal title sets); added second sed expression to strip
+    BEL-terminated OSC alongside existing CSI pattern.
+  * fix L3: step 11 GPG fingerprint check conflated empty extraction
+    (gpg parse failure / corrupt key) with actual fingerprint mismatch
+    (key rotation / supply-chain compromise); split into two distinct
+    die messages so the diagnostic points to the right cause.
+  * fix I2: usage() --from-step help text now notes N=18 is equivalent
+    to --verify — both existed but the equivalence was undiscoverable.
+  * bump version 3.8.10 → 3.8.11
+
 3.8.10  2026-03-17
 
   * sync step 13 banner: "Visual Studio Code (arm64)" → "VS Code

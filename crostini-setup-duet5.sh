@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.10
+# Version: 3.8.11
 # Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -14,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.10"
+readonly SCRIPT_VERSION="3.8.11"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -157,7 +157,7 @@ _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { warn "Cannot create tmpfile for ANSI strip"; return 1; }
-    if sed 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
+    if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; warn "Cannot replace log after ANSI strip"; return 1; }
     else
         rm -f "$_tmp"
@@ -386,7 +386,7 @@ USAGE:
 OPTIONS:
     --dry-run    Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
-    --from-step=N  Start (or restart) from step N (1–18)
+    --from-step=N  Start (or restart) from step N (1–18; N=18 is same as --verify)
     --verify       Run only step 18 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
     --help       Show this help message
@@ -1274,9 +1274,13 @@ if should_run_step 11; then
         # Verify GPG key fingerprint to prevent supply-chain substitution
         _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
             | awk -F: '/^fpr:/{print $10; exit}')" || true
+        if [[ -z "$_ns_fp" ]]; then
+            rm -f "$_ns_key"
+            die "NodeSource GPG fingerprint extraction failed — key file may be corrupt or gpg cannot parse it."
+        fi
         if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
             rm -f "$_ns_key"
-            die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp:-empty}. Possible key rotation or supply-chain compromise."
+            die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp}. Possible key rotation or supply-chain compromise."
         fi
         log "NodeSource GPG fingerprint verified: ${_ns_fp}"
         unset _ns_fp
