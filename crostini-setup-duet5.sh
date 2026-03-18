@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.12.0
+# Version: 3.14.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.12.0"
+readonly SCRIPT_VERSION="3.14.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -52,7 +52,7 @@ _LOCK_ACQUIRED=false
 _received_signal=""
 
 # Signal handler — stores signal name, triggers EXIT trap via exit
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _handle_signal() { _received_signal="$1"; exit 1; }
 
 # Cleanup trap
@@ -70,7 +70,7 @@ cleanup() {
     # Remove temp files
     if [[ -n "${_VSCODE_DEB:-}" ]]; then rm -f "$_VSCODE_DEB" 2>/dev/null; fi
     if [[ -n "${_ns_key:-}" ]]; then rm -f "$_ns_key" 2>/dev/null; fi
-    if [[ -n "${_ns_gpg:-}" ]]; then sudo rm -f "$_ns_gpg" 2>/dev/null; fi
+    if [[ -n "${_ns_gpg:-}" ]]; then sudo -n rm -f "$_ns_gpg" 2>/dev/null; fi
     if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
@@ -153,7 +153,7 @@ _prompt() {
 # _cleanup_warn: log helper safe for use inside cleanup/trap context.
 # Uses $SECONDS (bash builtin, no subprocess) instead of date(1) to avoid
 # hanging on a broken pipe, frozen cgroup, or killed date process.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _cleanup_warn() {
     printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" >&2
     printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" \
@@ -163,7 +163,7 @@ _cleanup_warn() {
 # _strip_log_ansi: single-pass ANSI-escape removal from the log file.
 # Called once at script exit (cleanup) rather than per-line, avoiding both
 # process-substitution races and per-call sed forks.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
@@ -285,7 +285,7 @@ write_file() {
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
-    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
+    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }  # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
     mv "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
 }
@@ -419,7 +419,7 @@ STEPS PERFORMED:
     11  Node.js via NodeSource (LTS, arm64)
     12  Rust via rustup (aarch64)
     13  VS Code (arm64 .deb + Wayland flags)
-    14  Container resource tuning (sysctl, locale, env, XDG, paths)
+    14  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
     15  Flatpak + Flathub (ARM64 app source)
     16  Gaming packages (DOSBox, ScummVM, RetroArch)
     17  Container backup (opens ChromeOS backup page with --interactive)
@@ -770,7 +770,7 @@ EOF
     else
         warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
     fi
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y || warn "apt autoremove had issues"
 
     set_checkpoint 3
     log "Step 3 complete."
@@ -1351,9 +1351,9 @@ if should_run_step 11; then
                 || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
             # shellcheck disable=SC2024  # redirect captures gpg log messages, not dearmored output (-o flag)
             sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
-                || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "NodeSource GPG dearmor failed"; }
+                || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "NodeSource GPG dearmor failed"; }
             sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
-                || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "Cannot move GPG keyring into place"; }
+                || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "Cannot move GPG keyring into place"; }
             rm -f "$_ns_key"
             unset _ns_key _ns_gpg
             printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
@@ -1441,6 +1441,9 @@ if should_run_step 13; then
             log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
+            # TOFU (Trust On First Use): HTTPS-only download from code.visualstudio.com.
+            # No GPG signature is available for direct .deb downloads (unlike the
+            # Microsoft apt repo).  Integrity is validated by dpkg-deb --info below.
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)" || die "Cannot create tmpfile for VS Code download"
             _vscode_rc=0
@@ -1450,7 +1453,10 @@ if should_run_step 13; then
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
             fi
 
-            if [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
+            if [[ "$_vscode_rc" -ne 0 ]] && [[ ! -s "$_VSCODE_DEB" ]]; then
+                # curl failed and file is empty — already warned above; skip to cleanup
+                :
+            elif [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
                 # Validate .deb structure before installing (catches corrupt/truncated downloads)
                 if ! dpkg-deb --info "$_VSCODE_DEB" > /dev/null 2>&1; then
                     warn "VS Code .deb is corrupt or invalid. Install manually:"
@@ -1487,7 +1493,7 @@ EOF
 fi
 # Step 14: Container resource tuning
 if should_run_step 14; then
-    step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths)"
+    step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
 
     # 14a. Increase inotify watchers (VS Code and file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
@@ -1511,7 +1517,7 @@ EOF
             if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run sudo locale-gen; then
                     if ! $DRY_RUN; then
-                        sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+                        run sudo rm -f /etc/locale.gen.bak || true
                         log "en_US.UTF-8 locale generated"
                     fi
                 else
@@ -1519,8 +1525,8 @@ EOF
                 fi
             else
                 warn "locale.gen edit failed — restoring backup"
-                sudo cp -- /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
-                sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+                run sudo cp -- /etc/locale.gen.bak /etc/locale.gen || warn "Rollback of locale.gen failed — manual restore from /etc/locale.gen.bak required"
+                run sudo rm -f /etc/locale.gen.bak || true
             fi
         else
             warn "locale.gen backup failed — skipping locale edit to avoid unrecoverable corruption"
@@ -1565,6 +1571,8 @@ ENVEOF
     fi
 
     # 14d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
+    # NOTE: sysctl --system may silently skip individual read-only keys (it only
+    # fails on parse errors).  Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
@@ -1627,6 +1635,7 @@ if should_run_step 16; then
     step_banner 16 "Gaming packages (DOSBox, ScummVM, RetroArch)"
 
     # Phase 2: native ARM packages (no translation layer needed)
+    # dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
     install_pkgs_best_effort dosbox scummvm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub)
@@ -1662,7 +1671,7 @@ if should_run_step 16; then
         fi
     fi
 
-    log "For advanced gaming (box86/Wine/GOG): see crostini-gaming-packages.txt"
+    log "For advanced gaming (box86/Wine/GOG): see README.md § Gaming"
 
     set_checkpoint 16
     log "Step 16 complete."
@@ -1907,7 +1916,7 @@ if should_run_step 18; then
     logprintf '  • Cloud gaming: GeForce NOW / Xbox Cloud Gaming in ChromeOS browser\n'
     logprintf '  • Manual .deb downloads: always get the arm64 variant\n'
     logprintf '  • Flatpak apps: flatpak install flathub <app-id>\n'
-    logprintf '  • Gaming (box86/Wine/GOG): see crostini-gaming-packages.txt\n'
+    logprintf '  • Gaming (box86/Wine/GOG): see README.md § Gaming\n'
     logprintf '  • If GPU not active: reboot entire Chromebook (not just container)\n'
     logprintf '\n'
 

@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.12.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.14.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -121,6 +121,77 @@ paravirtualized GPU. Use
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
 Always download the **arm64** `.deb` variant.
 
+## Gaming
+
+Step 16 installs DOSBox, ScummVM, and RetroArch (Flatpak). This section
+covers what works, what doesn't, and advanced options.
+
+### Compatibility tiers
+
+| Tier | What runs | RAM | Examples |
+|------|-----------|-----|---------|
+| Excellent | ScummVM, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
+| Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
+| Fair | RetroArch PSX | 300–500 MB | PS1 catalog |
+| Marginal | RetroArch N64 | ~500 MB | May lag at 4 GB |
+| Marginal | box86+Wine 2D/D3D8 | 1–2 GB | Older GOG Windows titles |
+| Poor | box86+Wine D3D9 3D | 2–3 GB | Expect < 15 FPS |
+| No-go | Vulkan / D3D10+ / x86 Flatpaks | N/A | Steam, modern AAA |
+
+### Native ARM64 (installed by step 16)
+
+**DOSBox** — classic DOS emulation (~30–50 MB). The `dosbox-staging` fork
+is actively maintained but its Flathub Flatpak is x86\_64-only; compile
+from source or use the classic `dosbox` apt package.
+
+**ScummVM** — 200+ native engine reimplementations (~50–100 MB). No x86
+translation needed.
+
+**RetroArch** — multi-system emulator via Flatpak (`org.libretro.RetroArch`).
+Flathub aarch64 confirmed. Cores available via Online Updater. 8/16-bit
+runs great; PSX playable; N64 may struggle at 4 GB.
+
+### x86 translation (advanced, optional)
+
+> **Warning:** Complex setup. box86+Wine overhead consumes 500 MB–1 GB
+> before the game loads. Only pursue for specific Windows-only titles.
+
+**box86** (32-bit x86 translator) and **box64** (64-bit x86\_64 translator)
+are available from [ryanfortner.github.io](https://ryanfortner.github.io/box86-debs/)
+community repos or compiled from source. TOFU trust model — HTTPS-only,
+no detached GPG signature; inspect keys before adding to `trusted.gpg.d`.
+
+**Wine** — must use x86 Wine via box86 (not `apt install wine`, which
+installs wine-arm). See the
+[box86 x86 Wine docs](https://github.com/ptitSeb/box86/blob/master/docs/X86WINE.md).
+WineD3D only (no DXVK); practical ceiling is D3D8/D3D9.
+
+**winetricks** — install `cabextract` and `unzip`, then download the script
+from the [Winetricks repo](https://github.com/Winetricks/winetricks). Must
+suppress banner: `BOX86_NOBANNER=1 winetricks -q corefonts vcrun2010`.
+
+### GOG games
+
+[Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
+has arm64 `.deb` releases (the Flathub Flatpak is x86\_64-only). Heavy for
+4 GB (Electron, ~200–400 MB). Alternative: download GOG Linux `.sh`
+installers directly from [gog.com](https://www.gog.com) —
+`chmod +x installer.sh && ./installer.sh`, no launcher needed.
+
+### Cloud gaming (recommended for AAA)
+
+These run in the ChromeOS browser (not Crostini) and bypass all ARM64/RAM/GPU
+limitations: [GeForce NOW](https://play.geforcenow.com),
+[Xbox Cloud Gaming](https://xbox.com/play),
+[Amazon Luna](https://luna.amazon.com).
+
+### Recommended approach
+
+1. Use the native ARM64 packages from step 16 (DOSBox, ScummVM, RetroArch)
+2. Buy GOG Linux-native titles; download `.sh` installers directly
+3. Attempt box86/box64+Wine only for specific Windows-only games
+4. Use cloud gaming for anything demanding
+
 ## Verify
 
 ```bash
@@ -129,7 +200,9 @@ glmark2-es2-wayland             # GPU benchmark
 vulkaninfo --summary            # Vulkan
 pactl info                      # audio
 speaker-test -t wav -c 2        # audio playback
+pavucontrol                     # audio mixer (GUI)
 xdpyinfo | grep resolution      # display
+xrandr                          # display outputs
 fc-match sans-serif             # fonts
 fc-match monospace              # fonts
 ```

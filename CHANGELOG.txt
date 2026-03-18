@@ -1,526 +1,156 @@
 CHANGELOG
 =========
 
-crostini-setup-duet5.sh — Crostini post-install bootstrap
+crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
-Note: Multiple versions on the same date reflect iterative
-development and review within single sessions. Each entry
-represents a discrete, committed change set.
+3.14.0  2026-03-18
 
-3.12.0  2026-03-18
+  * add SC2329 suppression alongside SC2317 on 3 trap-invoked functions
+    (_handle_signal, _cleanup_warn, _strip_log_ansi) -- shellcheck 0.11
+    info-level false positive for indirectly-called functions.
+  * normalize CHANGELOG.txt to ASCII -- replace em-dash, en-dash, arrow,
+    section-sign with ASCII equivalents for portability.
 
-  * fix: eliminate date(1) from cleanup/trap path — warn() calls
-    date +%T which can hang uninterruptibly after traps are cleared;
-    new _cleanup_warn() uses $SECONDS (bash builtin, no subprocess).
-    Also replaced date +%s elapsed calculation in cleanup() with
-    $SECONDS for the same reason.  (M1)
-  * fix: gate locale.gen sed -i on successful backup — if cp fails
-    (disk full), sed -i is now skipped to avoid unrecoverable
-    corruption.  (M2)
-  * fix: add -r flag to all 9 xargs calls — GNU xargs without -r
-    runs echo on empty input, producing whitespace in verification
-    display variables.  (M3)
-  * fix: add verification counters to 5 uncounted system checks in
-    step 18 — GPU render node, Sommelier, ALSA, Microphone, and
-    PulseAudio now increment _verify_{pass,fail,warn}; totals line
-    was previously understating both passes and failures.  (M4)
-  * fix: write_file() now sets mode 644 on tmpfile before mv —
-    umask 077 was creating user config files as 0600 instead of
-    conventional 0644.  (L1)
-  * fix: duplicate 3.8.15 CHANGELOG entry removed.  (L2)
-  * fix: NodeSource apt update failure now dies instead of warning —
-    the subsequent apt install is guaranteed to fail anyway.  (L4)
-  * change: adwaita-icon-theme-full merged into GUI_PKGS array —
-    saves one apt-get invocation; install_pkgs_best_effort handles
-    the may-not-exist case identically.  (L6)
-  * bump version 3.11.1 → 3.12.0
+3.13.0  2026-03-18
 
-3.11.1  2026-03-17
+  * inline gaming guide into README S. Gaming -- moved compatibility
+    tiers, native ARM64, x86 translation, GOG, cloud gaming from
+    separate file into README; script references updated.
+  * add TOFU comment to VS Code .deb download (step 13) -- documents
+    HTTPS-only trust model with dpkg-deb structural validation.
+  * add partial-application note to memory sysctl (step 14d).
+  * add --purge to apt-get autoremove (step 3).
+  * deduplicate VS Code download failure warnings (step 13).
+  * add ", memory" to step 14 banner and usage().
+  * add dosbox-staging Flatpak comment (step 16).
+  * add write_file() chmod 644 rationale comment.
 
-  * fix: dry-run log messages now accurately reflect actual commands.
-    `install_pkgs_best_effort` dry-run log now shows
-    `sudo DEBIAN_FRONTEND=noninteractive apt-get install -y` matching
-    the live command. Step 11 (NodeSource) dry-run log similarly updated.
-    Users reviewing `--dry-run` output will see the exact commands that
-    would execute in live mode.
+3.8.0 - 3.12.0  2026-03-16 - 2026-03-18
 
-3.11.0  2026-03-17
+  Execution and safety:
+  * CRITICAL: fix set -e/pipefail restoration order crash in run() --
+    && short-circuit returned 1 under just-restored errexit; replaced
+    with if/then and reversed restore order (pipefail before errexit).
+  * CRITICAL: fix PIPESTATUS race in run() -- array reset between reads;
+    now saved atomically into local _ps.
+  * eliminate run_shell() (bash -c) entirely -- NodeSource repo write
+    replaced with printf | write_file_sudo; removes last shell-injection
+    surface.
+  * eliminate date(1) from cleanup/trap path -- _cleanup_warn() uses
+    $SECONDS (bash builtin) to avoid hanging on broken pipe/frozen cgroup.
+  * fix cleanup() recursive invocation -- clears traps on entry.
+  * fix signal exit codes -- cleanup re-raises with kill -SIG $$ for
+    correct 128+N exit to parent processes.
+  * guard 7 pipeline assignments against set -eo pipefail early abort.
+  * fix A&&B||C anti-pattern in run() -- replaced with if/fi blocks.
+  * gate locale.gen sed -i on successful backup (disk-full safety).
+  * write_file()/write_file_sudo() now set mode 644 on tmpfile before
+    mv -- umask 077 was creating config files as 0600.
 
-  * fix: `dpkg -i` for VS Code now passes `DEBIAN_FRONTEND=noninteractive`
-    — postinst scripts can trigger debconf prompts that hang unattended
-    installs. Also updated the corresponding dry-run log message.
-  * fix: flatpak install for RetroArch now passes `--noninteractive` in
-    addition to `-y` — flatpak 1.14+ (Bookworm) supports this flag for
-    fully unattended operation, suppressing prompts beyond what `-y` covers
-    (e.g., runtime/locale selection).
-  * change: step 8 qt5 package installs batched — `qt5ct` is now installed
-    in the same `install_pkgs_best_effort` call as `qt5-gtk-platformtheme`
-    instead of a separate single-package call. Saves one apt invocation in
-    the happy path and eliminates the misleading "Batch install failed"
-    warning that `install_pkgs_best_effort` emits for single-package calls.
-  * change: apt download config (`90parallel`) now includes
-    `Acquire::Retries "3"` — retries transient network failures (WiFi
-    drops, CDN hiccups) which are common on the Duet 5 as a mobile device.
-    Without this, a single dropped connection fails the entire step.
+  Unattended / dry-run fidelity:
+  * all sudo apt-get calls now pass DEBIAN_FRONTEND=noninteractive
+    explicitly -- sudo env_reset was stripping the export.
+  * apt-get upgrade/full-upgrade pass --force-confdef --force-confold.
+  * dpkg -i for VS Code passes DEBIAN_FRONTEND=noninteractive.
+  * flatpak install passes --noninteractive (flatpak 1.14+).
+  * 8 dry-run fidelity fixes -- output now matches live commands; step 11
+    NodeSource guard restructured for dry-run without pre-existing node.
+  * --from-step/--verify now work in --dry-run (_CHECKPOINT_OVERRIDE).
+  * read -r prompts: -t 300 timeout on all 7 sites.
 
-3.10.0  2026-03-17
+  Logging and verification:
+  * add -r to all 9 xargs calls (empty-input guard).
+  * add verification counters to 5 uncounted step 18 checks.
+  * fix 10+ false success logs (steps 9, 14b, 15; conditional on
+    command success).
+  * ANSI strip: fix CSI/OSC/DEC sequences, single-pass at exit via
+    _strip_log_ansi.
+  * _tee_strip_log race eliminated -- synchronous tee, deferred strip.
+  * _prompt() function -- interactive output logged for audit trail.
+  * check_tool(): stdout-first with stderr fallback; SIGPIPE-safe.
+  * step 18 set_checkpoint before rm; "Step 18 complete." log added.
 
-  * fix: all `sudo apt-get` calls now pass `DEBIAN_FRONTEND=noninteractive`
-    explicitly — `sudo` strips exported env vars via `env_reset`, so the
-    previous `export DEBIAN_FRONTEND=noninteractive` had no effect through
-    sudo. Fresh installs of debconf-aware packages (locales, tzdata) could
-    prompt interactively, hanging unattended runs.
-  * fix: `apt-get upgrade` and `full-upgrade` now pass dpkg options
-    `--force-confdef --force-confold` — without these, dpkg conffile
-    prompts during package upgrades could hang unattended mode even with
-    `-y`, since `-y` only answers the apt "Continue?" prompt, not dpkg's
-    "Configuration file changed" prompt.
-  * fix: stale lock cleanup now uses `find -delete` instead of only
-    removing the `pid` file — a crash between `mktemp` inside the lock
-    dir and `mv` to `pid` would leave an orphaned tmpfile that prevented
-    `rmdir` from succeeding, blocking all subsequent runs.
-  * change: comment on `export DEBIAN_FRONTEND` updated to document that
-    it only affects direct (non-sudo) invocations; all sudo calls pass
-    the variable explicitly.
+  Packages and config:
+  * remove transitional gstreamer1.0-pulseaudio and explicit libasound2
+    from AUDIO_PKGS (Trixie t64 safety).
+  * libavcodec-extra gated behind --minimal.
+  * add wl-clipboard (step 4), xterm (step 9).
+  * add SOMMELIER_ACCELERATORS=Super_L (step 8).
+  * batch qt5 installs; apt Acquire::Retries "3".
+  * apt Queue-Mode "host" -> "access" for parallel downloads.
+  * adwaita-icon-theme-full merged into GUI_PKGS.
+  * NodeSource apt update failure now dies (not warns).
+  * /etc/profile.d PATH prepend dedup guard.
+  * step 18 Node.js major version mismatch warning.
 
-3.9.0  2026-03-17
+  Lock and tempfiles:
+  * stale lock cleanup uses find -delete (catches orphaned tmpfiles).
+  * missing || die on mktemp in steps 12, 13.
+  * cleanup trap temp-file removal uses if/fi (not A&&B).
+  * NodeSource GPG fingerprint: split empty-extraction vs mismatch
+    die messages.
 
-  * remove: gstreamer1.0-pulseaudio from AUDIO_PKGS — transitional
-    empty package in Bookworm; the actual PulseAudio GStreamer plugin
-    is now provided by gstreamer1.0-plugins-good (already installed).
-  * remove: libasound2 from AUDIO_PKGS — pulled in as a dependency
-    by alsa-utils and libasound2-plugins; explicit listing would break
-    on the Trixie t64 rename (libasound2 → libasound2t64).
-  * change: libavcodec-extra (~80 MB codecs) gated behind `! $MINIMAL`
-    — most Crostini audio/video use cases (browser, PulseAudio) don't
-    need it; heavy for 4 GB RAM + 128 GB eMMC.
-  * add: wl-clipboard (step 4) — provides wl-copy/wl-paste for
-    terminal ↔ GUI clipboard integration over Wayland via sommelier.
-  * add: xterm (step 9) — fallback terminal emulator for Thunar
-    "Open Terminal Here" and sensible-terminal / xdg-terminal-exec
-    desktop actions.
-  * add: SOMMELIER_ACCELERATORS=Super_L to sommelier.conf (step 8) —
-    passes Super key through to Linux apps (VS Code, Firefox, etc.)
-    instead of ChromeOS intercepting it.
-  * fix: step 8 qt5ct install routed through install_pkgs_best_effort
-    for consistency — was the only raw `run sudo apt-get install`
-    in a block that already used the helper on the next two lines.
-  * add: step 18 Node.js major version mismatch warning — compares
-    installed node major against NODE_MAJOR constant; warns if system
-    node from apt doesn't match the expected NodeSource version.
-  * add: step 18 verification for wl-clipboard (wl-copy) and xterm.
-  * add: Trixie migration note in script header — flags package arrays
-    that need auditing for the Debian 13 t64 transition, with wiki URL.
-  * add: NodeSource maintenance-mode comment (step 11) — documents
-    the alternative binary tarball method from nodejs.org and the
-    rationale for keeping the GPG-pinned repo approach.
-  * sync: step 9 banner, usage(), and README step table now include
-    xterm; sommelier config check description updated to reflect
-    SOMMELIER_ACCELERATORS; README config files section updated.
-  * docs: add Trixie migration section to README.
-  * bump version 3.8.15 → 3.9.0
+  Cross-reference and docs:
+  * sync all step banners, usage(), and README step table.
+  * sync README: prerequisites, config files, verify commands, files
+    section, version badge.
+  * Trixie migration note in script header and README.
+  * NodeSource maintenance-mode comment (step 11).
+  * rustup TOFU comment expanded.
+  * add --help/--version to README usage block.
 
-3.8.15  2026-03-17
+3.3.0 - 3.7.0  2026-03-15 - 2026-03-16
 
-  * fix: 8 dry-run fidelity bugs — dry-run output now matches what a
-    live run would actually do, so `--dry-run` is a reliable preview.
-  * fix M1: steps 2a–2f dry-run logged "would open chrome://…" even in
-    unattended mode (default).  Live mode only opens URLs with
-    --interactive; dry-run now mirrors that by gating traces on
-    `! $UNATTENDED`.
-  * fix M2: step 17 dry-run logged "would open chrome://…/exportImport"
-    regardless of UNATTENDED flag; now matches live behavior.
-  * fix M3: step 15 dry-run skipped flatpak remote-add trace because
-    `command -v flatpak` checked real system (apt install was a no-op);
-    dry-run now unconditionally traces the planned remote-add.
-  * fix M4: step 16 dry-run checked `command -v flatpak/dosbox/scummvm`
-    against real system, emitting spurious "not found" warnings for
-    packages that would have been installed.  RetroArch install trace
-    was also skipped.  Dry-run now traces the install and skips the
-    verify block entirely (packages were not actually installed).
-  * fix L1: step 9 MIME default commands (update-alternatives,
-    xdg-mime) silently skipped in dry-run because `command -v
-    firefox-esr/thunar/evince/eog` checked real state.  Gates now
-    include `|| $DRY_RUN` so planned defaults are traced.
-  * fix L2: step 14b `sudo rm -f /etc/locale.gen.bak` ran during
-    dry-run — not wrapped in DRY_RUN guard.  Could delete a stale
-    backup from a prior aborted live run.  Now guarded.
-  * fix L3: step 14d `/proc/sys/vm/swappiness` writability check ran
-    in dry-run.  On non-Crostini systems the memory tuning block was
-    skipped without any trace.  Dry-run now bypasses the check and
-    traces the planned write + sysctl.
-  * bump version 3.8.14 → 3.8.15
+  * CRITICAL: fix cleanup trap deleting lock on --help/--version exit.
+  * CRITICAL: fix run() dual process substitution race and PIPESTATUS
+    capture (|| true reset to 0).
+  * CRITICAL: revert broken SSH_ASKPASS for ssh-keygen.
+  * CRITICAL: 3 stale rm -rf on lock directory -> targeted rmdir.
+  * BREAKING: remove git configuration step and SSH key generation;
+    renumber steps 14-20 -> 13-18.
+  * fix set_checkpoint() non-atomic write -> mktemp+printf+mv.
+  * fix signal coverage: add HUP, PIPE, QUIT traps.
+  * fix --from-step/--verify conflict detection.
+  * fix logprintf() definition order; ANSI escapes leaking into log.
+  * fix install_pkgs_best_effort() callers unguarded under set -e.
+  * fix 10 false success logs; 10 inline --version calls missing timeout.
+  * fix source cargo/env, step 3 upgrade on stale apt indices.
+  * add install_pkgs_best_effort() batch+fallback helper.
+  * add step_banner() dual-write via logprintf.
+  * add parallel apt downloads, verification counters, elapsed time.
+  * add VS Code .deb integrity check (dpkg-deb --info).
+  * add -- option terminator.
+  * variable leak cleanup (55 variables confirmed unset at boundaries).
 
-3.8.14  2026-03-17
+3.0.0 - 3.2.0  2026-03-15
 
-  * fix: step 11 dies in --dry-run when node is not installed — the
-    NodeSource install block used run() for individual commands but
-    the inter-command filesystem checks (mktemp -s, gpg fingerprint,
-    grep sources.list) operated on real disk state.  In dry-run, run()
-    no-ops leave files empty/missing, so the validation checks die.
-    Steps 12 (rustup) and 13 (VS Code) already had explicit
-    `if $DRY_RUN; then ... else ... fi` guards; step 11 now uses the
-    same pattern.  Confirmed: --dry-run with no pre-existing node now
-    logs the planned commands and continues.
-  * fix: cosmetic triple blank line between check_config() and usage()
-    reduced to single blank for consistency with rest of script.
-  * bump version 3.8.13 → 3.8.14
+  * add step 17: gaming packages (DOSBox, ScummVM, RetroArch).
+  * fix run() exit code propagation via process substitution.
+  * fix --dry-run: arch/root checks warn instead of die; explicit
+    guards for steps 8, 12, 15.
+  * fix interactive read from stdin -> /dev/tty (7 sites); prompts
+    to stderr (19 printf calls).
+  * add --from-step=N, --verify, --reset flags.
+  * add lock stale detection (missing/empty PID file).
+  * add NodeSource GPG tmpfile+mv atomic keyring write.
 
-3.8.13  2026-03-17
+2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
 
-  * fix: step 9 false success log — "Desktop applications directory ✓"
-    logged unconditionally after `run mkdir -p ... || warn`; success
-    message now conditional on mkdir actually succeeding.
-  * fix: step 14b false success log — "en_US.UTF-8 locale generated"
-    logged even when locale-gen failed; restructured as nested if/else
-    so success only logs after locale-gen succeeds.  Backup file is
-    now preserved on locale-gen failure (was deleted regardless) so
-    the operator can diagnose.
-  * fix: step 15 false success log + unconditional remote-add — "Flatpak
-    installed with Flathub remote." logged even when apt-get install
-    flatpak failed; flatpak remote-add ran unconditionally (guaranteed
-    failure if flatpak binary missing).  Both now guarded by
-    `command -v flatpak` check.
-  * bump version 3.8.12 → 3.8.13
-  * docs: expand README prerequisites with ChromeOS settings (GPU flag +
-    reboot, microphone, disk size, shared folders, USB, port forwarding)
-    that should be configured before an unattended run — previously the
-    only guidance was "Terminal app open"; notes `--interactive` as the
-    alternative for guided toggle prompts.
-  * docs: fix README disk size parenthetical — said "recommends ≥ 10 GB"
-    but the script warns below 10 GB and recommends 20–30 GB; corrected
-    to "aborts below 2 GB free and warns below 10 GB" matching step 1d
-    (die at < 2048 MB) and step 2f (warn at < 10240 MB).
+  * full rewrite: 19-step automated setup with checkpoint resume.
+  * add --dry-run, --interactive, --minimal flags.
+  * add unattended default mode (zero interactive prompts).
+  * add run(), write_file(), write_file_sudo() atomic helpers.
+  * add PID-based mkdir lock for concurrent-run safety.
+  * add GPU, audio, display, Wayland, Vulkan verification.
+  * replace all eval with direct "$@" execution.
+  * replace hardcoded UID 1000 with $(id -u).
+  * replace 'sudo apt' with 'sudo apt-get' (18 sites).
+  * add VM memory tuning with /proc/sys/vm writability check.
+  * fix OLED font rendering: rgba=none (no LCD subpixel stripe).
+  * remove pulseaudio daemon, standalone xwayland (Crostini conflicts).
 
-3.8.12  2026-03-17
-
-  * fix: step 18 now calls set_checkpoint 18 before removing the
-    checkpoint file — if the script crashed between entering step 18
-    and the rm, a re-run would re-execute verification; the checkpoint
-    write makes the sequence consistent with all other steps.
-  * fix: add "Step 18 complete." log message — was the only step
-    missing a completion log entry.
-  * fix: add shellcheck disable=SC2317 to _strip_log_ansi — function
-    is called indirectly from cleanup trap; suppress was already
-    present on cleanup() but not propagated to this helper.
-  * fix: add -t 300 (5 min) timeout to all 7 interactive read -r
-    prompts — prevents indefinite blocking if /dev/tty is unavailable
-    or user walks away during --interactive mode.
-  * fix: dosbox/scummvm version detection now uses ${var:-installed}
-    fallback — --version may produce empty output on some builds;
-    previously the check mark printed with a blank version string.
-  * fix: add -- option terminator to sudo cp in locale.gen restore
-    path — hardcoded path so not exploitable, but consistent with
-    the rest of the script's defensive style.
-  * bump version 3.8.11 → 3.8.12
-
-3.8.11  2026-03-17
-
-  * fix L1: _strip_log_ansi sed missed OSC sequences (\e]...\x07,
-    e.g. terminal title sets); added second sed expression to strip
-    BEL-terminated OSC alongside existing CSI pattern.
-  * fix L3: step 11 GPG fingerprint check conflated empty extraction
-    (gpg parse failure / corrupt key) with actual fingerprint mismatch
-    (key rotation / supply-chain compromise); split into two distinct
-    die messages so the diagnostic points to the right cause.
-  * fix I2: usage() --from-step help text now notes N=18 is equivalent
-    to --verify — both existed but the equivalence was undiscoverable.
-  * bump version 3.8.10 → 3.8.11
-
-3.8.10  2026-03-17
-
-  * sync step 13 banner: "Visual Studio Code (arm64)" → "VS Code
-    (arm64 .deb + Wayland flags)" — banner was the only source using
-    the full product name while usage() and README both used "VS Code";
-    now all three sources match.
-  * sync README usage block: add --help and --version examples — both
-    flags were documented in usage() and handled by the arg parser but
-    missing from the README usage block.
-  * bump version 3.8.9 → 3.8.10
-
-3.8.9  2026-03-17
-
-  * fix M1: step 8 Qt GTK theme fallback chain used raw `run sudo
-    apt-get install` instead of install_pkgs_best_effort(); broken-dep
-    failures were indistinguishable from package-not-found.  Replaced
-    with install_pkgs_best_effort for consistent diagnostics and
-    dry-run handling.
-  * fix L1: preflight curl (step 1e) missing --connect-timeout; all
-    other curl download calls already used both --connect-timeout and
-    --max-time.  Added --connect-timeout 3 for consistency.
-  * fix L2: check_tool() stderr-only fallback piped through head -1,
-    creating a theoretical SIGPIPE risk on commands with large stderr
-    output.  Replaced pipe with parameter expansion (${ver%%$'\n'*})
-    to extract first line without a subprocess.
-  * fix I1: /etc/profile.d/crostini-env.sh PATH prepends accumulated
-    duplicates on repeated login sessions.  Added _crostini_path_prepend
-    helper using case ":$PATH:" dedup guard (POSIX-compatible).
-  * bump version 3.8.8 → 3.8.9
-
-3.8.8  2026-03-17
-
-  * fix step 9 banner: "Firefox" → "Firefox ESR" — banner said "Firefox"
-    but the script installs firefox-esr; now matches usage() and README.
-  * sync README step table with usage() help text: expanded abbreviated
-    descriptions (e.g. "CLI tools" → "Core CLI utilities", "HiDPI" →
-    "Display scaling and HiDPI", "Tuning" → "Container resource tuning")
-    so all three sources (banner, usage, README) use consistent
-    terminology.
-  * sync README config files section: add apt download tuning
-    (/etc/apt/apt.conf.d/90parallel) which was written by step 3 but
-    missing from the README narrative.
-  * sync README verify section: add vulkaninfo, speaker-test, xdpyinfo,
-    and fc-match monospace to match the script's step 18 quick-test
-    commands (README only listed 4 of 8 commands).
-  * sync README files section: add LICENSE to file listing (was present
-    in the repo but missing from the README table).
-  * bump version 3.8.7 → 3.8.8
-
-3.8.7  2026-03-17
-
-  * fix step 18 verification: microphone not-detected line used ✗
-    (failure symbol, RED convention) with YELLOW color — inconsistent
-    with the symbol/color contract used everywhere else in the script
-    (✗=RED=failure, ⚠=YELLOW=warning, ✓=GREEN=pass).  Microphone is
-    a ChromeOS settings toggle, not a script installation failure, so
-    changed to ⚠ YELLOW to match the warning convention.
-  * bump version 3.8.6 → 3.8.7
-
-3.8.6  2026-03-17
-
-  * fix: --from-step and --verify ignored in --dry-run mode.
-    set_checkpoint is a no-op in dry-run (by design — zero side
-    effects), but the deferred checkpoint from --from-step/--verify
-    also wasn't written, so get_checkpoint() always returned 0 and
-    all 18 steps ran regardless of the --from-step value.  Fix: add
-    _CHECKPOINT_OVERRIDE in-memory variable that get_checkpoint()
-    checks before reading the on-disk file.  The deferred checkpoint
-    always sets this override (both dry-run and live), so
-    should_run_step correctly skips earlier steps.  Per-step
-    set_checkpoint still correctly skips disk writes in dry-run.
-    Confirmed: --from-step=17 --dry-run now runs only steps 17–18;
-    --verify --dry-run now runs only step 18.
-  * bump version 3.8.5 → 3.8.6
-
-3.8.5  2026-03-17
-
-  * fix M1: eliminate run_shell() (bash -c) entirely — NodeSource repo
-    write replaced with printf | write_file_sudo, removing the last
-    shell-injection surface from the script.  run_shell() function
-    removed as dead code.
-  * fix M2: add last-verified date (2026-03-16) and verification
-    command URL to NODESOURCE_GPG_FP constant comment, so future
-    maintainers can re-verify after key rotation.
-  * fix M3: write_file_sudo() now sets mode 644 on tmpfile before mv,
-    ensuring /etc/ config files are never unreadable between write and
-    caller chmod.  Remove 4 now-redundant per-callsite chmod 644 calls
-    (apt.conf.d, sysctl.d ×2, profile.d).
-  * fix L1: VS Code curl missing -s (silent) flag — progress meter
-    contaminated log; changed -fSL to -fsSL matching all other curl
-    calls.
-  * fix L2: expand rustup TOFU comment to document the tradeoff vs
-    NodeSource GPG pinning and note that rustup.rs does not publish a
-    stable signing key.
-  * fix L3: cleanup trap temp-file removal converted from A&&B pattern
-    to if/fi for consistency with post-3.8.1 style.
-  * fix L4: step 3 apt parallel comment now notes Pipeline-Depth
-    applies to HTTP only; HTTPS repos benefit from Queue-Mode but not
-    HTTP pipelining.
-  * update README: "No eval" bullet updated to "No eval, no bash -c"
-    reflecting run_shell removal.
-  * bump version 3.8.4 → 3.8.5
-
-3.8.4  2026-03-16
-
-  * fix: guard 7 pipeline assignments against set -eo pipefail early
-    abort.  Under pipefail, `VAR="$(cmd1 | cmd2)"` kills the script if
-    cmd1 exits non-zero — the graceful validation on the next line never
-    executes.  Affected pipelines: df|tail|tr (steps 1d, 2f, 18),
-    find|wc (steps 2d, 7, 18), gpg|awk (step 11 fingerprint verify).
-    Fix: append `|| true` to each outer assignment so downstream
-    validation/fallback code runs as intended.
-  * fix: run_shell security comment cross-reference said "line ~1245"
-    but actual (and only) callsite is at line ~1302 (NodeSource repo
-    setup).  Updated to prevent stale cross-ref from misleading future
-    audits.
-  * fix: README version badge was stuck at 3.8.0; updated to 3.8.4 to
-    match SCRIPT_VERSION and CHANGELOG.
-
-3.8.3  2026-03-16
-
-  * fix _strip_log_ansi sed pattern: \?* is ambiguous in GNU BRE (\? is
-    a quantifier, not a literal question mark), so DEC private mode
-    sequences like \e[?25h (show/hide cursor) were not stripped from the
-    log file.  Fix: replace \?* with character class [?]* which is
-    unambiguous across all sed implementations.
-  * fix df stderr leak in step 1d (line 548): df could emit warnings to
-    stderr (e.g. on unusual filesystems) that leaked to the terminal.
-    Steps 2f and 18 already suppressed this with 2>/dev/null — now
-    consistent across all three df call sites.
-  * fix signal exit codes: cleanup() exited with $? from the failing
-    command, not 128+signum.  Parent processes (CI runners, wrapper
-    scripts) could not distinguish a signal death (SIGINT/SIGTERM) from
-    a normal non-zero exit.  Fix: separate _handle_signal() stores the
-    signal name, cleanup re-raises with kill -SIG $$ after all cleanup
-    completes, producing the standard 128+N exit code.  EXIT trap is now
-    registered separately from signal traps to avoid masking the signal.
-  * bump version 3.8.2 → 3.8.3
-
-3.8.2  2026-03-16
-
-  * fix CRITICAL: set -e/pipefail restoration order crash in run() and
-    run_shell(): `$_prev_e && set -e` before `$_prev_pf && set -o pipefail`
-    caused a latent crash — if caller had set -e ON but pipefail OFF, the
-    `false && set -o pipefail` short-circuit returned 1 under the
-    just-restored errexit, killing the script.  Fix: (a) use if/then
-    instead of && to eliminate non-zero exit from false conditions,
-    (b) restore pipefail BEFORE errexit for defense-in-depth.
-  * bump version 3.8.1 → 3.8.2
-
-3.8.1  2026-03-16
-
-  * fix PIPESTATUS race in run() and run_shell(): rc=${PIPESTATUS[0]}
-    reset the array before _tee_rc=${PIPESTATUS[1]} could read it;
-    tee failure detection was dead code (_tee_rc always 0).  Now saves
-    entire PIPESTATUS array atomically into local _ps before any reads.
-  * fix A&&B||C anti-pattern in run() and run_shell(): the
-    [[ $rc -ne 0 ]] && warn "..." || true construct masks warn()
-    failures; replaced with explicit if/fi blocks.
-  * fix check_tool || true operator precedence: the line
-    [[ -z "$ver" ]] && ver="$(...)" || true would skip the fallback
-    when ver was non-empty (|| true bound to &&, not to $(...));
-    replaced with explicit if/fi.
-  * fix missing || die on mktemp in steps 12 and 13: _rustup_tmp and
-    _VSCODE_DEB mktemp calls had no failure guard; under set -e the
-    error message was cryptic; now die with clear tmpfile context.
-  * add _prompt() function: interactive printf-to-stderr calls in
-    steps 2 and 17 (25 lines) bypassed the log file entirely, leaving
-    no audit trail of user-facing instructions and "Press Enter"
-    prompts; _prompt() writes to both stderr and the log file.
-  * bump version 3.8.0 → 3.8.1
-
-3.8.0  2026-03-16
-
-  * fix cleanup() recursive invocation: nested signal during cleanup
-    re-entered the handler; now clears traps on entry with
-    trap - EXIT INT TERM HUP PIPE QUIT
-  * fix ANSI strip regex too narrow: _strip_log_ansi sed pattern
-    missed CSI sequences with ? modifier (e.g. \e[?25h cursor
-    hide/show); broadened character class to \?*
-  * rename _tee_strip_log → _tee_log: function name was stale after
-    3.7.0 removed per-line stripping; renamed all 4 references
-  * fix check_tool version capture: tools that emit --version to
-    stderr (java, scummvm) returned empty; now tries stdout first,
-    falls back to stderr-only capture
-  * fix apt Queue-Mode "host" → "access": "host" serializes all
-    requests to a given host; "access" allows parallel connections
-    across URIs; updated comment to document HTTP pipelining vs
-    parallel downloads distinction
-  * fix --from-step without = giving opaque "Unknown argument" error:
-    added explicit --from-step case with helpful syntax hint; also
-    added -* catch-all for unknown options vs arguments
-  * add open_chromeos_url logging: URL being opened was not recorded
-    in log file, making post-run debugging harder
-  * fix locale.gen.bak never cleaned up on success; locale-gen ran
-    unconditionally even when sed edit failed; restructured to only
-    run locale-gen after successful sed, clean up backup file in both
-    success and failure paths
-  * fix steps 10/16 using raw apt-get install for multi-package
-    batches: single unavailable package failed the entire batch;
-    switched to install_pkgs_best_effort for per-package fallback
-    (Python ecosystem, gaming packages)
-  * fix interactive read from stdin instead of /dev/tty: all 7 read
-    calls now use </dev/tty so the script works when piped via
-    curl | bash or bash < file
-  * fix interactive prompts to stdout instead of stderr: all 19
-    user-facing printf calls (arrows, "Press Enter") now redirect
-    to >&2, keeping stdout clean for piping/logging
-  * version bump 3.7.0 → 3.8.0
-
-
-3.7.0  2026-03-16
-
-  * fix _tee_strip_log race: replace process substitution with
-    synchronous tee; ANSI stripping deferred to single-pass at exit
-  * fix run()/run_shell() ignoring tee failures (PIPESTATUS[1])
-  * harden run_shell() security annotation
-
-3.6.0  2026-03-16
-
-  * fix run()/run_shell() unconditional set -eo pipefail restoration
-  * fix ANSI stripping regex to cover cursor/scroll/erase sequences
-  * fix step 6 redundant glxinfo calls; cache into _glx_out
-  * fix cleanup() date subprocess hang under SIGPIPE
-  * fix step 18 RetroArch/memory verification counter misses
-  * fix step 9 eog success log firing unconditionally
-  * fix step 18 grep without head -1 for GTK/Xft/font values
-
-3.5.0  2026-03-16
-
-  * fix logprintf() definition order (before step_banner)
-  * fix ANSI escapes leaking into log file via _tee_strip_log helper
-  * fix install_pkgs_best_effort() callers unguarded under set -e
-  * fix read -r unguarded under set -e (7 call sites)
-  * add parallel apt downloads (/etc/apt/apt.conf.d/90parallel)
-  * add verification counters and elapsed time tracking
-  * add -- option terminator
-
-3.4.0 – 3.4.2  2026-03-16
-
-  * BREAKING: remove git configuration step and SSH key generation
-  * renumber steps 14–20 → 13–18
-  * fix CRITICAL: 3 stale rm -rf on lock directory → targeted rmdir
-  * fix 10 false success logs after failed run() commands
-  * fix 10 inline --version calls missing timeout
-  * fix source cargo/env unguarded under set -e
-  * fix install_pkgs_best_effort() failure counter and summary
-  * fix step 3 upgrade on stale apt indices
-  * add VS Code .deb integrity check (dpkg-deb --info)
-
-3.3.0 – 3.3.10  2026-03-15 – 2026-03-16
-
-  * fix CRITICAL: cleanup trap deleted lock on --help/--version exit
-  * fix CRITICAL: run()/run_shell() dual process substitution race
-  * fix CRITICAL: PIPESTATUS[0] capture (|| true reset to 0)
-  * fix CRITICAL: revert broken SSH_ASKPASS for ssh-keygen
-  * fix set_checkpoint() non-atomic write → mktemp+printf+mv
-  * fix signal coverage: add HUP, PIPE, QUIT traps
-  * fix --from-step/--verify conflict detection
-  * fix VS Code curl exit code capture
-  * add install_pkgs_best_effort() batch+fallback helper
-  * add _prompt() for interactive audit trail
-  * add step_banner() dual-write via logprintf
-  * variable leak cleanup (55 variables confirmed unset at boundaries)
-
-3.0.0 – 3.2.0  2026-03-15
-
-  * add step 17: gaming packages (DOSBox, ScummVM, RetroArch)
-  * fix run() exit code propagation via process substitution
-  * fix --dry-run: arch/root checks warn instead of die
-  * fix --dry-run: explicit guards for steps 8, 12, 15
-  * fix interactive read from stdin → /dev/tty (7 sites)
-  * fix interactive prompts to stderr (19 printf calls)
-  * add --from-step=N, --verify, --reset flags
-  * add lock stale detection (missing/empty PID file)
-  * add NodeSource GPG tmpfile+mv atomic keyring write
-
-2.0.0 – 2.9.0  2026-03-08 – 2026-03-15
-
-  * full rewrite: 19-step automated setup with checkpoint resume
-  * add --dry-run, --interactive, --minimal flags
-  * add unattended default mode (zero interactive prompts)
-  * add run(), write_file(), write_file_sudo() atomic helpers
-  * add PID-based mkdir lock for concurrent-run safety
-  * add GPU, audio, display, Wayland, Vulkan verification
-  * replace all eval with direct "$@" execution
-  * replace hardcoded UID 1000 with $(id -u)
-  * replace 'sudo apt' with 'sudo apt-get' (18 sites)
-  * add VM memory tuning with /proc/sys/vm writability check
-  * fix OLED font rendering: rgba=none (no LCD subpixel stripe)
-  * remove pulseaudio daemon, standalone xwayland (Crostini conflicts)
-
-1.0.0 – 1.1.0  2026-03-08
+1.0.0 - 1.1.0  2026-03-08
 
   * initial release: Crostini bootstrap with checkpoint resume,
-    --dry-run, colored output, full logging, and GPU detection
+    --dry-run, colored output, full logging, and GPU detection.
