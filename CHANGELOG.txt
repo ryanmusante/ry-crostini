@@ -8,6 +8,69 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.8.14  2026-03-17
+
+  * fix: step 11 dies in --dry-run when node is not installed — the
+    NodeSource install block used run() for individual commands but
+    the inter-command filesystem checks (mktemp -s, gpg fingerprint,
+    grep sources.list) operated on real disk state.  In dry-run, run()
+    no-ops leave files empty/missing, so the validation checks die.
+    Steps 12 (rustup) and 13 (VS Code) already had explicit
+    `if $DRY_RUN; then ... else ... fi` guards; step 11 now uses the
+    same pattern.  Confirmed: --dry-run with no pre-existing node now
+    logs the planned commands and continues.
+  * fix: cosmetic triple blank line between check_config() and usage()
+    reduced to single blank for consistency with rest of script.
+  * bump version 3.8.13 → 3.8.14
+
+3.8.13  2026-03-17
+
+  * fix: step 9 false success log — "Desktop applications directory ✓"
+    logged unconditionally after `run mkdir -p ... || warn`; success
+    message now conditional on mkdir actually succeeding.
+  * fix: step 14b false success log — "en_US.UTF-8 locale generated"
+    logged even when locale-gen failed; restructured as nested if/else
+    so success only logs after locale-gen succeeds.  Backup file is
+    now preserved on locale-gen failure (was deleted regardless) so
+    the operator can diagnose.
+  * fix: step 15 false success log + unconditional remote-add — "Flatpak
+    installed with Flathub remote." logged even when apt-get install
+    flatpak failed; flatpak remote-add ran unconditionally (guaranteed
+    failure if flatpak binary missing).  Both now guarded by
+    `command -v flatpak` check.
+  * bump version 3.8.12 → 3.8.13
+  * docs: expand README prerequisites with ChromeOS settings (GPU flag +
+    reboot, microphone, disk size, shared folders, USB, port forwarding)
+    that should be configured before an unattended run — previously the
+    only guidance was "Terminal app open"; notes `--interactive` as the
+    alternative for guided toggle prompts.
+  * docs: fix README disk size parenthetical — said "recommends ≥ 10 GB"
+    but the script warns below 10 GB and recommends 20–30 GB; corrected
+    to "aborts below 2 GB free and warns below 10 GB" matching step 1d
+    (die at < 2048 MB) and step 2f (warn at < 10240 MB).
+
+3.8.12  2026-03-17
+
+  * fix: step 18 now calls set_checkpoint 18 before removing the
+    checkpoint file — if the script crashed between entering step 18
+    and the rm, a re-run would re-execute verification; the checkpoint
+    write makes the sequence consistent with all other steps.
+  * fix: add "Step 18 complete." log message — was the only step
+    missing a completion log entry.
+  * fix: add shellcheck disable=SC2317 to _strip_log_ansi — function
+    is called indirectly from cleanup trap; suppress was already
+    present on cleanup() but not propagated to this helper.
+  * fix: add -t 300 (5 min) timeout to all 7 interactive read -r
+    prompts — prevents indefinite blocking if /dev/tty is unavailable
+    or user walks away during --interactive mode.
+  * fix: dosbox/scummvm version detection now uses ${var:-installed}
+    fallback — --version may produce empty output on some builds;
+    previously the check mark printed with a blank version string.
+  * fix: add -- option terminator to sudo cp in locale.gen restore
+    path — hardcoded path so not exploitable, but consistent with
+    the rest of the script's defensive style.
+  * bump version 3.8.11 → 3.8.12
+
 3.8.11  2026-03-17
 
   * fix L1: _strip_log_ansi sed missed OSC sequences (\e]...\x07,
@@ -231,635 +294,89 @@ represents a discrete, committed change set.
     to >&2, keeping stdout clean for piping/logging
   * version bump 3.7.0 → 3.8.0
 
+
 3.7.0  2026-03-16
 
-  * fix _tee_strip_log race condition: process substitution >(sed ...)
-    created an async subprocess not tracked by wait; on SIGTERM/SIGPIPE
-    the background sed could be killed mid-write, losing buffered log
-    data.  Replaced with synchronous tee -a; ANSI stripping deferred
-    to single-pass _strip_log_ansi() called once in cleanup
-  * fix logprintf forking sed on every call: ~60+ invocations in step 18
-    each spawned a sed subprocess for per-line ANSI stripping; replaced
-    with raw append to log file; ANSI stripped once at exit
-  * fix cleanup() sleep 0.1 non-deterministic race workaround: removed
-    sleep; _strip_log_ansi() now runs synchronously in cleanup before
-    tempfile removal and lock release
-  * fix run()/run_shell() ignoring PIPESTATUS[1]: tee failures (disk
-    full, permission denied) were silently swallowed; now captures and
-    warns on tee exit code to surface log-write failures
-  * remove dead _logprintf_warn_shown global variable (orphaned by
-    logprintf rewrite)
-  * harden run_shell() security annotation: document single callsite
-    (NodeSource repo setup) and add guidance for future callsites
-  * version bump 3.6.0 → 3.7.0
+  * fix _tee_strip_log race: replace process substitution with
+    synchronous tee; ANSI stripping deferred to single-pass at exit
+  * fix run()/run_shell() ignoring tee failures (PIPESTATUS[1])
+  * harden run_shell() security annotation
 
 3.6.0  2026-03-16
 
-  * fix run()/run_shell() unconditional `set -eo pipefail` restoration:
-    force-re-enabled errexit even when caller had intentionally disabled it;
-    now saves $- and shopt state before disabling, restores only what was
-    previously set
-  * fix ANSI stripping regex `\x1b\[[0-9;]*m` only strips SGR (color) codes:
-    cursor movement (H, J, K, A–D), erase-line, scroll sequences leaked into
-    log file as raw escape bytes; broadened terminal class to `[A-Za-z]` in
-    both _tee_strip_log and logprintf
-  * fix _tee_strip_log process substitution background sed may not flush
-    before exit trap: process substitutions are not tracked by `wait`; added
-    sleep 0.1 at cleanup entry to allow writers to drain before file removal
-    and lock release
-  * fix step 6 calls glxinfo 3 times (vendor/renderer/version): each
-    invocation re-queries the GL driver; cached into _glx_out and grep from
-    cached string, matching the pattern already used in step 18
-  * fix cleanup() date subprocess in signal handler can hang: `date +%s` in
-    broken-pipe/SIGPIPE state can hang or fail leaving _elapsed unset and
-    arithmetic expansion crashing; guarded with 2>/dev/null || fallback to
-    $SECONDS builtin (no subprocess)
-
-  * fix step 18 RetroArch flatpak check outputs ✓ but never increments
-    _verify_pass: verification totals undercounted by 1 when RetroArch
-    installed; added ((_verify_pass++)) || true
-  * fix step 18 memory tuning "skipped" path outputs ⚠ but never increments
-    _verify_warn: totals undercounted by 1 on every Crostini run (vm.* is
-    always read-only); added ((_verify_warn++)) || true
-  * fix step 9 eog success log fires unconditionally: "Eye of GNOME set as
-    default image viewer" logged even when both xdg-mime calls fail; other
-    MIME handlers (Firefox, Thunar, Evince) correctly use if/else; added
-    _eog_ok flag to track and only log on actual success
-  * fix step 18 grep without head -1 for GTK theme, Xft DPI, font name:
-    duplicate config keys produce multi-line logprintf input corrupting
-    single-line verification output; added head -1 to all 3 pipelines for
-    consistency with rest of script
-  * fix step 18 unguarded $(date +%s) in elapsed time arithmetic: if date
-    fails (e.g. binary deleted during step 3 upgrade), empty string in
-    arithmetic → bash syntax error → non-zero exit after all work completed;
-    same date || SECONDS fallback pattern as cleanup
-  * version bump 3.5.0 → 3.6.0
+  * fix run()/run_shell() unconditional set -eo pipefail restoration
+  * fix ANSI stripping regex to cover cursor/scroll/erase sequences
+  * fix step 6 redundant glxinfo calls; cache into _glx_out
+  * fix cleanup() date subprocess hang under SIGPIPE
+  * fix step 18 RetroArch/memory verification counter misses
+  * fix step 9 eog success log firing unconditionally
+  * fix step 18 grep without head -1 for GTK/Xft/font values
 
 3.5.0  2026-03-16
 
-  * fix logprintf() defined after step_banner(): step_banner calls logprintf
-    but was defined ~170 lines earlier; worked by accident at runtime but
-    fragile to refactoring.  Moved logprintf above step_banner
-  * fix ANSI escape codes leaking into log file: run() and run_shell() used
-    raw `tee -a` which wrote colored output to log.  Replaced with
-    _tee_strip_log helper that strips ANSI before writing; terminal retains
-    color
-  * fix `[[ $rc -ne 0 ]] && warn` fragile under set -e: short-circuit &&
-    returns 1 when condition is false; added `|| true` guard for robustness
-    across bash versions
-  * fix install_pkgs_best_effort() missing explicit return 0: implicit
-    return was the exit code of the if-test which is fragile
-  * fix all install_pkgs_best_effort() callers unguarded under set -e:
-    partial package failures (return 1) would abort the entire script;
-    all 6 call sites now guarded with `|| warn`
-  * fix `read -r _` unguarded under set -e: read returns non-zero on EOF
-    (stdin closed/redirected), killing the script in non-interactive
-    contexts; all 7 call sites now guarded with `|| true`
-  * fix bare mktemp for NodeSource key: no error handling and no template;
-    now uses explicit template and || die guard
-  * add _tee_strip_log helper: process substitution strips ANSI from log
-    writes while preserving terminal color; documents stderr merge
-  * add parallel apt downloads: Bookworm defaults to serial queue; new
-    /etc/apt/apt.conf.d/90parallel enables Pipeline-Depth 4 and disables
-    unused translation downloads for ~2-3x fetch speedup
-  * add verification counters: check_tool/check_config now increment
-    pass/fail/warn counters; step 18 prints totals
-  * add elapsed time tracking: _START_EPOCH captured at startup; reported
-    in step 18 summary and on error exit in cleanup
-  * add -- option: documented in usage (was handled in arg parser but
-    undiscoverable)
-  * version bump 3.4.2 → 3.5.0
+  * fix logprintf() definition order (before step_banner)
+  * fix ANSI escapes leaking into log file via _tee_strip_log helper
+  * fix install_pkgs_best_effort() callers unguarded under set -e
+  * fix read -r unguarded under set -e (7 call sites)
+  * add parallel apt downloads (/etc/apt/apt.conf.d/90parallel)
+  * add verification counters and elapsed time tracking
+  * add -- option terminator
 
-3.4.2  2026-03-16
+3.4.0 – 3.4.2  2026-03-16
 
-  * fix source cargo/env unguarded under set -e: malformed env file
-    killed the script with no diagnostic; added || warn guard
-  * fix install_pkgs_best_effort() silent total failure: no indication
-    of how many per-package fallbacks failed; added failure counter
-    and summary warn with N/M tally; function now returns 1 on any
-    individual failures
-  * fix step 3 upgrade on stale indices: apt-get upgrade/full-upgrade
-    ran even after apt-get update failed, risking wrong-version
-    installs from stale package lists; now skip both if update fails
-  * fix open_chromeos_url() discarding stderr to /dev/null: garcon and
-    xdg-open diagnostic errors were silently lost; stderr now routes
-    to log file
-  * fix check_config() false positive on zero-byte files: -f passes
-    for empty files from truncated atomic writes; now uses -s with
-    separate "empty" warning state
-  * fix logprintf() silently dropping log entries: || true on log write
-    failure masked disk-full or permission errors; now warns once on
-    first failure so operator knows log is incomplete
-  * fix inconsistent whitespace before || in step 11 apt-get update
-  * bump version 3.4.1 → 3.4.2
+  * BREAKING: remove git configuration step and SSH key generation
+  * renumber steps 14–20 → 13–18
+  * fix CRITICAL: 3 stale rm -rf on lock directory → targeted rmdir
+  * fix 10 false success logs after failed run() commands
+  * fix 10 inline --version calls missing timeout
+  * fix source cargo/env unguarded under set -e
+  * fix install_pkgs_best_effort() failure counter and summary
+  * fix step 3 upgrade on stale apt indices
+  * add VS Code .deb integrity check (dpkg-deb --info)
 
-  * fix 5 stale sub-step comment numbers in step 14: "15a"–"15e" →
-    "14a"–"14e" (left over from 3.4.0 step renumbering)
-  * fix CRITICAL: 3 stale rm -rf fallbacks on lock directory in --reset
-    and stale-lock recovery; replaced with targeted rmdir + die to
-    prevent recursive deletion if LOCK_FILE is ever mis-set
-  * fix rustup installer exit code unchecked: added || die guard so
-    failed installs no longer silently proceed
-  * fix 10 false success logs: $DRY_RUN || log ran unconditionally after
-    failed run() commands due to || true guard resetting $?; restructured
-    as if/else to log success only on actual success — affected:
-    fdfind/bat symlinks, xrdb merge, fc-cache, Firefox ESR, Thunar,
-    Evince, eog, desktop dir mkdir, npm config, xdg-user-dirs-update
-  * fix 5 missing || warn/die guards on run calls: mkdir -p for
-    ~/.local/bin, ~/.local/share/applications, $NPM_GLOBAL, XDG dirs,
-    eog xdg-mime calls
-  * fix 10 inline --version calls missing timeout: python3, pip, node,
-    npm, rustc, cargo, code initial checks can block indefinitely on
-    unresponsive or GUI programs; all wrapped in timeout 3
-  * fix 3 inline --version calls missing 2>/dev/null: node (step 11
-    initial), rustc (step 12 initial), code (step 13 initial) leaked
-    stderr into log output
-  * bump version 3.4.0 → 3.4.1
+3.3.0 – 3.3.10  2026-03-15 – 2026-03-16
 
-3.4.0  2026-03-16
+  * fix CRITICAL: cleanup trap deleted lock on --help/--version exit
+  * fix CRITICAL: run()/run_shell() dual process substitution race
+  * fix CRITICAL: PIPESTATUS[0] capture (|| true reset to 0)
+  * fix CRITICAL: revert broken SSH_ASKPASS for ssh-keygen
+  * fix set_checkpoint() non-atomic write → mktemp+printf+mv
+  * fix signal coverage: add HUP, PIPE, QUIT traps
+  * fix --from-step/--verify conflict detection
+  * fix VS Code curl exit code capture
+  * add install_pkgs_best_effort() batch+fallback helper
+  * add _prompt() for interactive audit trail
+  * add step_banner() dual-write via logprintf
+  * variable leak cleanup (55 variables confirmed unset at boundaries)
 
-  * BREAKING: remove step 13 (Git configuration) — git package, git
-    config defaults, git-lfs init, and all --git-name/--git-email CLI
-    options removed; configure git independently after setup
-  * BREAKING: remove step 18 (SSH key generation) — ssh-keygen
-    workflow, --ssh-comment/--ssh-passphrase CLI options, and all
-    passphrase handling removed; generate keys independently
-  * remove _GIT_NAME, _GIT_EMAIL, _SSH_COMMENT, _SSH_PASSPHRASE state
-    variables and cleanup-trap passphrase zeroing (no longer needed)
-  * renumber steps 14–20 → 13–18 (VS Code 13, Container tuning 14,
-    Flatpak 15, Gaming 16, Backup 17, Summary 18)
-  * update --from-step max 20 → 18, --verify checkpoint 19 → 17
-  * remove check_tool "git" from verification summary
-  * remove git/ssh options from usage() help text
-  * bump version 3.3.10 → 3.4.0
-
-3.3.10  2026-03-16
-
-  * fix trap signal coverage: add QUIT (Ctrl-\) — previously orphaned
-    lock/temp files on SIGQUIT
-  * fix --from-step / --verify duplicate detection: passing same flag
-    twice produced misleading "Cannot combine X with Y" error; message
-    now correctly identifies the duplicate
-  * fix curl downloads can hang indefinitely: added --connect-timeout
-    and --max-time to NodeSource GPG key (30s), rustup installer (60s),
-    and VS Code .deb (120s); preflight check already had timeout
-  * fix lock acquisition uses rm -rf on lock directory — inconsistent
-    with cleanup() fix from 3.3.9; replaced with targeted rm -f pid +
-    rmdir in all three stale-lock recovery paths and --reset
-  * fix unquoted $$ in PID file write
-  * fix dry-run messages for curl commands now match actual flags
-    including --connect-timeout/--max-time
-  * fix check_tool() --version can block indefinitely on GUI programs
-    (dosbox, scummvm, pavucontrol open windows); wrapped in timeout 3;
-    also applied to inline version checks in step 17
-  * fix run_shell used for rustup with path interpolated into bash -c;
-    replaced with direct run sh "$path" — eliminates quoting fragility
-    with paths containing special characters
-  * fix sudo chmod 644 on sysctl/profile.d/memory configs used || true
-    silently swallowing failures; replaced with || warn to surface
-    permission issues
-  * fix df arithmetic in steps 1d, 2f, and 20 can crash under set -e
-    if df fails or returns non-numeric; all three sites now validate
-    output before arithmetic
-  * fix 7 unquoted command substitutions (word-splitting risk under
-    modified IFS): get_checkpoint, df, find, wc -l, --version
-  * fix symlink creation for fd/bat used || true; replaced with
-    || warn so failure is visible in logs
-  * bump version 3.3.9 → 3.3.10
-
-3.3.9  2026-03-16
-
-  * fix CRITICAL: run()/run_shell() dual process substitutions
-    > >(tee -a LOG) 2> >(tee -a LOG >&2) race on LOG_FILE — two
-    async tee processes write the same file concurrently causing
-    interleaved partial lines and data loss on fast exit; replaced
-    with single 2>&1 | tee -a pipeline
-  * fix CRITICAL: PIPESTATUS[0] capture — || true after pipeline
-    resets PIPESTATUS to (0), so run()/run_shell() always returned
-    rc=0 regardless of command failure; fixed by temporarily
-    disabling errexit+pipefail around the pipeline
-  * fix set_checkpoint() non-atomic write: echo > FILE can truncate
-    to empty on crash between open and write; replaced with
-    mktemp+printf+mv atomic pattern
-  * fix deferred checkpoint write used raw echo instead of atomic
-    set_checkpoint(); now routes through the same function
-  * fix install_pkgs_best_effort() batch attempt discarded stderr
-    via 2>/dev/null, hiding apt diagnostics that explain why batch
-    failed; removed the redirect so errors flow through run() to
-    both terminal and log
-  * fix steps 4, 5, 6-stable used raw apt-get install where a
-    single missing package kills the entire batch; replaced with
-    install_pkgs_best_effort() for consistent fallback behavior
-    matching steps 7 and 9
-  * fix cleanup trap: rm -rf on lock directory replaced with
-    explicit rm -f pid + rmdir to prevent recursive deletion if
-    LOCK_FILE is ever mis-set
-  * fix --reset: did not remove stale lock directory when previous
-    instance was dead; user had to manually delete or wait for
-    next-run stale detection; now cleans lock on reset
-  * fix apt autoremove || true silently swallowed errors; replaced
-    with || warn for consistent logging
-  * bump version 3.3.8 → 3.3.9
-
-3.3.8  2026-03-16
-
-  * fix cleanup trap: add set +e on entry so temp-file removal and
-    lock release cannot be interrupted by stray non-zero exits under
-    set -euo pipefail
-  * fix signal coverage: add HUP and PIPE to trap; terminal disconnect
-    or broken-pipe no longer orphans lock/temp files
-  * fix passphrase zeroing: _SSH_PASSPHRASE now zeroed in cleanup() on
-    abnormal exit and unset after step 18 consumes it
-  * fix option parser: add -- terminator to stop option processing
-  * fix wait race: run()/run_shell() wait now uses 2>/dev/null || true
-    to guard against set -e when no waitable children exist; quote
-    return "$rc" for correctness
-  * add install_pkgs_best_effort(): batch apt-get install first (O(1)
-    apt call), falls back to per-package on failure; replaces 3 slow
-    per-package loops in steps 6, 7, 9
-  * add WARNING comment to run_shell() documenting bash -c injection
-    surface for maintainers
-  * bump version 3.3.7 → 3.3.8
-
-3.3.7  2026-03-16
-
-  * fix CRITICAL: cleanup trap deleted lock file on --help/--version/
-    --reset early exit, racing with running instances; add
-    _LOCK_ACQUIRED guard so cleanup only releases own lock
-  * fix VS Code curl exit code: $? was always 0 after `if ! run curl`;
-    capture explicit _vscode_rc before conditional (#8)
-  * fix ssh-keygen exit code unchecked: capture _keygen_rc, warn on
-    failure, ensure passphrase zeroing runs unconditionally
-  * fix --ssh-passphrase visible in /proc/*/cmdline for full script
-    lifetime: zero _SSH_PASSPHRASE immediately after consuming in
-    step 18; add cmdline visibility warning to --help output
-  * fix --from-step + --verify conflict: silently last-one-wins →
-    die with explicit mutual-exclusion error
-  * fix SSH pubkey display: bare printf '\n' → logprintf so trailing
-    newline reaches log file
-  * fix empty log files left behind on --help/--version/--reset early
-    exit: rm $LOG_FILE before exit 0
-  * add _vscode_rc, _keygen_rc to respective step unset lists
-  * bump version 3.3.6 → 3.3.7; all cross-refs aligned
-
-3.3.6  2026-03-16
-
-  * fix step_banner() writing to stdout only — now uses logprintf to
-    dual-write step headers to both terminal and log file
-  * fix five bare printf calls in step 20 verification (GL vendor,
-    GL renderer, GL version, Vulkan API, shared directories) that
-    skipped the log file — all now use logprintf
-  * fix --from-step/--verify + --dry-run writing checkpoint to disk;
-    deferred checkpoint now respects DRY_RUN flag (zero side effects)
-  * fix --reset racing with running instance; now checks PID lock
-    and refuses to clear checkpoint while another instance is active
-  * fix deferred checkpoint message (--from-step/--verify) using bare
-    echo instead of log() — now dual-writes to terminal and log file
-  * bump version 3.3.5 → 3.3.6; all cross-refs aligned
-
-3.3.5  2026-03-16
-
-  * add SND_DEV_COUNT to step 7 unset list (was leaking until step 20)
-  * full Crostini/Debian Bookworm bash compatibility audit: all bashisms
-    confirmed bash 4.0+ safe (Bookworm ships 5.2); all pre-step-4
-    commands verified present in Crostini base image; command dependency
-    ordering (gpg→step 4→step 11, locale-gen→step 4→step 15) confirmed
-    enforced by checkpoint system
-  * bump version 3.3.4 → 3.3.5; all cross-refs aligned
-
-3.3.4  2026-03-16
-
-  * fix CRITICAL: revert broken SSH_ASKPASS approach for ssh-keygen
-    passphrase delivery — ssh-keygen does NOT honor SSH_ASKPASS (only
-    ssh and ssh-add do); reverted to -N flag with documented /proc
-    argv exposure limitation and immediate variable zeroing
-  * add VS Code .deb integrity check: dpkg-deb --info validation
-    before dpkg -i to catch corrupt or truncated downloads
-  * remove dead _askpass_helper variable from cleanup trap
-  * bump version 3.3.3 → 3.3.4; all cross-refs aligned
-
-3.3.3  2026-03-16
-
-  * add unset for 6 remaining leaked variables: CORE_PKGS (step 4),
-    DEV_PKGS (step 5), GPU_STABLE_PKGS + GPU_VOLATILE_PKGS (step 6),
-    AUDIO_PKGS (step 7), GUI_PKGS (step 9), _VSCODE_DEB (step 14)
-  * all 55 non-local non-readonly variables now confirmed unset at
-    step boundaries
-
-3.3.2  2026-03-15
-
-  * add unset for 20 leaked variables across steps 1, 2, 6, 7, 8,
-    11, 14, 15, 18 (CURRENT_ARCH, AVAIL_KB, AVAIL_MB, AVAIL_MB_NOW,
-    GPU_ENV_FILE, AUDIO_ENV_FILE, PA_CLIENT, SOMMELIER_ENV,
-    GTK3_SETTINGS, GTK4_SETTINGS, GTK2_RC, QT_ENV, XRESOURCES,
-    FC_LOCAL, CURSOR_DIR, NPM_GLOBAL, VSCODE_FLAGS, PROFILE_D,
-    MEM_CONF, SSH_KEY)
-
-3.3.1  2026-03-15
-
-  * fix SC2015: replace A && B || C with if/else for dosbox, scummvm
-    version checks (step 17) and log file creation (init)
-  * fix SC2024: add shellcheck disable for gpg dearmor redirect —
-    false positive; redirect captures log messages, not -o output
-  * fix header Usage: comment missing --minimal, --from-step, --verify,
-    --reset, --git-name, --git-email, --ssh-comment flags
-  * move all inline comments to above-section comments (14 instances:
-    wait flush, cat stdin, libgl1, pavucontrol, GUI_PKGS array)
-  * README: add --ssh-comment and --minimal to Usage block; add
-    --minimal to Features section
-
-3.3.0  2026-03-15
-
-  * fix step 20: verification output (tools, configs, GPU, audio,
-    display, reminders) now written to log file via logprintf
-    helper that strips ANSI escapes for the log copy
-  * fix check_tool: stderr no longer leaks into version string
-    (2>&1 → 2>/dev/null)
-  * fix 8 version-report lines: stderr contaminated output for
-    python, pip, node, npm, git, vscode, dosbox, scummvm
-    (all changed to 2>/dev/null)
-  * fix 13 unconditional log calls after dry-run'd run() that
-    falsely claimed success: symlinks, xresources, firefox,
-    thunar, evince, eog, desktop dir, npm prefix, XDG dirs,
-    flatpak — all guarded with $DRY_RUN check
-
-3.2.0  2026-03-15
-
-  * trim all multiline comments to single lines (6 blocks)
-  * fix --dry-run: arch check now warns instead of dying on
-    non-ARM64 hosts (was: --dry-run unusable off-device)
-  * fix --dry-run: root check now warns instead of dying
-  * fix step 12 --dry-run: wrap rustup download-execute in
-    explicit dry-run guard (was: mktemp created real tmpfile,
-    empty-file check died because curl was dry-run'd)
-  * fix step 8 --dry-run: suppress "Font cache rebuilt" log
-    when fc-cache was not actually executed
-  * fix step 15 --dry-run: suppress "inotify watchers applied"
-    and "locale generated" logs when commands were not executed
-  * fix step 12: suppress shell error in rustc/cargo version
-    output (2>&1 → 2>/dev/null)
-  * remove redundant profile.d log (write_file_sudo already logs)
-
-3.1.0  2026-03-15
-
-  * fix run()/run_shell(): add wait after process substitution tee
-    to flush log output before next command (#1)
-  * fix --from-step/--verify: defer checkpoint write until after
-    lock acquisition to prevent corruption on concurrent invocation (#2)
-  * fix PID write: atomic tmpfile+mv instead of direct echo (#3)
-  * fix step 12 rustup: download to tmpfile then execute, preventing
-    truncated script execution on partial curl failure (#4)
-  * fix step 6: unset GL_VENDOR/GL_RENDERER/GL_VERSION at end of
-    step instead of leaking until step 20 (#5)
-  * fix step 11 NodeSource: verify sources.list content after write
-    before apt-get update (#6)
-  * fix step 15 locale.gen: restore backup on sed -i failure (#7)
-  * add _rustup_tmp cleanup to trap handler
-  * add --minimal flag: skip heavy optional packages
-    (gnome-disk-utility) for RAM-constrained devices (#12)
-  * add date compression note to CHANGELOG header (#9)
-
-3.0.2  2026-03-15
-
-  * fix lock file: handle missing/empty PID file as stale lock (crash
-    between mkdir and PID write left unrecoverable lock on next run)
-  * fix early init: add die guards to date and id -u command
-    substitutions; die on log file creation failure
-  * fix cleanup trap: guard rm -rf with [[ -n ]] (defensive against
-    empty LOCK_FILE)
-  * fix step 14 VS Code curl: preserve error message instead of
-    swallowing with || true (download failures now warn with context)
-  * fix step 20 verification: cache glxinfo and vulkaninfo output in
-    variables (was: 3+2 redundant subprocess invocations)
-  * fix step 16 Flathub URL: use canonical dl.flathub.org/repo/ path
-    (was: flathub.org/repo/ which redirects)
-  * add --from-step=N flag: start (or restart) from a specific step
-  * add --verify flag: run only step 20 (summary and verification)
-  * update help text with new flags
-
-3.0.1  2026-03-15
-
-  * fix run()/run_shell() stderr merge: use separate process substitution
-    per fd so stderr remains on fd 2 (was: 2>&1 before tee merged both
-    onto stdout); document async flush as known limitation
-  * fix step 14 VS Code dpkg/apt-get chain: restructure as if/elif/else
-    so both dpkg and apt-get failures are reported (was: || chain only
-    surfaced the apt-get failure)
-  * fix step 11 NodeSource GPG dearmor: atomic tmpfile+mv for keyring
-    (was: direct write to final path)
-  * fix step 15 locale.gen: backup before sed -i
-  * fix cleanup trap: add _ns_key and _ns_gpg tmpfile removal (step 11
-    leak on mid-step failure)
-  * remove stale unset DEBIAN_FRONTEND from step 17 (contradicts the
-    global export at script top added in 2.7.1 to persist across
-    checkpoint resume; var dies with process at exit 0)
-  * fix step 20 cleanup comment: "step 19" → "step 20" (stale from
-    3.0.0 renumbering)
-  * split step 6 GPU packages into stable batch + volatile per-package
-    loop (reduces apt-get calls from 20 to 6 for known-stable names)
-  * add run_shell() comment: only called with hardcoded strings, never
-    user input (clarifies "No eval" claim)
-  * README: clarify "No eval" bullet re: run_shell() bash -c usage
-  * crostini-gaming-packages.txt: add TOFU warning for box86/box64
-    third-party repos (ryanfortner.github.io)
-
-3.0.0  2026-03-15
+3.0.0 – 3.2.0  2026-03-15
 
   * add step 17: gaming packages (DOSBox, ScummVM, RetroArch)
-    - dosbox and scummvm via apt-get (Debian Bookworm arm64 repos)
-    - RetroArch via Flatpak (aarch64 confirmed on Flathub)
-  * renumber subsequent steps (SSH → 18, backup → 19, summary → 20)
-  * move unset DEBIAN_FRONTEND from Flatpak step to gaming step
-  * add dosbox, scummvm, RetroArch to summary verification
-  * add gaming reference pointer to summary reminders
-  * Phase 3 (box86/box64/Wine) and Phase 4 (Heroic) remain manual;
-    documented in crostini-gaming-packages.txt
-  * README: update step table (20 steps)
+  * fix run() exit code propagation via process substitution
+  * fix --dry-run: arch/root checks warn instead of die
+  * fix --dry-run: explicit guards for steps 8, 12, 15
+  * fix interactive read from stdin → /dev/tty (7 sites)
+  * fix interactive prompts to stderr (19 printf calls)
+  * add --from-step=N, --verify, --reset flags
+  * add lock stale detection (missing/empty PID file)
+  * add NodeSource GPG tmpfile+mv atomic keyring write
 
-2.9.0  2026-03-15
+2.0.0 – 2.9.0  2026-03-08 – 2026-03-15
 
-  * fix run()/run_shell() exit code propagation: replace pipe + || true
-    with process substitution (> >(tee ...)) so callers receive the real
-    exit code; previous pattern reset PIPESTATUS via || true, silently
-    masking all command failures and suppressing warnings
-  * fix dpkg/apt-fix chain in step 14 (now works correctly with real
-    exit codes from run())
-  * remove DEBIAN_FRONTEND unset from step 16 (prevents resume fragility
-    when checkpoint lands after the unset but before a later apt call)
-  * fix NodeSource GPG key: download to tmpfile before dearmor to prevent
-    truncated keyring from partial curl pipe failure
-  * add GDK_BACKEND comment noting Electron app caveats (Slack, Discord)
-  * add box64/box86 community x86 translation mention to header, step 19
-    reminders, and README limitations
-  * remove unused netcat-openbsd from CLI tools (step 4)
-  * add RAM-constrained note to gnome-disk-utility comment (step 9)
-  * add non-atomic note to sed -i locale.gen (step 15)
-
-2.8.0  2026-03-15
-
-  * default to fully unattended execution (zero interactive prompts)
-  * add --interactive flag to restore original prompt behavior
-  * add --git-name=, --git-email=, --ssh-comment= flags
-  * wrap step 2 + step 18 interactive blocks (open_chromeos_url, sleep,
-    read, instruction printf) inside if ! $UNATTENDED guards
-  * SSH key auto-generated with no passphrase in unattended mode
-  * update help text, banners, README for --interactive semantics
-
-2.7.1  2026-03-15
-
-  * move DEBIAN_FRONTEND=noninteractive before step blocks (persist on
-    checkpoint resume)
-  * cosmetic: strip trailing whitespace, normalize blank lines
-
-2.7.0  2026-03-15
-
-  * call ssh-keygen directly to avoid logging passphrase via run()
-  * initialize LOG_FILE with chmod 600 before first write
-  * add PID-based stale lock detection (auto-remove dead locks)
-  * apply tee pattern to run_shell() (show rustup/NodeSource progress)
-  * use sudo mktemp in write_file_sudo() for atomic writes
-  * clean up variables at end of steps 1, 2, 13, 17, 19
-
-2.6.0  2026-03-15
-
-  * add SSH passphrase prompt (remove hardcoded -N "")
-  * guard 6 git config keys with existing-value checks
-  * conditionalize inotify sysctl success/fail log
-  * replace all 18 'sudo apt' with 'sudo apt-get'
-  * export DEBIAN_FRONTEND=noninteractive around apt steps
-  * make write_file() and write_file_sudo() atomic (tmpfile + mv)
-  * add apt-get full-upgrade in step 3
-  * hoist check_tool()/check_config() to helpers section
-  * tee run() output to terminal and log (fix silent-freeze UX)
-  * move NODE_MAJOR, SYSCTL_CONF to constants block
-  * rename SND_DEVICES -> SND_DEV_COUNT for consistency
-
-2.5.10  2026-03-15
-
-  * guard code --version pipe against SIGPIPE under pipefail
-
-2.5.9  2026-03-15
-
-  * guard check_tool() --version pipe against SIGPIPE
-  * sync all 19 step descriptions across help, banners, README
-
-2.5.8  2026-03-15
-
-  * remove all box-drawing decorative characters
-  * remove unused CYAN color variable
-
-2.5.7  2026-03-15
-
-  * trim multiline comments to single lines
-  * strip decorative line art from section headers
-  * inline GTK3_DIR and GTK4_DIR (used once each)
-
-2.5.6  2026-03-15
-
-  * fix step 8 comment: add GTK2 and cursor to listed layers
-  * fix GPU comment: Crostini has X11 via sommelier XWayland
-  * add || true guard to xdg-user-dirs-update
-
-2.5.5  2026-03-15
-
-  * add || true to rmdir in cleanup() trap (fix exit code corruption)
-  * add || true to VS Code curl download (graceful fallback)
-  * restructure VS Code dpkg/apt-fix chain as if/else
-
-2.5.4  2026-03-15
-
-  * add || warn to git lfs install
-  * add || true to SSH pubkey tee
-
-2.5.3  2026-03-15
-
-  * fix check_tool "glmark2" -> "glmark2-es2-wayland"
-  * validate checkpoint file content is numeric
-
-2.5.2  2026-03-15
-
-  * add || die guards to write_file()/write_file_sudo()
-  * replace deprecated VS Code Ozone flags with --ozone-platform-hint=auto
-  * add -s check on NodeSource GPG keyring after curl|gpg
-  * remove glmark2 GLX variant (Crostini is Wayland-only)
-
-2.5.1  2026-03-14
-
-  * wrap VS Code download in DRY_RUN guard
-  * replace fragile find -not -name with -mindepth 1
-  * add -u (nounset) to run_shell() subshell
-
-2.5.0  2026-03-13
-
-  * guard all step 2/13/17/18 interactive prompts with DRY_RUN
-  * replace hardcoded vscode temp path with mktemp
-  * add error handling to all unguarded sudo calls
-
-2.4.1  2026-03-09
-
-  * add existence guards to 5 write_file calls (prevent overwrite)
-  * make NODE_MAJOR and SYSCTL_CONF readonly
-  * replace ls|wc with find for /dev/snd count (SC2012)
-  * wrap preflight curl in DRY_RUN guard
-
-2.4.0  2026-03-08
-
-  * add mkdir-based lock file for concurrent-run safety
-  * replace hardcoded /tmp/vscode-arm64.deb with mktemp
-  * fix set_checkpoint() writing during --dry-run
-  * route all remaining dry-run bypasses through run()
-  * fix --dry-run crash in step 17 (chmod on non-existent key)
-
-2.3.1  2026-03-08
-
-  * route per-package apt loops through run() for dry-run/logging
-  * add vm.swappiness writability check (read-only in Crostini)
-  * show virgl Vulkan status in summary
-
-2.3.0  2026-03-08
-
-  * remove pulseaudio daemon (conflicts with Crostini host audio)
-  * remove standalone xwayland (conflicts with sommelier)
-  * fix OLED font rendering: rgba=none (no LCD subpixel stripe)
-  * replace ping with curl for network check (ICMP blocked)
-  * add --yes to gpg --dearmor for idempotent re-runs
-  * remove transitional apt-transport-https
-
-2.2.0  2026-03-08
-
-  * remove Fish shell step (Crostini default is bash)
-  * renumber steps 18-20 -> 17-19
-
-2.1.1  2026-03-08
-
-  * add vm.swappiness=10 and dirty ratio tuning for 4 GB device
-  * add memory config to summary verification
-
-2.1.0  2026-03-08
-
-  * eliminate all eval usage: run() passes "$@" directly
-  * add run_shell(), write_file(), write_file_sudo() helpers
+  * full rewrite: 19-step automated setup with checkpoint resume
+  * add --dry-run, --interactive, --minimal flags
+  * add unattended default mode (zero interactive prompts)
+  * add run(), write_file(), write_file_sudo() atomic helpers
+  * add PID-based mkdir lock for concurrent-run safety
+  * add GPU, audio, display, Wayland, Vulkan verification
+  * replace all eval with direct "$@" execution
   * replace hardcoded UID 1000 with $(id -u)
-  * pipefail-safe logging (no pipe in log path)
-  * add trap handler for EXIT/INT/TERM
+  * replace 'sudo apt' with 'sudo apt-get' (18 sites)
+  * add VM memory tuning with /proc/sys/vm writability check
+  * fix OLED font rendering: rgba=none (no LCD subpixel stripe)
+  * remove pulseaudio daemon, standalone xwayland (Crostini conflicts)
 
-2.0.0  2026-03-08
-
-  * full rewrite: 19-step automated setup
-  * auto-open ChromeOS settings via garcon-url-handler
-  * GPU + graphics stack (Mesa, Virgl, Wayland, Vulkan)
-  * audio stack (ALSA, PulseAudio, GStreamer)
-  * display scaling tuned for 13.3" FHD OLED
-  * GUI apps with MIME defaults, fonts, screenshots
-  * VS Code Wayland/Ozone flags
-  * summary: GPU, Vulkan, Wayland, audio, configs, tools
-
-1.1.0  2026-03-08
-
-  * add GPU detection and verification
-  * add GPU/Wayland/audio/shared folder status to summary
-
-1.0.0  2026-03-08
+1.0.0 – 1.1.0  2026-03-08
 
   * initial release: Crostini bootstrap with checkpoint resume,
-    --dry-run, colored output, and full logging
+    --dry-run, colored output, full logging, and GPU detection

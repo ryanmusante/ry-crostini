@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.8.11-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.8.14-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -37,6 +37,26 @@ bash crostini-setup-duet5.sh --version                    # show version
 1. ChromeOS updated to latest stable
 2. Linux (Beta) enabled: Settings → Developers → Turn On
 3. Terminal app open
+4. **Recommended before running** (the script is fully unattended by
+   default and will not prompt for these; use `--interactive` to be
+   guided through each toggle instead):
+   - **GPU acceleration**: navigate to `chrome://flags/#crostini-gpu-support`,
+     set to **Enabled**, then **reboot the Chromebook** (not just the
+     container). The script installs GPU packages regardless, but
+     `/dev/dri/renderD128` will not appear until after reboot.
+   - **Microphone**: Settings → Developers → Linux → Allow Linux to
+     access your microphone → **On**
+   - **Disk size**: Settings → Developers → Linux → Disk size →
+     increase to **20–30 GB** (the script aborts below 2 GB free and
+     warns below 10 GB)
+   - **Shared folders** *(optional)*: in the Files app, right-click any
+     folder → Share with Linux. Shared folders appear at
+     `/mnt/chromeos/`.
+   - **USB devices** *(optional)*: Settings → Developers → Linux →
+     Manage USB devices → toggle on any devices you need.
+   - **Port forwarding** *(optional)*: Settings → Developers → Linux →
+     Port forwarding → add dev server ports (3000, 5000, 8080, etc.).
+     Crostini also auto-detects listening ports in most cases.
 
 ## Steps
 

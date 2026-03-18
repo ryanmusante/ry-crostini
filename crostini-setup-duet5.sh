@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.11
+# Version: 3.8.14
 # Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -14,7 +14,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.11"
+readonly SCRIPT_VERSION="3.8.14"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -153,6 +153,7 @@ _prompt() {
 # _strip_log_ansi: single-pass ANSI-escape removal from the log file.
 # Called once at script exit (cleanup) rather than per-line, avoiding both
 # process-substitution races and per-call sed forks.
+# shellcheck disable=SC2317
 _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
@@ -372,8 +373,6 @@ check_config() {
         ((_verify_fail++)) || true
     fi
 }
-
-
 
 usage() {
     cat <<EOF
@@ -605,7 +604,7 @@ if should_run_step 2; then
                 open_chromeos_url "chrome://flags/#crostini-gpu-support"
                 sleep 2
                 _prompt '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r _ </dev/tty || true
+                read -r -t 300 _ </dev/tty || true
             fi
             if [[ -e /dev/dri/renderD128 ]]; then
                 log "GPU acceleration now active ✓"
@@ -628,7 +627,7 @@ if should_run_step 2; then
                 open_chromeos_url "chrome://os-settings/crostini"
                 sleep 2
                 _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r _ </dev/tty || true
+                read -r -t 300 _ </dev/tty || true
             fi
             if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
                 log "Microphone now available ✓"
@@ -647,7 +646,7 @@ if should_run_step 2; then
         open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r _ </dev/tty || true
+        read -r -t 300 _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
@@ -664,7 +663,7 @@ if should_run_step 2; then
                 open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
                 sleep 2
                 _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-                read -r _ </dev/tty || true
+                read -r -t 300 _ </dev/tty || true
             elif $DRY_RUN; then
                 log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
             fi
@@ -680,7 +679,7 @@ if should_run_step 2; then
         open_chromeos_url "chrome://os-settings/crostini/portForwarding"
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r _ </dev/tty || true
+        read -r -t 300 _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
@@ -701,7 +700,7 @@ if should_run_step 2; then
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
             _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-            read -r _ </dev/tty || true
+            read -r -t 300 _ </dev/tty || true
         elif $DRY_RUN; then
             log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
         fi
@@ -1233,8 +1232,11 @@ if should_run_step 9; then
     fi
 
     # Ensure desktop applications directory exists (garcon integration)
-    run mkdir -p "${HOME}/.local/share/applications" || warn "Cannot create desktop applications directory"
-    $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
+    if run mkdir -p "${HOME}/.local/share/applications"; then
+        $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
+    else
+        warn "Cannot create desktop applications directory"
+    fi
 
     unset GUI_PKGS
     set_checkpoint 9
@@ -1264,46 +1266,54 @@ if should_run_step 11; then
     else
         log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
 
-        run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
-        _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
-        run curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
-            || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
-        if [[ ! -s "$_ns_key" ]]; then
-            rm -f "$_ns_key"; die "NodeSource GPG key is empty"
-        fi
-        # Verify GPG key fingerprint to prevent supply-chain substitution
-        _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
-            | awk -F: '/^fpr:/{print $10; exit}')" || true
-        if [[ -z "$_ns_fp" ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-key-XXXXXXXX.asc"
+            log "[DRY-RUN] gpg --dearmor → /etc/apt/keyrings/nodesource.gpg (fingerprint: ${NODESOURCE_GPG_FP})"
+            log "[DRY-RUN] write /etc/apt/sources.list.d/nodesource.list (arch=arm64, node_${NODE_MAJOR}.x)"
+            log "[DRY-RUN] sudo apt-get update"
+            log "[DRY-RUN] sudo apt-get install -y nodejs"
+        else
+            run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
+            _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
+            run curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
+                || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
+            if [[ ! -s "$_ns_key" ]]; then
+                rm -f "$_ns_key"; die "NodeSource GPG key is empty"
+            fi
+            # Verify GPG key fingerprint to prevent supply-chain substitution
+            _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
+                | awk -F: '/^fpr:/{print $10; exit}')" || true
+            if [[ -z "$_ns_fp" ]]; then
+                rm -f "$_ns_key"
+                die "NodeSource GPG fingerprint extraction failed — key file may be corrupt or gpg cannot parse it."
+            fi
+            if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
+                rm -f "$_ns_key"
+                die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp}. Possible key rotation or supply-chain compromise."
+            fi
+            log "NodeSource GPG fingerprint verified: ${_ns_fp}"
+            unset _ns_fp
+            _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
+                || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
+            # shellcheck disable=SC2024  # redirect captures gpg log messages, not dearmored output (-o flag)
+            sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
+                || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "NodeSource GPG dearmor failed"; }
+            sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
+                || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "Cannot move GPG keyring into place"; }
             rm -f "$_ns_key"
-            die "NodeSource GPG fingerprint extraction failed — key file may be corrupt or gpg cannot parse it."
+            unset _ns_key _ns_gpg
+            printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
+                | write_file_sudo /etc/apt/sources.list.d/nodesource.list
+            # Verify sources file was written correctly (#6)
+            if [[ ! -s /etc/apt/sources.list.d/nodesource.list ]]; then
+                die "NodeSource sources.list is empty or missing after write"
+            fi
+            if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
+                die "NodeSource sources.list content invalid"
+            fi
+            run sudo apt-get update || warn "apt update failed"
+            run sudo apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
         fi
-        if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
-            rm -f "$_ns_key"
-            die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp}. Possible key rotation or supply-chain compromise."
-        fi
-        log "NodeSource GPG fingerprint verified: ${_ns_fp}"
-        unset _ns_fp
-        _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
-            || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
-        # shellcheck disable=SC2024  # redirect captures gpg log messages, not dearmored output (-o flag)
-        sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
-            || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "NodeSource GPG dearmor failed"; }
-        sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
-            || { rm -f "$_ns_key"; sudo rm -f "$_ns_gpg"; die "Cannot move GPG keyring into place"; }
-        rm -f "$_ns_key"
-        unset _ns_key _ns_gpg
-        printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
-            | write_file_sudo /etc/apt/sources.list.d/nodesource.list
-        # Verify sources file was written correctly (#6)
-        if [[ ! -s /etc/apt/sources.list.d/nodesource.list ]]; then
-            die "NodeSource sources.list is empty or missing after write"
-        fi
-        if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
-            die "NodeSource sources.list content invalid"
-        fi
-        run sudo apt-get update || warn "apt update failed"
-        run sudo apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
     fi
 
     # Configure npm global prefix to avoid sudo for global installs
@@ -1444,12 +1454,15 @@ EOF
         # sed -i is not atomic; backup first in case of partial write or interruption
         run sudo cp /etc/locale.gen /etc/locale.gen.bak || warn "locale.gen backup failed"
         if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
-            run sudo locale-gen || warn "locale-gen failed"
-            sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
-            $DRY_RUN || log "en_US.UTF-8 locale generated"
+            if run sudo locale-gen; then
+                sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+                $DRY_RUN || log "en_US.UTF-8 locale generated"
+            else
+                warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
+            fi
         else
             warn "locale.gen edit failed — restoring backup"
-            sudo cp /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
+            sudo cp -- /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
             sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
         fi
     else
@@ -1534,9 +1547,12 @@ if should_run_step 15; then
     step_banner 15 "Flatpak + Flathub (ARM64 app source)"
 
     run sudo apt-get install -y flatpak || warn "flatpak install failed"
-    run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
-
-    $DRY_RUN || log "Flatpak installed with Flathub remote."
+    if command -v flatpak &>/dev/null; then
+        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
+        $DRY_RUN || log "Flatpak installed with Flathub remote."
+    else
+        warn "flatpak binary not available — skipping Flathub remote"
+    fi
     log "Install apps: flatpak install flathub <app-id>"
 
     set_checkpoint 15
@@ -1558,12 +1574,16 @@ if should_run_step 16; then
 
     # Verify
     if command -v dosbox &>/dev/null; then
-        log "dosbox: $(timeout 3 dosbox --version 2>/dev/null | head -1 || true) ✓"
+        _dosbox_ver="$(timeout 3 dosbox --version 2>/dev/null | head -1 || true)"
+        log "dosbox: ${_dosbox_ver:-installed} ✓"
+        unset _dosbox_ver
     else
         warn "dosbox not found"
     fi
     if command -v scummvm &>/dev/null; then
-        log "scummvm: $(timeout 3 scummvm --version 2>/dev/null | head -1 || true) ✓"
+        _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
+        log "scummvm: ${_scummvm_ver:-installed} ✓"
+        unset _scummvm_ver
     else
         warn "scummvm not found"
     fi
@@ -1589,7 +1609,7 @@ if should_run_step 17; then
         open_chromeos_url "chrome://os-settings/crostini/exportImport"
         sleep 2
         _prompt '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
-        read -r _ </dev/tty || true
+        read -r -t 300 _ </dev/tty || true
     elif $DRY_RUN; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"
     else
@@ -1805,7 +1825,11 @@ if should_run_step 18; then
     [[ "$_verify_fail" -gt 0 ]] && logprintf '  %b%s failed%b' "$RED" "$_verify_fail" "$RESET"
     logprintf '\n'
 
-    # Clean up checkpoint
+    # Mark step 18 complete before removing the checkpoint file.
+    # This ensures a crash between here and rm -f still shows step 18 done.
+    set_checkpoint 18
+
+    # Clean up checkpoint — all steps finished, no resume needed
     if $DRY_RUN; then
         log "[DRY-RUN] would remove checkpoint file"
     else
@@ -1828,6 +1852,7 @@ if should_run_step 18; then
     unset _now_epoch _elapsed
 
     logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
+    log "Step 18 complete."
 fi
 
 exit 0
