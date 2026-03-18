@@ -4,6 +4,27 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+3.17.0  2026-03-18
+
+  Comment audit -- all comments now above-line; no ambiguous references.
+
+  * move 3 inline comments to above-line (umask 077, chmod 644 in
+    write_file, AVAIL_MB_NOW sentinel value in step 2f).
+  * replace 5 orphaned issue-tracker references (#2, #4, #6) with
+    self-contained descriptive text (deferred checkpoint race, truncated
+    download, silent write_file_sudo failure).
+  * sync all 18 step section comments to match step_banner titles
+    character-for-character (steps 2-3, 6-9, 11-17 were abbreviated or
+    used different wording than the banner shown to the user).
+  * replace "Phase 2:" label (step 16) with plain description -- no
+    Phase 1 exists.
+  * replace "pavucontrol = GUI volume mixer" with em-dash to avoid
+    reading as assignment.
+  * move inline comment on shellcheck SC2024 directive to above-line
+    rationale comment.
+  * split step 17 section comment into title line (matches banner) plus
+    separate detail line for --interactive behavior.
+
 3.16.0  2026-03-18
 
   * fix step 3 cross-ref: sync usage() and step_banner to match README

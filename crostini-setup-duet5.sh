@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.16.0
+# Version: 3.17.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -13,11 +13,12 @@
 #   See https://wiki.debian.org/NewIn64bitTime for the full t64 transition list.
 
 set -euo pipefail
-umask 077  # Restrict tempfiles/logs to owner-only by default
+# Restrict tempfiles/logs to owner-only by default
+umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.16.0"
+readonly SCRIPT_VERSION="3.17.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -285,7 +286,8 @@ write_file() {
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
-    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }  # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
+    # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
+    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
     mv "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
 }
@@ -449,7 +451,7 @@ for arg in "$@"; do
             if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 18 ]]; then
                 die "--from-step requires a number 1–18 (got '${_from}')"
             fi
-            # Defer checkpoint write until after lock acquisition (#2)
+            # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="$((_from - 1))"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to step $((_from - 1)); will resume from step ${_from}."
             unset _from
@@ -458,7 +460,7 @@ for arg in "$@"; do
             if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
                 die "Cannot specify --verify more than once, or combine with --from-step"
             fi
-            # Defer checkpoint write until after lock acquisition (#2)
+            # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="17"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 17; running verification only."
             ;;
@@ -513,7 +515,7 @@ mv "$_pid_tmp" "$LOCK_FILE/pid" \
 _LOCK_ACQUIRED=true
 unset _pid_tmp
 
-# Apply deferred checkpoint (must be inside lock — fix #2)
+# Apply deferred checkpoint (must be inside lock to avoid race with concurrent instances)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
     # In-memory override ensures should_run_step works even in --dry-run
     # (where set_checkpoint is a no-op and the file is never written).
@@ -598,7 +600,7 @@ if should_run_step 1; then
     set_checkpoint 1
     log "Step 1 complete."
 fi
-# Step 2: ChromeOS integration — open settings for required toggles (--interactive)
+# Step 2: ChromeOS integration (GPU, mic, USB, folders, ports, disk)
 if should_run_step 2; then
     step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports, disk)"
 
@@ -710,7 +712,8 @@ if should_run_step 2; then
         AVAIL_MB_NOW=$((_avail_raw / 1024))
     else
         warn "Cannot determine available disk space"
-        AVAIL_MB_NOW=99999  # Skip resize advisory on df failure
+        # Skip resize advisory on df failure
+        AVAIL_MB_NOW=99999
     fi
     unset _avail_raw
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
@@ -732,7 +735,7 @@ if should_run_step 2; then
     set_checkpoint 2
     log "Step 2 complete."
 fi
-# Step 3: System update and upgrade
+# Step 3: System update, upgrade, and full-upgrade
 if should_run_step 3; then
     step_banner 3 "System update, upgrade, and full-upgrade"
 
@@ -844,7 +847,7 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
-# Step 6: GPU + graphics stack
+# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
@@ -921,7 +924,7 @@ EOF
     set_checkpoint 6
     log "Step 6 complete."
 fi
-# Step 7: Audio stack
+# Step 7: Audio stack (ALSA, PulseAudio, GStreamer codecs)
 if should_run_step 7; then
     step_banner 7 "Audio stack (ALSA, PulseAudio, GStreamer codecs)"
 
@@ -932,7 +935,7 @@ if should_run_step 7; then
         libasound2-plugins
 
         # PulseAudio client only — do NOT install the daemon (conflicts with host)
-        # pavucontrol = GUI volume mixer
+        # pavucontrol — GUI volume mixer
         pulseaudio-utils
         pavucontrol
 
@@ -994,7 +997,7 @@ EOF
     set_checkpoint 7
     log "Step 7 complete."
 fi
-# Step 8: Display scaling and HiDPI configuration
+# Step 8: Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)
 if should_run_step 8; then
     step_banner 8 "Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)"
 
@@ -1188,7 +1191,7 @@ EOF
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: GUI application essentials
+# Step 9: GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
 if should_run_step 9; then
     step_banner 9 "GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)"
 
@@ -1311,7 +1314,7 @@ if should_run_step 10; then
     set_checkpoint 10
     log "Step 10 complete."
 fi
-# Step 11: Node.js via NodeSource (LTS, arm64)
+# Step 11: Node.js LTS (arm64)
 # NOTE: NodeSource is in maintenance mode and has had multiple GPG key rotations.
 # Alternative: download the binary tarball directly from https://nodejs.org/dist/
 # with SHA256 checksum verification (no repo, no key, smaller trust surface).
@@ -1354,7 +1357,8 @@ if should_run_step 11; then
             unset _ns_fp
             _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
                 || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
-            # shellcheck disable=SC2024  # redirect captures gpg log messages, not dearmored output (-o flag)
+            # Redirect captures gpg log messages, not dearmored output (-o flag)
+            # shellcheck disable=SC2024
             sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
                 || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "NodeSource GPG dearmor failed"; }
             sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
@@ -1363,7 +1367,7 @@ if should_run_step 11; then
             unset _ns_key _ns_gpg
             printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
                 | write_file_sudo /etc/apt/sources.list.d/nodesource.list
-            # Verify sources file was written correctly (#6)
+            # Verify sources file was written correctly (catches silent write_file_sudo failure)
             if [[ ! -s /etc/apt/sources.list.d/nodesource.list ]]; then
                 die "NodeSource sources.list is empty or missing after write"
             fi
@@ -1393,7 +1397,7 @@ if should_run_step 11; then
     set_checkpoint 11
     log "Step 11 complete."
 fi
-# Step 12: Rust via rustup (aarch64)
+# Step 12: Rust toolchain (aarch64)
 if should_run_step 12; then
     step_banner 12 "Rust toolchain (aarch64)"
 
@@ -1408,7 +1412,7 @@ if should_run_step 12; then
             # TOFU (Trust On First Use): HTTPS-only download with no signature/checksum
             # verification — this is the official rustup install method. Unlike NodeSource
             # (GPG fingerprint pinned), rustup.rs does not publish a stable signing key.
-            # Download to tmpfile to prevent executing truncated script (#4).
+            # Download to tmpfile to prevent executing a truncated script on partial download.
             _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)" || die "Cannot create tmpfile for rustup installer"
             if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o "$_rustup_tmp"; then
                 rm -f "$_rustup_tmp"
@@ -1435,7 +1439,7 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: VS Code (arm64 .deb)
+# Step 13: VS Code (arm64 .deb + Wayland flags)
 if should_run_step 13; then
     step_banner 13 "VS Code (arm64 .deb + Wayland flags)"
 
@@ -1496,7 +1500,7 @@ EOF
     set_checkpoint 13
     log "Step 13 complete."
 fi
-# Step 14: Container resource tuning
+# Step 14: Container resource tuning (sysctl, locale, env, XDG, paths, memory)
 if should_run_step 14; then
     step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
 
@@ -1615,7 +1619,7 @@ MEMEOF
     set_checkpoint 14
     log "Step 14 complete."
 fi
-# Step 15: Flatpak + Flathub
+# Step 15: Flatpak + Flathub (ARM64 app source)
 if should_run_step 15; then
     step_banner 15 "Flatpak + Flathub (ARM64 app source)"
 
@@ -1635,11 +1639,11 @@ if should_run_step 15; then
     set_checkpoint 15
     log "Step 15 complete."
 fi
-# Step 16: Gaming packages
+# Step 16: Gaming packages (DOSBox, ScummVM, RetroArch)
 if should_run_step 16; then
     step_banner 16 "Gaming packages (DOSBox, ScummVM, RetroArch)"
 
-    # Phase 2: native ARM packages (no translation layer needed)
+    # Native ARM packages (no translation layer needed)
     # dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
     install_pkgs_best_effort dosbox scummvm || warn "Some gaming packages failed"
 
@@ -1681,7 +1685,8 @@ if should_run_step 16; then
     set_checkpoint 16
     log "Step 16 complete."
 fi
-# Step 17: Container backup — opens ChromeOS backup page (--interactive)
+# Step 17: Container backup
+# Opens ChromeOS backup page when run with --interactive.
 if should_run_step 17; then
     step_banner 17 "Container backup"
 
