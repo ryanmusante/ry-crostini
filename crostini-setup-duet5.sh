@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.11.1
-# Date:    2026-03-17
+# Version: 3.12.0
+# Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
@@ -17,7 +17,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.11.1"
+readonly SCRIPT_VERSION="3.12.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -79,15 +79,11 @@ cleanup() {
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ $rc -ne 0 ]]; then
-        # Prefer date for consistency, fall back to $SECONDS if date hangs/fails
-        local _now _elapsed
-        _now="$(date +%s 2>/dev/null)" || _now=""
-        if [[ -n "$_now" ]]; then
-            _elapsed=$(( _now - ${_START_EPOCH:-0} ))
-        else
-            _elapsed="${SECONDS:-unknown}"
-        fi
-        warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
+        # @@WHY: $SECONDS is a bash builtin — no subprocess, cannot hang.
+        # date(1) can hang on broken pipe / frozen cgroup; inside cleanup
+        # all traps are cleared, so a hang here is uninterruptible.
+        local _elapsed="${SECONDS:-unknown}"
+        _cleanup_warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
     fi
     # Re-raise caught signal for correct 128+N exit code to parent
     if [[ -n "${_received_signal:-}" ]]; then
@@ -154,6 +150,16 @@ _prompt() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+# _cleanup_warn: log helper safe for use inside cleanup/trap context.
+# Uses $SECONDS (bash builtin, no subprocess) instead of date(1) to avoid
+# hanging on a broken pipe, frozen cgroup, or killed date process.
+# shellcheck disable=SC2317
+_cleanup_warn() {
+    printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" >&2
+    printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" \
+        >> "$LOG_FILE" 2>/dev/null || true
+}
+
 # _strip_log_ansi: single-pass ANSI-escape removal from the log file.
 # Called once at script exit (cleanup) rather than per-line, avoiding both
 # process-substitution races and per-call sed forks.
@@ -161,12 +167,12 @@ _prompt() {
 _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
-    _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { warn "Cannot create tmpfile for ANSI strip"; return 1; }
+    _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
-        mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; warn "Cannot replace log after ANSI strip"; return 1; }
+        mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
         rm -f "$_tmp"
-        warn "ANSI strip failed — log file retains escape codes"
+        _cleanup_warn "ANSI strip failed — log file retains escape codes"
         return 1
     fi
 }
@@ -279,6 +285,7 @@ write_file() {
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
+    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
     mv "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
 }
@@ -876,9 +883,9 @@ if should_run_step 6; then
         log "GPU render node: /dev/dri/renderD128 ✓"
         if command -v glxinfo &>/dev/null; then
             _glx_out="$(glxinfo 2>/dev/null || true)"
-            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs || true)"
+            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs -r || true)"
+            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs -r || true)"
+            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs -r || true)"
             unset _glx_out
             log "GL vendor:   ${GL_VENDOR:-unknown}"
             log "GL renderer: ${GL_RENDERER:-unknown}"
@@ -1224,6 +1231,7 @@ if should_run_step 9; then
         fonts-firacode
         fonts-hack
         adwaita-icon-theme
+        adwaita-icon-theme-full
     )
 
     install_pkgs_best_effort "${GUI_PKGS[@]}" || warn "Some GUI packages unavailable — non-fatal"
@@ -1235,9 +1243,6 @@ if should_run_step 9; then
     else
         log "Skipping gnome-disk-utility (--minimal mode)"
     fi
-
-    # Try to install full icon theme (may not exist on all versions)
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y adwaita-icon-theme-full || warn "adwaita-icon-theme-full unavailable — using base theme"
 
     # Set Firefox ESR as default browser
     if command -v firefox-esr &>/dev/null || $DRY_RUN; then
@@ -1360,7 +1365,7 @@ if should_run_step 11; then
             if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
                 die "NodeSource sources.list content invalid"
             fi
-            run sudo apt-get update || warn "apt update failed"
+            run sudo apt-get update || die "apt update failed after adding NodeSource repo — check GPG key and network"
             run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
         fi
     fi
@@ -1500,21 +1505,25 @@ EOF
 
     # 14b. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
-        # sed -i is not atomic; backup first in case of partial write or interruption
-        run sudo cp /etc/locale.gen /etc/locale.gen.bak || warn "locale.gen backup failed"
-        if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
-            if run sudo locale-gen; then
-                if ! $DRY_RUN; then
-                    sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
-                    log "en_US.UTF-8 locale generated"
+        # @@WHY: Gate sed on successful backup — if cp fails (disk full),
+        # proceeding to sed -i risks corrupting locale.gen with no rollback.
+        if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
+            if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
+                if run sudo locale-gen; then
+                    if ! $DRY_RUN; then
+                        sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+                        log "en_US.UTF-8 locale generated"
+                    fi
+                else
+                    warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
                 fi
             else
-                warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
+                warn "locale.gen edit failed — restoring backup"
+                sudo cp -- /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
+                sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
             fi
         else
-            warn "locale.gen edit failed — restoring backup"
-            sudo cp -- /etc/locale.gen.bak /etc/locale.gen 2>/dev/null || true
-            sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+            warn "locale.gen backup failed — skipping locale edit to avoid unrecoverable corruption"
         fi
     else
         log "en_US.UTF-8 locale already available"
@@ -1709,11 +1718,12 @@ if should_run_step 18; then
     logprintf '%bGPU / Graphics:%b\n' "$BOLD" "$RESET"
     if [[ -e /dev/dri/renderD128 ]]; then
         logprintf '  Render node:   %b✓%b /dev/dri/renderD128\n' "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
         if command -v glxinfo &>/dev/null; then
             _glx_out="$(glxinfo 2>/dev/null || true)"
-            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs || true)"
-            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs || true)"
+            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs -r || true)"
+            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs -r || true)"
+            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs -r || true)"
             unset _glx_out
             [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
             [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
@@ -1721,8 +1731,8 @@ if should_run_step 18; then
         fi
         if command -v vulkaninfo &>/dev/null; then
             _vk_out="$(vulkaninfo --summary 2>/dev/null || true)"
-            VK_GPU="$(printf '%s\n' "$_vk_out" | grep "GPU name" | head -1 | cut -d= -f2 | xargs || true)"
-            VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs || true)"
+            VK_GPU="$(printf '%s\n' "$_vk_out" | grep "GPU name" | head -1 | cut -d= -f2 | xargs -r || true)"
+            VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs -r || true)"
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
                 logprintf '  Vulkan GPU:    %s\n' "$VK_GPU"
@@ -1733,8 +1743,10 @@ if should_run_step 18; then
         fi
     elif [[ -d /dev/dri ]]; then
         logprintf '  Render node:   %b⚠ PARTIAL%b (/dev/dri exists, renderD128 missing)\n' "$YELLOW" "$RESET"
+        ((_verify_warn++)) || true
     else
         logprintf '  Render node:   %b✗ NOT ACTIVE%b\n' "$RED" "$RESET"
+        ((_verify_fail++)) || true
         logprintf '  Fix:           chrome://flags/#crostini-gpu-support → Enabled → Reboot\n'
     fi
     logprintf '\n'
@@ -1743,8 +1755,10 @@ if should_run_step 18; then
     logprintf '%bDisplay / Wayland:%b\n' "$BOLD" "$RESET"
     if pgrep -x sommelier &>/dev/null; then
         logprintf '  Sommelier:     %b✓%b running\n' "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
     else
         logprintf '  Sommelier:     %b✗%b not running — restart terminal\n' "$RED" "$RESET"
+        ((_verify_fail++)) || true
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"
@@ -1758,20 +1772,26 @@ if should_run_step 18; then
     if [[ -d /dev/snd ]]; then
         SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
         logprintf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
+        ((_verify_pass++)) || true
     else
         logprintf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"
+        ((_verify_fail++)) || true
     fi
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         logprintf '  Microphone:    %b✓%b capture device present\n' "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
     else
         logprintf '  Microphone:    %b⚠%b not detected — enable in ChromeOS Linux settings\n' "$YELLOW" "$RESET"
+        ((_verify_warn++)) || true
     fi
     if command -v pactl &>/dev/null; then
-        PA_STATUS="$(pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs || true)"
+        PA_STATUS="$(pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs -r || true)"
         if [[ -n "$PA_STATUS" ]]; then
             logprintf '  PulseAudio:    %b✓%b %s\n' "$GREEN" "$RESET" "$PA_STATUS"
+            ((_verify_pass++)) || true
         else
             logprintf '  PulseAudio:    %b⚠%b installed but not responding\n' "$YELLOW" "$RESET"
+            ((_verify_warn++)) || true
         fi
     fi
     logprintf '\n'

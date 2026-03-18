@@ -8,6 +8,34 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.12.0  2026-03-18
+
+  * fix: eliminate date(1) from cleanup/trap path — warn() calls
+    date +%T which can hang uninterruptibly after traps are cleared;
+    new _cleanup_warn() uses $SECONDS (bash builtin, no subprocess).
+    Also replaced date +%s elapsed calculation in cleanup() with
+    $SECONDS for the same reason.  (M1)
+  * fix: gate locale.gen sed -i on successful backup — if cp fails
+    (disk full), sed -i is now skipped to avoid unrecoverable
+    corruption.  (M2)
+  * fix: add -r flag to all 9 xargs calls — GNU xargs without -r
+    runs echo on empty input, producing whitespace in verification
+    display variables.  (M3)
+  * fix: add verification counters to 5 uncounted system checks in
+    step 18 — GPU render node, Sommelier, ALSA, Microphone, and
+    PulseAudio now increment _verify_{pass,fail,warn}; totals line
+    was previously understating both passes and failures.  (M4)
+  * fix: write_file() now sets mode 644 on tmpfile before mv —
+    umask 077 was creating user config files as 0600 instead of
+    conventional 0644.  (L1)
+  * fix: duplicate 3.8.15 CHANGELOG entry removed.  (L2)
+  * fix: NodeSource apt update failure now dies instead of warning —
+    the subsequent apt install is guaranteed to fail anyway.  (L4)
+  * change: adwaita-icon-theme-full merged into GUI_PKGS array —
+    saves one apt-get invocation; install_pkgs_best_effort handles
+    the may-not-exist case identically.  (L6)
+  * bump version 3.11.1 → 3.12.0
+
 3.11.1  2026-03-17
 
   * fix: dry-run log messages now accurately reflect actual commands.
@@ -122,39 +150,6 @@ represents a discrete, committed change set.
     in dry-run.  On non-Crostini systems the memory tuning block was
     skipped without any trace.  Dry-run now bypasses the check and
     traces the planned write + sysctl.
-  * bump version 3.8.14 → 3.8.15
-
-3.8.15  2026-03-17
-
-  * fix M1: steps 2a–2f dry-run logs emitted "would open chrome://…"
-    even in unattended mode (default).  Real code only opens URLs when
-    --interactive is set, so the dry-run trace was misleading — it
-    showed actions that would never execute.  All 6 dry-run elif
-    branches now test `! $UNATTENDED` to match the live guard.
-  * fix M2: step 17 dry-run same pattern — "would open exportImport"
-    logged regardless of UNATTENDED.  Now shows the correct trace per
-    mode: URL open (interactive) or skip message (unattended).
-  * fix M3: step 15 dry-run — `command -v flatpak` checked real system
-    state after a no-op `run sudo apt-get install`.  Flatpak remote-add
-    was silently omitted from dry-run trace.  Now always traces the
-    planned remote-add in dry-run mode.
-  * fix M4: step 16 dry-run — same `command -v` issue for flatpak
-    (RetroArch install), dosbox, and scummvm.  Dry-run emitted 4
-    spurious warnings ("not found", "not available") for packages that
-    were never installed (by design).  RetroArch install now traced
-    unconditionally in dry-run; verification block skipped entirely
-    in dry-run since it can only reflect real state.
-  * fix L1: step 9 MIME defaults — `command -v firefox-esr/thunar/
-    evince/eog` gates for update-alternatives and xdg-mime skipped
-    those commands in dry-run trace.  Added `|| $DRY_RUN` to each
-    guard so the planned operations are visible.
-  * fix L2: step 14b — `sudo rm -f /etc/locale.gen.bak` executed
-    during dry-run (not wrapped in DRY_RUN guard or run()).  Could
-    delete a stale backup from a prior aborted live run.  Now guarded.
-  * fix L3: step 14d — `/proc/sys/vm/swappiness` writability check
-    ran in dry-run, causing memory tuning write_file_sudo to be
-    silently skipped on non-Crostini systems.  Added `$DRY_RUN ||`
-    to the writability test so the planned sysctl write is traced.
   * bump version 3.8.14 → 3.8.15
 
 3.8.14  2026-03-17
