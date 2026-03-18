@@ -4,6 +4,26 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+3.16.0  2026-03-18
+
+  * fix step 3 cross-ref: sync usage() and step_banner to match README
+    ("System update, upgrade, and full-upgrade" -- script runs all three).
+  * fix step 9 eog MIME defaults: add image/gif, image/webp, image/svg+xml,
+    image/bmp, image/tiff -- previously only png and jpeg were set, so
+    other image types fell back to system defaults instead of eog.
+  * fix step 18 verification gap: add check_config for apt download tuning
+    (/etc/apt/apt.conf.d/90parallel, written in step 3 but never verified)
+    and NodeSource repo (/etc/apt/sources.list.d/nodesource.list,
+    conditional on node being installed).
+
+3.15.0  2026-03-18
+
+  * add DEBIAN_FRONTEND=noninteractive to 2 apt-get update calls
+    (steps 3, 11) -- consistency with all other apt-get invocations;
+    apt-get update never prompts but the explicit variable ensures
+    uniform behavior if sudo env_keep changes in future.
+  * fix step 11 dry-run log to match live apt-get update command.
+
 3.14.0  2026-03-18
 
   * add SC2329 suppression alongside SC2317 on 3 trap-invoked functions

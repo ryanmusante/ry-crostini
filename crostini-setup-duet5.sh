@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.14.0
+# Version: 3.16.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.14.0"
+readonly SCRIPT_VERSION="3.16.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -408,7 +408,7 @@ STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
      2  ChromeOS integration (GPU flag, microphone, USB, folder sharing,
         port forwarding, disk — opens settings pages with --interactive)
-     3  System update and upgrade
+     3  System update, upgrade, and full-upgrade
      4  Core CLI utilities
      5  Build essentials and development headers
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
@@ -734,7 +734,7 @@ if should_run_step 2; then
 fi
 # Step 3: System update and upgrade
 if should_run_step 3; then
-    step_banner 3 "System update and upgrade"
+    step_banner 3 "System update, upgrade, and full-upgrade"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection.
     # Queue-Mode "access" allows parallel connections across URIs.
@@ -756,7 +756,7 @@ EOF
     fi
     unset APT_PARALLEL
 
-    if run sudo apt-get update; then
+    if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: accept package maintainer defaults for
         # new conffiles, keep existing modified conffiles. Without these, dpkg can
         # prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive
@@ -1276,6 +1276,11 @@ if should_run_step 9; then
         _eog_ok=true
         run xdg-mime default org.gnome.eog.desktop image/png || { warn "xdg-mime default for eog/png failed"; _eog_ok=false; }
         run xdg-mime default org.gnome.eog.desktop image/jpeg || { warn "xdg-mime default for eog/jpeg failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/gif || { warn "xdg-mime default for eog/gif failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/webp || { warn "xdg-mime default for eog/webp failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/svg+xml || { warn "xdg-mime default for eog/svg failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/bmp || { warn "xdg-mime default for eog/bmp failed"; _eog_ok=false; }
+        run xdg-mime default org.gnome.eog.desktop image/tiff || { warn "xdg-mime default for eog/tiff failed"; _eog_ok=false; }
         $_eog_ok && { $DRY_RUN || log "Eye of GNOME set as default image viewer"; }
         unset _eog_ok
     fi
@@ -1324,7 +1329,7 @@ if should_run_step 11; then
             log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-key-XXXXXXXX.asc"
             log "[DRY-RUN] gpg --dearmor → /etc/apt/keyrings/nodesource.gpg (fingerprint: ${NODESOURCE_GPG_FP})"
             log "[DRY-RUN] write /etc/apt/sources.list.d/nodesource.list (arch=arm64, node_${NODE_MAJOR}.x)"
-            log "[DRY-RUN] sudo apt-get update"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get update"
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"
         else
             run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
@@ -1365,7 +1370,7 @@ if should_run_step 11; then
             if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
                 die "NodeSource sources.list content invalid"
             fi
-            run sudo apt-get update || die "apt update failed after adding NodeSource repo — check GPG key and network"
+            run sudo DEBIAN_FRONTEND=noninteractive apt-get update || die "apt update failed after adding NodeSource repo — check GPG key and network"
             run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
         fi
     fi
@@ -1876,6 +1881,7 @@ if should_run_step 18; then
     # Config files
     logprintf '%bConfig files written:%b\n' "$BOLD" "$RESET"
 
+    check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/audio.conf"      "Audio env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
@@ -1897,6 +1903,9 @@ if should_run_step 18; then
     fi
     if command -v code &>/dev/null; then
         check_config "${HOME}/.config/code-flags.conf"           "VS Code Wayland"
+    fi
+    if command -v node &>/dev/null; then
+        check_config "/etc/apt/sources.list.d/nodesource.list"   "NodeSource repo"
     fi
     logprintf '\n'
 
