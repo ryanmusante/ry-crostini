@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.8.14
+# Version: 3.9.0
 # Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -8,13 +8,16 @@
 #              [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
+# MIGRATION: When Crostini upgrades to Trixie (Debian 13), audit package arrays for renames:
+#   libasound2 → libasound2t64, libncurses6 → libncurses6t64, etc.
+#   See https://wiki.debian.org/NewIn64bitTime for the full t64 transition list.
 
 set -euo pipefail
 umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.8.14"
+readonly SCRIPT_VERSION="3.9.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -403,7 +406,7 @@ STEPS PERFORMED:
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
      7  Audio stack (ALSA, PulseAudio, GStreamer codecs)
      8  Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)
-     9  GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults)
+     9  GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
     10  Python ecosystem (python3, pip, venv)
     11  Node.js via NodeSource (LTS, arm64)
     12  Rust via rustup (aarch64)
@@ -612,7 +615,11 @@ if should_run_step 2; then
                 warn "GPU not yet active — requires full Chromebook reboot. Continuing."
             fi
         else
-            log "[DRY-RUN] would open chrome://flags/#crostini-gpu-support"
+            if ! $UNATTENDED; then
+                log "[DRY-RUN] would open chrome://flags/#crostini-gpu-support"
+            else
+                log "[DRY-RUN] GPU flag check skipped (unattended; use --interactive to open chrome://flags)"
+            fi
         fi
     fi
 
@@ -635,7 +642,11 @@ if should_run_step 2; then
                 warn "Microphone still not detected. May need container restart."
             fi
         else
-            log "[DRY-RUN] would open chrome://os-settings/crostini for mic toggle"
+            if ! $UNATTENDED; then
+                log "[DRY-RUN] would open chrome://os-settings/crostini for mic toggle"
+            else
+                log "[DRY-RUN] mic toggle skipped (unattended; use --interactive to open settings)"
+            fi
         fi
     fi
 
@@ -647,7 +658,7 @@ if should_run_step 2; then
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN; then
+    elif $DRY_RUN && ! $UNATTENDED; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
@@ -664,7 +675,7 @@ if should_run_step 2; then
                 sleep 2
                 _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
                 read -r -t 300 _ </dev/tty || true
-            elif $DRY_RUN; then
+            elif $DRY_RUN && ! $UNATTENDED; then
                 log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
             fi
         fi
@@ -680,7 +691,7 @@ if should_run_step 2; then
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN; then
+    elif $DRY_RUN && ! $UNATTENDED; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
@@ -701,7 +712,7 @@ if should_run_step 2; then
             sleep 2
             _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
             read -r -t 300 _ </dev/tty || true
-        elif $DRY_RUN; then
+        elif $DRY_RUN && ! $UNATTENDED; then
             log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
         fi
     else
@@ -769,6 +780,9 @@ if should_run_step 4; then
         # Misc
         tmux screen man-db bash-completion locales
         software-properties-common
+
+        # Wayland clipboard (wl-copy / wl-paste for terminal ↔ GUI integration)
+        wl-clipboard
     )
 
     install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
@@ -893,9 +907,9 @@ if should_run_step 7; then
     step_banner 7 "Audio stack (ALSA, PulseAudio, GStreamer codecs)"
 
     AUDIO_PKGS=(
-        # ALSA
+        # ALSA — libasound2 is pulled in by alsa-utils and libasound2-plugins;
+        # listing it explicitly would break on the Trixie t64 rename.
         alsa-utils
-        libasound2
         libasound2-plugins
 
         # PulseAudio client only — do NOT install the daemon (conflicts with host)
@@ -904,14 +918,22 @@ if should_run_step 7; then
         pavucontrol
 
         # GStreamer codecs and media support
+        # gstreamer1.0-pulseaudio is a transitional empty package in Bookworm;
+        # the actual PulseAudio plugin is now in gstreamer1.0-plugins-good.
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
-        gstreamer1.0-pulseaudio
         gstreamer1.0-alsa
-        libavcodec-extra
     )
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
+
+    # libavcodec-extra (~80 MB of codec libraries) — skip with --minimal
+    if ! $MINIMAL; then
+        run sudo apt-get install -y libavcodec-extra \
+            || warn "libavcodec-extra unavailable — media codec support may be limited"
+    else
+        log "Skipping libavcodec-extra (--minimal mode)"
+    fi
 
     # PulseAudio config — point to Crostini host socket
     PA_CLIENT="${HOME}/.config/pulse/client.conf"
@@ -968,6 +990,10 @@ if should_run_step 8; then
 #   1.0 = native (let ChromeOS handle scaling — recommended for FHD)
 #   0.5 = 2x magnification (for 4K displays)
 SOMMELIER_SCALE=1.0
+
+# Pass Super key through to Linux apps instead of ChromeOS intercepting it.
+# Required for VS Code, Firefox, and any app using Super as a modifier.
+SOMMELIER_ACCELERATORS=Super_L
 
 # Do NOT hardcode DISPLAY or WAYLAND_DISPLAY here —
 # Crostini/sommelier sets these dynamically and overriding
@@ -1052,7 +1078,7 @@ EOF
     fi
 
     # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme
-    run sudo apt-get install -y qt5ct || warn "qt5ct unavailable — Qt apps may not inherit dark theme"
+    install_pkgs_best_effort qt5ct || warn "qt5ct unavailable — Qt apps may not inherit dark theme"
     # Try preferred package first; fall back to alternative name across Debian versions
     install_pkgs_best_effort qt5-gtk-platformtheme || \
         install_pkgs_best_effort qt5-style-plugins || \
@@ -1144,7 +1170,7 @@ EOF
 fi
 # Step 9: GUI application essentials
 if should_run_step 9; then
-    step_banner 9 "GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults)"
+    step_banner 9 "GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)"
 
     GUI_PKGS=(
         # Browser
@@ -1171,6 +1197,11 @@ if should_run_step 9; then
         at-spi2-core
         libnotify-bin
 
+        # Terminal emulator — needed for Thunar "Open Terminal Here" and
+        # other desktop actions. xterm is the standard X11 fallback that
+        # sensible-terminal and xdg-terminal-exec resolve to.
+        xterm
+
         # Fonts — comprehensive set for international content
         fonts-noto
         fonts-noto-cjk
@@ -1196,7 +1227,7 @@ if should_run_step 9; then
     run sudo apt-get install -y adwaita-icon-theme-full || warn "adwaita-icon-theme-full unavailable — using base theme"
 
     # Set Firefox ESR as default browser
-    if command -v firefox-esr &>/dev/null; then
+    if command -v firefox-esr &>/dev/null || $DRY_RUN; then
         if run sudo update-alternatives --set x-www-browser /usr/bin/firefox-esr; then
             $DRY_RUN || log "Firefox ESR set as default browser"
         else
@@ -1205,7 +1236,7 @@ if should_run_step 9; then
     fi
 
     # Set default file manager
-    if command -v thunar &>/dev/null; then
+    if command -v thunar &>/dev/null || $DRY_RUN; then
         if run xdg-mime default thunar.desktop inode/directory; then
             $DRY_RUN || log "Thunar set as default file manager"
         else
@@ -1214,7 +1245,7 @@ if should_run_step 9; then
     fi
 
     # Set default PDF viewer
-    if command -v evince &>/dev/null; then
+    if command -v evince &>/dev/null || $DRY_RUN; then
         if run xdg-mime default org.gnome.Evince.desktop application/pdf; then
             $DRY_RUN || log "Evince set as default PDF viewer"
         else
@@ -1223,7 +1254,7 @@ if should_run_step 9; then
     fi
 
     # Set default image viewer
-    if command -v eog &>/dev/null; then
+    if command -v eog &>/dev/null || $DRY_RUN; then
         _eog_ok=true
         run xdg-mime default org.gnome.eog.desktop image/png || { warn "xdg-mime default for eog/png failed"; _eog_ok=false; }
         run xdg-mime default org.gnome.eog.desktop image/jpeg || { warn "xdg-mime default for eog/jpeg failed"; _eog_ok=false; }
@@ -1258,6 +1289,11 @@ if should_run_step 10; then
     log "Step 10 complete."
 fi
 # Step 11: Node.js via NodeSource (LTS, arm64)
+# NOTE: NodeSource is in maintenance mode and has had multiple GPG key rotations.
+# Alternative: download the binary tarball directly from https://nodejs.org/dist/
+# with SHA256 checksum verification (no repo, no key, smaller trust surface).
+# Keeping NodeSource for now as it integrates with apt upgrade and is the
+# documented method for Debian; the GPG fingerprint is pinned below.
 if should_run_step 11; then
     step_banner 11 "Node.js LTS (arm64)"
 
@@ -1455,8 +1491,10 @@ EOF
         run sudo cp /etc/locale.gen /etc/locale.gen.bak || warn "locale.gen backup failed"
         if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
             if run sudo locale-gen; then
-                sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
-                $DRY_RUN || log "en_US.UTF-8 locale generated"
+                if ! $DRY_RUN; then
+                    sudo rm -f /etc/locale.gen.bak 2>/dev/null || true
+                    log "en_US.UTF-8 locale generated"
+                fi
             else
                 warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
             fi
@@ -1507,7 +1545,7 @@ ENVEOF
     # 14d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
-        if [[ -w /proc/sys/vm/swappiness ]]; then
+        if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
             write_file_sudo "$MEM_CONF" <<'MEMEOF'
 # Memory tuning for 4 GB Duet 5 — managed by crostini-setup-duet5.sh
 # Lower swappiness: prefer keeping pages in RAM over swapping
@@ -1547,9 +1585,13 @@ if should_run_step 15; then
     step_banner 15 "Flatpak + Flathub (ARM64 app source)"
 
     run sudo apt-get install -y flatpak || warn "flatpak install failed"
-    if command -v flatpak &>/dev/null; then
+    if $DRY_RUN; then
+        # In dry-run, apt install is a no-op so flatpak binary won't exist;
+        # always trace the planned remote-add.
+        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+    elif command -v flatpak &>/dev/null; then
         run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
-        $DRY_RUN || log "Flatpak installed with Flathub remote."
+        log "Flatpak installed with Flathub remote."
     else
         warn "flatpak binary not available — skipping Flathub remote"
     fi
@@ -1566,31 +1608,36 @@ if should_run_step 16; then
     install_pkgs_best_effort dosbox scummvm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub)
-    if command -v flatpak &>/dev/null; then
+    if $DRY_RUN; then
+        # In dry-run, flatpak may not exist (apt install was a no-op); always trace.
+        run flatpak install -y flathub org.libretro.RetroArch
+    elif command -v flatpak &>/dev/null; then
         run flatpak install -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
     else
         warn "flatpak not available — skip RetroArch (install flatpak first)"
     fi
 
-    # Verify
-    if command -v dosbox &>/dev/null; then
-        _dosbox_ver="$(timeout 3 dosbox --version 2>/dev/null | head -1 || true)"
-        log "dosbox: ${_dosbox_ver:-installed} ✓"
-        unset _dosbox_ver
-    else
-        warn "dosbox not found"
-    fi
-    if command -v scummvm &>/dev/null; then
-        _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
-        log "scummvm: ${_scummvm_ver:-installed} ✓"
-        unset _scummvm_ver
-    else
-        warn "scummvm not found"
-    fi
-    if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
-        log "RetroArch Flatpak: installed ✓"
-    else
-        warn "RetroArch Flatpak not detected"
+    # Verify (skip in dry-run — packages were not actually installed)
+    if ! $DRY_RUN; then
+        if command -v dosbox &>/dev/null; then
+            _dosbox_ver="$(timeout 3 dosbox --version 2>/dev/null | head -1 || true)"
+            log "dosbox: ${_dosbox_ver:-installed} ✓"
+            unset _dosbox_ver
+        else
+            warn "dosbox not found"
+        fi
+        if command -v scummvm &>/dev/null; then
+            _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
+            log "scummvm: ${_scummvm_ver:-installed} ✓"
+            unset _scummvm_ver
+        else
+            warn "scummvm not found"
+        fi
+        if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+            log "RetroArch Flatpak: installed ✓"
+        else
+            warn "RetroArch Flatpak not detected"
+        fi
     fi
 
     log "For advanced gaming (box86/Wine/GOG): see crostini-gaming-packages.txt"
@@ -1610,8 +1657,10 @@ if should_run_step 17; then
         sleep 2
         _prompt '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
         read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN; then
+    elif $DRY_RUN && ! $UNATTENDED; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"
+    elif $DRY_RUN; then
+        log "[DRY-RUN] Skipping interactive backup prompt (unattended mode)"
     else
         log "Skipping interactive backup prompt (unattended mode)"
     fi
@@ -1737,11 +1786,23 @@ if should_run_step 18; then
     check_tool "python3"     python3
     check_tool "pip"         pip3
     check_tool "node"        node
+    # Warn if installed node major doesn't match expected NODE_MAJOR
+    if command -v node &>/dev/null; then
+        _node_ver="$(node --version 2>/dev/null)" || true
+        _node_maj="${_node_ver#v}"
+        _node_maj="${_node_maj%%.*}"
+        if [[ -n "$_node_maj" ]] && [[ "$_node_maj" =~ ^[0-9]+$ ]] && [[ "$_node_maj" -ne "$NODE_MAJOR" ]]; then
+            logprintf '  %b⚠%b  Node.js major version mismatch: installed v%s, expected %s.x\n' "$YELLOW" "$RESET" "$_node_maj" "$NODE_MAJOR"
+            ((_verify_warn++)) || true
+        fi
+        unset _node_ver _node_maj
+    fi
     check_tool "npm"         npm
     check_tool "rustc"       rustc
     check_tool "cargo"       cargo
     check_tool "vim"         vim
     check_tool "curl"        curl
+    check_tool "wl-clipboard" wl-copy
     check_tool "ripgrep"     rg
     check_tool "fd"          fd
     check_tool "fzf"         fzf
@@ -1763,6 +1824,7 @@ if should_run_step 18; then
     check_tool "eog"         eog
     check_tool "file-roller" file-roller
     check_tool "gnome-screenshot" gnome-screenshot
+    check_tool "xterm"       xterm
     if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
@@ -1774,7 +1836,7 @@ if should_run_step 18; then
 
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/audio.conf"      "Audio env"
-    check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling"
+    check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
     check_config "${HOME}/.config/gtk-3.0/settings.ini"          "GTK 3 theme + fonts"
     check_config "${HOME}/.config/gtk-4.0/settings.ini"          "GTK 4 theme + fonts"

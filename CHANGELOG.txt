@@ -8,6 +8,107 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.9.0  2026-03-17
+
+  * remove: gstreamer1.0-pulseaudio from AUDIO_PKGS — transitional
+    empty package in Bookworm; the actual PulseAudio GStreamer plugin
+    is now provided by gstreamer1.0-plugins-good (already installed).
+  * remove: libasound2 from AUDIO_PKGS — pulled in as a dependency
+    by alsa-utils and libasound2-plugins; explicit listing would break
+    on the Trixie t64 rename (libasound2 → libasound2t64).
+  * change: libavcodec-extra (~80 MB codecs) gated behind `! $MINIMAL`
+    — most Crostini audio/video use cases (browser, PulseAudio) don't
+    need it; heavy for 4 GB RAM + 128 GB eMMC.
+  * add: wl-clipboard (step 4) — provides wl-copy/wl-paste for
+    terminal ↔ GUI clipboard integration over Wayland via sommelier.
+  * add: xterm (step 9) — fallback terminal emulator for Thunar
+    "Open Terminal Here" and sensible-terminal / xdg-terminal-exec
+    desktop actions.
+  * add: SOMMELIER_ACCELERATORS=Super_L to sommelier.conf (step 8) —
+    passes Super key through to Linux apps (VS Code, Firefox, etc.)
+    instead of ChromeOS intercepting it.
+  * fix: step 8 qt5ct install routed through install_pkgs_best_effort
+    for consistency — was the only raw `run sudo apt-get install`
+    in a block that already used the helper on the next two lines.
+  * add: step 18 Node.js major version mismatch warning — compares
+    installed node major against NODE_MAJOR constant; warns if system
+    node from apt doesn't match the expected NodeSource version.
+  * add: step 18 verification for wl-clipboard (wl-copy) and xterm.
+  * add: Trixie migration note in script header — flags package arrays
+    that need auditing for the Debian 13 t64 transition, with wiki URL.
+  * add: NodeSource maintenance-mode comment (step 11) — documents
+    the alternative binary tarball method from nodejs.org and the
+    rationale for keeping the GPG-pinned repo approach.
+  * sync: step 9 banner, usage(), and README step table now include
+    xterm; sommelier config check description updated to reflect
+    SOMMELIER_ACCELERATORS; README config files section updated.
+  * docs: add Trixie migration section to README.
+  * bump version 3.8.15 → 3.9.0
+
+3.8.15  2026-03-17
+
+  * fix: 8 dry-run fidelity bugs — dry-run output now matches what a
+    live run would actually do, so `--dry-run` is a reliable preview.
+  * fix M1: steps 2a–2f dry-run logged "would open chrome://…" even in
+    unattended mode (default).  Live mode only opens URLs with
+    --interactive; dry-run now mirrors that by gating traces on
+    `! $UNATTENDED`.
+  * fix M2: step 17 dry-run logged "would open chrome://…/exportImport"
+    regardless of UNATTENDED flag; now matches live behavior.
+  * fix M3: step 15 dry-run skipped flatpak remote-add trace because
+    `command -v flatpak` checked real system (apt install was a no-op);
+    dry-run now unconditionally traces the planned remote-add.
+  * fix M4: step 16 dry-run checked `command -v flatpak/dosbox/scummvm`
+    against real system, emitting spurious "not found" warnings for
+    packages that would have been installed.  RetroArch install trace
+    was also skipped.  Dry-run now traces the install and skips the
+    verify block entirely (packages were not actually installed).
+  * fix L1: step 9 MIME default commands (update-alternatives,
+    xdg-mime) silently skipped in dry-run because `command -v
+    firefox-esr/thunar/evince/eog` checked real state.  Gates now
+    include `|| $DRY_RUN` so planned defaults are traced.
+  * fix L2: step 14b `sudo rm -f /etc/locale.gen.bak` ran during
+    dry-run — not wrapped in DRY_RUN guard.  Could delete a stale
+    backup from a prior aborted live run.  Now guarded.
+  * fix L3: step 14d `/proc/sys/vm/swappiness` writability check ran
+    in dry-run.  On non-Crostini systems the memory tuning block was
+    skipped without any trace.  Dry-run now bypasses the check and
+    traces the planned write + sysctl.
+  * bump version 3.8.14 → 3.8.15
+
+3.8.15  2026-03-17
+
+  * fix M1: steps 2a–2f dry-run logs emitted "would open chrome://…"
+    even in unattended mode (default).  Real code only opens URLs when
+    --interactive is set, so the dry-run trace was misleading — it
+    showed actions that would never execute.  All 6 dry-run elif
+    branches now test `! $UNATTENDED` to match the live guard.
+  * fix M2: step 17 dry-run same pattern — "would open exportImport"
+    logged regardless of UNATTENDED.  Now shows the correct trace per
+    mode: URL open (interactive) or skip message (unattended).
+  * fix M3: step 15 dry-run — `command -v flatpak` checked real system
+    state after a no-op `run sudo apt-get install`.  Flatpak remote-add
+    was silently omitted from dry-run trace.  Now always traces the
+    planned remote-add in dry-run mode.
+  * fix M4: step 16 dry-run — same `command -v` issue for flatpak
+    (RetroArch install), dosbox, and scummvm.  Dry-run emitted 4
+    spurious warnings ("not found", "not available") for packages that
+    were never installed (by design).  RetroArch install now traced
+    unconditionally in dry-run; verification block skipped entirely
+    in dry-run since it can only reflect real state.
+  * fix L1: step 9 MIME defaults — `command -v firefox-esr/thunar/
+    evince/eog` gates for update-alternatives and xdg-mime skipped
+    those commands in dry-run trace.  Added `|| $DRY_RUN` to each
+    guard so the planned operations are visible.
+  * fix L2: step 14b — `sudo rm -f /etc/locale.gen.bak` executed
+    during dry-run (not wrapped in DRY_RUN guard or run()).  Could
+    delete a stale backup from a prior aborted live run.  Now guarded.
+  * fix L3: step 14d — `/proc/sys/vm/swappiness` writability check
+    ran in dry-run, causing memory tuning write_file_sudo to be
+    silently skipped on non-Crostini systems.  Added `$DRY_RUN ||`
+    to the writability test so the planned sysctl write is traced.
+  * bump version 3.8.14 → 3.8.15
+
 3.8.14  2026-03-17
 
   * fix: step 11 dies in --dry-run when node is not installed — the

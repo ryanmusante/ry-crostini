@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.8.14-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.9.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -65,12 +65,12 @@ bash crostini-setup-duet5.sh --version                    # show version
 | 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
 | 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
 | 3 | System update, upgrade, and full-upgrade |
-| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, …) |
+| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, …) |
 | 5 | Build essentials and development headers |
 | 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
 | 7 | Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol) |
-| 8 | Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
-| 9 | GUI applications (Firefox ESR, Thunar, Evince, fonts, screenshots, MIME defaults) |
+| 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
+| 9 | GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults) |
 | 10 | Python ecosystem (python3, pip, venv) |
 | 11 | Node.js LTS arm64 via NodeSource |
 | 12 | Rust stable aarch64 via rustup |
@@ -83,11 +83,19 @@ bash crostini-setup-duet5.sh --version                    # show version
 
 ## Config files written
 
-Apt download tuning, GPU env, audio env, sommelier scaling, Qt theming,
-GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources
-DPI 120, fontconfig, Adwaita cursor, PulseAudio client, VS Code Wayland
-flags, inotify watchers, shell env + PATH. Memory tuning attempted if
-/proc/sys/vm/ is writable.
+Apt download tuning, GPU env, audio env, sommelier scaling + Super key
+passthrough, Qt theming, GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA
+for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, PulseAudio client,
+VS Code Wayland flags, inotify watchers, shell env + PATH. Memory tuning
+attempted if /proc/sys/vm/ is writable.
+
+## Trixie migration
+
+Bookworm is now oldstable. When Crostini containers upgrade to Trixie
+(Debian 13), package arrays need auditing for the t64 transition
+(`libasound2` → `libasound2t64`, `libncurses6` → `libncurses6t64`, etc.).
+See the [64-bit time wiki page](https://wiki.debian.org/NewIn64bitTime) for
+the full list. The script header comments flag this explicitly.
 
 ## Features
 
