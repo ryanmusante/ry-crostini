@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.9.0
+# Version: 3.11.1
 # Date:    2026-03-17
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077  # Restrict tempfiles/logs to owner-only by default
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.9.0"
+readonly SCRIPT_VERSION="3.11.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -74,7 +74,8 @@ cleanup() {
     if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
-        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        # Remove all files (pid + any orphaned tmpfiles from crash)
+        find "$LOCK_FILE" -maxdepth 1 -type f -delete 2>/dev/null || true
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ $rc -ne 0 ]]; then
@@ -306,18 +307,18 @@ write_file_sudo() {
 # Returns: 0 if all succeeded (batch or individual), 1 if any individual installs failed
 install_pkgs_best_effort() {
     if $DRY_RUN; then
-        log "[DRY-RUN] apt-get install -y $*"
+        log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $*"
         return 0
     fi
     # Try batch first — succeeds in the common case (O(1) apt call)
-    if run sudo apt-get install -y "$@"; then
+    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; then
         return 0
     fi
     # Batch failed — one or more packages unavailable; install individually
     warn "Batch install failed — falling back to per-package install"
     local pkg _fail_count=0 _total=$#
     for pkg in "$@"; do
-        run sudo apt-get install -y "$pkg" || { warn "Skipped unavailable: $pkg"; ((_fail_count++)) || true; }
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg" || { warn "Skipped unavailable: $pkg"; ((_fail_count++)) || true; }
     done
     if [[ "$_fail_count" -gt 0 ]]; then
         warn "install_pkgs_best_effort: ${_fail_count}/${_total} packages failed"
@@ -463,8 +464,8 @@ for arg in "$@"; do
                 if [[ -n "$_rpid" ]] && kill -0 "$_rpid" 2>/dev/null; then
                     die "Another instance (PID ${_rpid}) is running. Cannot reset while active."
                 fi
-                # Process dead or no PID — remove stale lock
-                rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+                # Process dead or no PID — remove stale lock (incl. orphaned tmpfiles)
+                find "$LOCK_FILE" -maxdepth 1 -type f -delete 2>/dev/null || true
                 rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove lock dir ${LOCK_FILE} — remove manually"
                 unset _rpid
             fi
@@ -484,12 +485,12 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     if [[ -z "$_old_pid" ]]; then
         # PID file missing/empty (crash between mkdir and PID write) — treat as stale
         warn "Removing stale lock (no PID file — likely prior crash)"
-        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        find "$LOCK_FILE" -maxdepth 1 -type f -delete 2>/dev/null || true
         rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove stale lock dir ${LOCK_FILE} — remove manually"
         mkdir "$LOCK_FILE" || die "Cannot re-acquire lock after stale removal"
     elif ! kill -0 "$_old_pid" 2>/dev/null; then
         warn "Removing stale lock from dead PID $_old_pid"
-        rm -f "$LOCK_FILE/pid" 2>/dev/null || true
+        find "$LOCK_FILE" -maxdepth 1 -type f -delete 2>/dev/null || true
         rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove stale lock dir ${LOCK_FILE} — remove manually"
         mkdir "$LOCK_FILE" || die "Cannot re-acquire lock after stale removal"
     else
@@ -515,7 +516,8 @@ if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
-# Set noninteractive globally so it persists on checkpoint resume.
+# Set noninteractive for any direct (non-sudo) dpkg/apt invocations.
+# NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
 export DEBIAN_FRONTEND=noninteractive
 # Step 1: Preflight checks
 if should_run_step 1; then
@@ -739,6 +741,8 @@ if should_run_step 3; then
 Acquire::Queue-Mode "access";
 Acquire::http::Pipeline-Depth "4";
 Acquire::Languages "none";
+// Retry transient failures (WiFi drops, CDN hiccups) — critical for mobile device
+Acquire::Retries "3";
 EOF
     else
         log "Parallel apt config already exists"
@@ -746,12 +750,20 @@ EOF
     unset APT_PARALLEL
 
     if run sudo apt-get update; then
-        run sudo apt-get upgrade -y || warn "apt upgrade had issues"
-        run sudo apt-get full-upgrade -y || warn "apt-get full-upgrade had issues"
+        # --force-confdef --force-confold: accept package maintainer defaults for
+        # new conffiles, keep existing modified conffiles. Without these, dpkg can
+        # prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive
+        # (which sudo strips via env_reset unless sudoers has env_keep).
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            || warn "apt upgrade had issues"
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
+            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            || warn "apt-get full-upgrade had issues"
     else
         warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
     fi
-    run sudo apt-get autoremove -y || warn "apt autoremove had issues"
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     set_checkpoint 3
     log "Step 3 complete."
@@ -929,7 +941,7 @@ if should_run_step 7; then
 
     # libavcodec-extra (~80 MB of codec libraries) — skip with --minimal
     if ! $MINIMAL; then
-        run sudo apt-get install -y libavcodec-extra \
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libavcodec-extra \
             || warn "libavcodec-extra unavailable — media codec support may be limited"
     else
         log "Skipping libavcodec-extra (--minimal mode)"
@@ -1077,10 +1089,11 @@ EOF
         log "Qt env already exists — skipping"
     fi
 
-    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme
-    install_pkgs_best_effort qt5ct || warn "qt5ct unavailable — Qt apps may not inherit dark theme"
-    # Try preferred package first; fall back to alternative name across Debian versions
-    install_pkgs_best_effort qt5-gtk-platformtheme || \
+    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme.
+    # Batch qt5ct with preferred platform theme; if qt5-gtk-platformtheme is
+    # unavailable, install_pkgs_best_effort falls back to per-package (qt5ct
+    # succeeds individually) and the || arm tries the alternative name.
+    install_pkgs_best_effort qt5ct qt5-gtk-platformtheme || \
         install_pkgs_best_effort qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
 
@@ -1217,14 +1230,14 @@ if should_run_step 9; then
 
     # gnome-disk-utility has heavy GNOME deps — skip with --minimal
     if ! $MINIMAL; then
-        run sudo apt-get install -y gnome-disk-utility \
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-disk-utility \
             || warn "gnome-disk-utility install failed"
     else
         log "Skipping gnome-disk-utility (--minimal mode)"
     fi
 
     # Try to install full icon theme (may not exist on all versions)
-    run sudo apt-get install -y adwaita-icon-theme-full || warn "adwaita-icon-theme-full unavailable — using base theme"
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y adwaita-icon-theme-full || warn "adwaita-icon-theme-full unavailable — using base theme"
 
     # Set Firefox ESR as default browser
     if command -v firefox-esr &>/dev/null || $DRY_RUN; then
@@ -1307,7 +1320,7 @@ if should_run_step 11; then
             log "[DRY-RUN] gpg --dearmor → /etc/apt/keyrings/nodesource.gpg (fingerprint: ${NODESOURCE_GPG_FP})"
             log "[DRY-RUN] write /etc/apt/sources.list.d/nodesource.list (arch=arm64, node_${NODE_MAJOR}.x)"
             log "[DRY-RUN] sudo apt-get update"
-            log "[DRY-RUN] sudo apt-get install -y nodejs"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"
         else
             run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
             _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
@@ -1348,7 +1361,7 @@ if should_run_step 11; then
                 die "NodeSource sources.list content invalid"
             fi
             run sudo apt-get update || warn "apt update failed"
-            run sudo apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
+            run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
         fi
     fi
 
@@ -1421,7 +1434,7 @@ if should_run_step 13; then
     else
         if $DRY_RUN; then
             log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
-            log "[DRY-RUN] sudo dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
         else
             log "Downloading VS Code arm64 .deb..."
             _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)" || die "Cannot create tmpfile for VS Code download"
@@ -1437,9 +1450,9 @@ if should_run_step 13; then
                 if ! dpkg-deb --info "$_VSCODE_DEB" > /dev/null 2>&1; then
                     warn "VS Code .deb is corrupt or invalid. Install manually:"
                     warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-                elif run sudo dpkg -i "$_VSCODE_DEB"; then
+                elif run sudo DEBIAN_FRONTEND=noninteractive dpkg -i "$_VSCODE_DEB"; then
                     log "VS Code installed ✓"
-                elif run sudo apt-get install -f -y; then
+                elif run sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y; then
                     log "VS Code installed (dpkg deps resolved by apt-get -f) ✓"
                 else
                     warn "VS Code install failed (dpkg and apt-get -f both failed). Install manually:"
@@ -1584,7 +1597,7 @@ fi
 if should_run_step 15; then
     step_banner 15 "Flatpak + Flathub (ARM64 app source)"
 
-    run sudo apt-get install -y flatpak || warn "flatpak install failed"
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak || warn "flatpak install failed"
     if $DRY_RUN; then
         # In dry-run, apt install is a no-op so flatpak binary won't exist;
         # always trace the planned remote-add.
@@ -1610,9 +1623,9 @@ if should_run_step 16; then
     # RetroArch via Flatpak (aarch64 confirmed on Flathub)
     if $DRY_RUN; then
         # In dry-run, flatpak may not exist (apt install was a no-op); always trace.
-        run flatpak install -y flathub org.libretro.RetroArch
+        run flatpak install --noninteractive -y flathub org.libretro.RetroArch
     elif command -v flatpak &>/dev/null; then
-        run flatpak install -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
+        run flatpak install --noninteractive -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
     else
         warn "flatpak not available — skip RetroArch (install flatpak first)"
     fi

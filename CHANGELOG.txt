@@ -8,6 +8,54 @@ Note: Multiple versions on the same date reflect iterative
 development and review within single sessions. Each entry
 represents a discrete, committed change set.
 
+3.11.1  2026-03-17
+
+  * fix: dry-run log messages now accurately reflect actual commands.
+    `install_pkgs_best_effort` dry-run log now shows
+    `sudo DEBIAN_FRONTEND=noninteractive apt-get install -y` matching
+    the live command. Step 11 (NodeSource) dry-run log similarly updated.
+    Users reviewing `--dry-run` output will see the exact commands that
+    would execute in live mode.
+
+3.11.0  2026-03-17
+
+  * fix: `dpkg -i` for VS Code now passes `DEBIAN_FRONTEND=noninteractive`
+    — postinst scripts can trigger debconf prompts that hang unattended
+    installs. Also updated the corresponding dry-run log message.
+  * fix: flatpak install for RetroArch now passes `--noninteractive` in
+    addition to `-y` — flatpak 1.14+ (Bookworm) supports this flag for
+    fully unattended operation, suppressing prompts beyond what `-y` covers
+    (e.g., runtime/locale selection).
+  * change: step 8 qt5 package installs batched — `qt5ct` is now installed
+    in the same `install_pkgs_best_effort` call as `qt5-gtk-platformtheme`
+    instead of a separate single-package call. Saves one apt invocation in
+    the happy path and eliminates the misleading "Batch install failed"
+    warning that `install_pkgs_best_effort` emits for single-package calls.
+  * change: apt download config (`90parallel`) now includes
+    `Acquire::Retries "3"` — retries transient network failures (WiFi
+    drops, CDN hiccups) which are common on the Duet 5 as a mobile device.
+    Without this, a single dropped connection fails the entire step.
+
+3.10.0  2026-03-17
+
+  * fix: all `sudo apt-get` calls now pass `DEBIAN_FRONTEND=noninteractive`
+    explicitly — `sudo` strips exported env vars via `env_reset`, so the
+    previous `export DEBIAN_FRONTEND=noninteractive` had no effect through
+    sudo. Fresh installs of debconf-aware packages (locales, tzdata) could
+    prompt interactively, hanging unattended runs.
+  * fix: `apt-get upgrade` and `full-upgrade` now pass dpkg options
+    `--force-confdef --force-confold` — without these, dpkg conffile
+    prompts during package upgrades could hang unattended mode even with
+    `-y`, since `-y` only answers the apt "Continue?" prompt, not dpkg's
+    "Configuration file changed" prompt.
+  * fix: stale lock cleanup now uses `find -delete` instead of only
+    removing the `pid` file — a crash between `mktemp` inside the lock
+    dir and `mv` to `pid` would leave an orphaned tmpfile that prevented
+    `rmdir` from succeeding, blocking all subsequent runs.
+  * change: comment on `export DEBIAN_FRONTEND` updated to document that
+    it only affects direct (non-sudo) invocations; all sudo calls pass
+    the variable explicitly.
+
 3.9.0  2026-03-17
 
   * remove: gstreamer1.0-pulseaudio from AUDIO_PKGS — transitional
