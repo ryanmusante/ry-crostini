@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.20.0
+# Version: 3.21.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.20.0"
+readonly SCRIPT_VERSION="3.21.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -1677,7 +1677,7 @@ if should_run_step 16; then
         else
             warn "scummvm not found"
         fi
-        if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+        if timeout 5 flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
             log "RetroArch Flatpak: installed ✓"
         else
             warn "RetroArch Flatpak not detected"
@@ -1848,7 +1848,7 @@ if should_run_step 18; then
     check_tool "node"        node
     # Warn if installed node major doesn't match expected NODE_MAJOR
     if command -v node &>/dev/null; then
-        _node_ver="$(node --version 2>/dev/null)" || true
+        _node_ver="$(timeout 3 node --version 2>/dev/null)" || true
         _node_maj="${_node_ver#v}"
         _node_maj="${_node_maj%%.*}"
         if [[ -n "$_node_maj" ]] && [[ "$_node_maj" =~ ^[0-9]+$ ]] && [[ "$_node_maj" -ne "$NODE_MAJOR" ]]; then
@@ -1885,7 +1885,7 @@ if should_run_step 18; then
     check_tool "file-roller" file-roller
     check_tool "gnome-screenshot" gnome-screenshot
     check_tool "xterm"       xterm
-    if flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+    if timeout 5 flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
     fi

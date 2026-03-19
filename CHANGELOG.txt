@@ -4,41 +4,57 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+3.21.0  2026-03-18
+  - add timeout 3 to step 18 inline node --version (consistency with
+    check_tool and step 11 which all use timeout 3)
+  - add timeout 5 to 2 flatpak list --app calls (steps 16, 18) to
+    prevent hang on dbus/polkit issues during verification
+  - fix README: add NodeSource apt repo to Config files written prose
+    (check_config added in 3.16.0 but prose was not updated)
+
 3.20.0  2026-03-18
   - fix usage() OPTIONS alignment: all descriptions now start at a
     common column
   - fix 3 en-dash (U+2013) sites in script and 8 in README -- now
     ASCII hyphen-minus per 3.14.0 normalization policy
+
 3.19.0  2026-03-18
   - fix usage() step 2/4 vocabulary to match README/banner
   - fix CHANGELOG 3.18.0 header wording
   - add dry-run log at top of step 18 verification
   - add above-line comments on 2 unquoted heredocs ($CROS_UID)
   - quote $rc/$_tee_rc inside [[ ]] for consistency (3 sites)
+
 3.18.0  2026-03-18
   - sync step titles across banner, section comment, usage(), README
     (steps 6-8, 11-13): add glmark2, pavucontrol, Super key, DPI 120,
     "LTS arm64 via NodeSource", "stable aarch64 via rustup"
+
 3.17.0  2026-03-18
   - move 3 inline comments to above-line; replace 5 orphaned tracker
     refs with descriptive text; sync 18 section comments to banners
   - replace "Phase 2:" label, "=" assignment comment, inline SC2024
   - split step 17 section comment for --interactive detail
+
 3.16.0  2026-03-18
   - fix step 3 cross-ref: sync usage()/banner to README
   - fix step 9 eog MIME: add gif, webp, svg+xml, bmp, tiff
   - fix step 18: add check_config for apt tuning and NodeSource repo
+
 3.15.0  2026-03-18
   - add DEBIAN_FRONTEND=noninteractive to 2 apt-get update calls
   - fix step 11 dry-run log to match live command
+
 3.14.0  2026-03-18
   - add SC2329 suppression on 3 trap-invoked functions
   - normalize CHANGELOG.txt to ASCII (em-dash, en-dash, arrow, S.)
+
 3.13.0  2026-03-18
   - inline gaming guide into README S. Gaming
   - add TOFU comment on VS Code .deb, partial-application note on
     memory sysctl, --purge on autoremove, dosbox-staging comment
   - deduplicate VS Code warnings; add ", memory" to step 14 title
+
 3.8.0 - 3.12.0  2026-03-16 - 2026-03-18
   Execution and safety:
   - CRITICAL: fix set -e/pipefail restore order crash in run()
@@ -67,6 +83,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   Cross-reference and docs:
   - sync all banners/usage/README; Trixie migration note; NodeSource
     maintenance-mode comment; rustup TOFU; --help/--version in README
+
 3.3.0 - 3.7.0  2026-03-15 - 2026-03-16
   - CRITICAL: fix cleanup deleting lock on --help/--version exit
   - CRITICAL: fix run() PIPESTATUS race (|| true reset to 0)
@@ -79,12 +96,14 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - add batch+fallback installer, step_banner() dual-write, parallel
     apt, verification counters, elapsed time, dpkg-deb --info, --
   - variable leak cleanup (55 vars confirmed unset at boundaries)
+
 3.0.0 - 3.2.0  2026-03-15
   - add step 17: gaming (DOSBox, ScummVM, RetroArch)
   - fix run() exit code, --dry-run arch/root checks, interactive read
     from stdin -> /dev/tty (7 sites), prompts to stderr (19 calls)
   - add --from-step=N, --verify, --reset, stale PID detection,
     NodeSource GPG atomic keyring write
+
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
   - full rewrite: 19-step automated setup with checkpoint resume
   - add --dry-run, --interactive, --minimal, unattended default
@@ -92,6 +111,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     PID-based mkdir lock, GPU/audio/display/Vulkan verification
   - replace eval with "$@", UID 1000 with $(id -u), apt with apt-get
   - add VM memory tuning; fix OLED rgba=none; remove pulseaudio daemon
+
 1.0.0 - 1.1.0  2026-03-08
   - initial release: Crostini bootstrap with checkpoint resume,
     --dry-run, colored output, full logging, and GPU detection

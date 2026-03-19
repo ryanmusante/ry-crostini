@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.20.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.21.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -86,8 +86,8 @@ bash crostini-setup-duet5.sh --version                    # show version
 Apt download tuning, GPU env, audio env, sommelier scaling + Super key
 passthrough, Qt theming, GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA
 for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, PulseAudio client,
-VS Code Wayland flags, inotify watchers, shell env + PATH. Memory tuning
-attempted if /proc/sys/vm/ is writable.
+VS Code Wayland flags, inotify watchers, shell env + PATH, NodeSource apt
+repo. Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Trixie migration
 
