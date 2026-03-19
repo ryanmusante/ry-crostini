@@ -4,6 +4,68 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.3.0  2026-03-19
+  - fix step 9: remove adwaita-icon-theme-full (merged into
+    adwaita-icon-theme since 45.0-4; removed in Trixie)
+  - fix step 11: unconditionally refresh NodeSource GPG keyring when
+    repo is configured (Trixie Sequoia/sqv rejects SHA1 binding sigs
+    since 2026-02-01; NodeSource rotated to SHA-512 on 2026-01-22);
+    guard existing install-path key download to avoid double download
+  - add step 7: mask pipewire-pulse.socket/service (Trixie defaults to
+    PipeWire; conflicts with Crostini host-forwarded PulseAudio)
+  - add step 3: warn that cros.list reverts on container restart
+  - add step 18: PipeWire mask verification check
+  - update gpu.conf comment: GDK_BACKEND redundancy on Trixie
+  - update .Xresources comment: sommelier DPI bucket limitation
+
+4.2.0  2026-03-19
+  - fix step 3: handle deb822 .sources files (Suites: field) in addition
+    to legacy .list files during Trixie upgrade -- Trixie recommends the
+    new format and some installs may already use it
+  - add step 3d: run apt modernize-sources after upgrade to convert
+    legacy .list -> deb822 .sources format (non-fatal; old format
+    supported until 2029)
+  - add step 14a: install linux-sysctl-defaults for Trixie ping
+    permissions (net.ipv4.ping_group_range); package provides
+    /usr/lib/sysctl.d/50-default.conf
+  - add /tmp tmpfs note in header: Trixie mounts /tmp as tmpfs
+    (RAM-backed); script downloads to /tmp are transient and small
+  - renumber step 14 sub-steps (14b-14e -> 14c-14f) after new 14a
+
+4.1.0  2026-03-19
+  - add Trixie auto-upgrade in step 3: detect VERSION_CODENAME, rewrite
+    /etc/apt/sources.list (bookworm -> trixie), update cros.list and any
+    extra .list files; full-upgrade then performs the dist-upgrade
+  - back up sources.list to /etc/apt/sources.list.pre-trixie before
+    rewrite; rollback on sed failure
+  - post-upgrade codename verification with actionable warning
+  - dry-run traces all upgrade operations without modifying sources
+  - update step 3 title in banner, usage(), section comment, README
+  - update README Compatibility section with auto-upgrade documentation
+
+4.0.0  2026-03-19
+  - BREAKING: dual-target Bookworm (12) and Trixie (13) -- package arrays
+    use canonical non-transitional names that resolve on both versions
+  - replace GPU transitionals: libegl1-mesa -> libegl1,
+    libgles2-mesa -> libgles2 (real packages on both Bookworm and Trixie;
+    the -mesa transitionals are dropped from Trixie mesa source)
+  - detect VERSION_CODENAME from /etc/os-release; use it for network
+    preflight URL (replaces hardcoded dists/bookworm/)
+  - log detected codename in step 1 preflight
+  - update ALSA/GStreamer comments for Bookworm/Trixie dual state
+  - README: add Compatibility section with Trixie upgrade instructions
+    and t64 transition explanation; replace Trixie migration section
+
+3.22.0  2026-03-19
+  - fix _strip_log_ansi: explicit chmod 600 on tmpfile before sed writes
+    (future-proofs against umask changes)
+  - fix step 13 VS Code download: collapse two if-blocks into single
+    if/elif/else so curl failure skips install (no contradictory UX on
+    partial downloads; dpkg-deb --info was already catching corruption)
+  - fix step 11 NodeSource: move unset _ns_key/_ns_gpg from mid-flow
+    (L1372) to step boundary (L1400) so cleanup trap retains visibility
+    if die fires during apt update/install
+
 3.21.0  2026-03-18
   - add timeout 3 to step 18 inline node --version (consistency with
     check_tool and step 11 which all use timeout 3)

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.21.0
-# Date:    2026-03-18
+# Version: 4.3.0
+# Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
-# Target:  Debian Bookworm container under ChromeOS Crostini
+# Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
 #              [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
-# MIGRATION: When Crostini upgrades to Trixie (Debian 13), audit package arrays for renames:
-#   libasound2 → libasound2t64, libncurses6 → libncurses6t64, etc.
-#   See https://wiki.debian.org/NewIn64bitTime for the full t64 transition list.
+# NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version.
+#   Package arrays use canonical (non-transitional) names that resolve on both.
+#   If upgrading manually: see https://wiki.debian.org/DebianUpgrade
+# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (NodeSource
+#   key, rustup installer, VS Code deb) are transient and small (<200 MB);
+#   they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
 # Restrict tempfiles/logs to owner-only by default
@@ -18,14 +21,16 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.21.0"
+readonly SCRIPT_VERSION="4.3.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.crostini-setup-checkpoint"
 readonly LOCK_FILE="${HOME}/.crostini-setup.lock"
 readonly NODE_MAJOR=22
-# NodeSource GPG key fingerprint — last verified 2026-03-16
+# NodeSource GPG key fingerprint — re-signed SHA-512 on 2026-01-22
+# Trixie's apt (Sequoia/sqv) rejects SHA1 binding sigs since 2026-02-01.
+# Key is refreshed on every run to prevent stale keyring issues.
 # Verify: curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 #           | gpg --show-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}'
 readonly NODESOURCE_GPG_FP="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
@@ -71,6 +76,7 @@ cleanup() {
     # Remove temp files
     if [[ -n "${_VSCODE_DEB:-}" ]]; then rm -f "$_VSCODE_DEB" 2>/dev/null; fi
     if [[ -n "${_ns_key:-}" ]]; then rm -f "$_ns_key" 2>/dev/null; fi
+    if [[ -n "${_ns_refresh:-}" ]]; then rm -f "$_ns_refresh" 2>/dev/null; fi
     if [[ -n "${_ns_gpg:-}" ]]; then sudo -n rm -f "$_ns_gpg" 2>/dev/null; fi
     if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
     # Release lock only if this instance acquired it
@@ -169,6 +175,7 @@ _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
+    chmod 600 "$_tmp" 2>/dev/null || true
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
@@ -410,7 +417,7 @@ STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
      2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
         --interactive opens ChromeOS settings pages for each toggle)
-     3  System update, upgrade, and full-upgrade
+     3  Upgrade to Trixie and full system update
      4  Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl,
         htop, wl-clipboard, ...)
      5  Build essentials and development headers
@@ -557,8 +564,11 @@ if should_run_step 1; then
     # 1c. Debian version
     if [[ -f /etc/os-release ]]; then
         _os_pretty="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
-        log "Container OS: ${_os_pretty} ✓"
+        _os_codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-bookworm}")"
+        log "Container OS: ${_os_pretty} (${_os_codename}) ✓"
         unset _os_pretty
+    else
+        _os_codename="bookworm"
     fi
 
     # 1d. Disk space check (need at least 2 GB free)
@@ -572,10 +582,10 @@ if should_run_step 1; then
     fi
     log "Available disk: ${AVAIL_MB} MB ✓"
 
-    # 1e. Network connectivity
+    # 1e. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
-    elif curl -fsS --connect-timeout 3 --max-time 5 https://deb.debian.org/debian/dists/bookworm/Release.gpg -o /dev/null 2>/dev/null; then
+    elif curl -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -598,7 +608,7 @@ if should_run_step 1; then
         warn "Sommelier not detected. GUI apps may not display until container restarts."
     fi
 
-    unset CURRENT_ARCH AVAIL_KB AVAIL_MB
+    unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
     set_checkpoint 1
     log "Step 1 complete."
 fi
@@ -737,9 +747,9 @@ if should_run_step 2; then
     set_checkpoint 2
     log "Step 2 complete."
 fi
-# Step 3: System update, upgrade, and full-upgrade
+# Step 3: Upgrade to Trixie and full system update
 if should_run_step 3; then
-    step_banner 3 "System update, upgrade, and full-upgrade"
+    step_banner 3 "Upgrade to Trixie and full system update"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection.
     # Queue-Mode "access" allows parallel connections across URIs.
@@ -761,6 +771,60 @@ EOF
     fi
     unset APT_PARALLEL
 
+    # 3a. Upgrade to Trixie if still on Bookworm (or any pre-Trixie release)
+    _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
+        log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
+        if $DRY_RUN; then
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
+            log "[DRY-RUN] apt-get update && apt-get full-upgrade (dist-upgrade to Trixie)"
+        else
+            # Back up sources before rewriting
+            if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+                die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+            fi
+            # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
+            if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+                warn "sources.list rewrite failed — restoring backup"
+                run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
+                    || die "Cannot restore sources.list backup — manual fix required"
+                die "Trixie upgrade aborted"
+            fi
+            log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
+            # Also update cros-packages repo if present (Crostini-managed)
+            # NOTE: cros.list may reset on container restart; this handles the
+            # current session so the full-upgrade resolves all dependencies.
+            if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/sources.list.d/cros.list.pre-trixie || true
+                if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+                    log "Rewrote cros.list: ${_cur_codename} → trixie"
+                    warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
+                    warn "Debian repos in sources.list are permanent — only cros-packages affected"
+                else
+                    warn "cros.list rewrite failed — continuing (non-fatal)"
+                fi
+            fi
+            # Also handle -security and -updates sources if in separate files
+            # Handle both legacy .list format and deb822 .sources format
+            for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                [[ -f "$_sfile" ]] || continue
+                [[ "$_sfile" == *.pre-trixie ]] && continue
+                if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
+                    run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
+                        || warn "Failed to update ${_sfile} — continuing"
+                fi
+            done
+            unset _sfile
+        fi
+    elif [[ "$_cur_codename" == "trixie" ]]; then
+        log "Already running Trixie — no upgrade needed"
+    else
+        warn "Cannot determine current release codename — skipping Trixie upgrade"
+    fi
+    unset _cur_codename
+
+    # 3b. Update, upgrade, full-upgrade (also serves as Trixie dist-upgrade)
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: accept package maintainer defaults for
         # new conffiles, keep existing modified conffiles. Without these, dpkg can
@@ -776,6 +840,35 @@ EOF
         warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
     fi
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y || warn "apt autoremove had issues"
+
+    # 3c. Verify upgrade landed on Trixie
+    if ! $DRY_RUN; then
+        _post_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+        if [[ "$_post_codename" == "trixie" ]]; then
+            log "Trixie upgrade verified: $(. /etc/os-release && printf '%s' "${PRETTY_NAME:-Debian 13}")"
+        elif [[ -n "$_post_codename" ]]; then
+            warn "Expected trixie after upgrade, got ${_post_codename} — partial upgrade?"
+            warn "Re-run the script or manually: sudo apt update && sudo apt full-upgrade"
+        fi
+        unset _post_codename
+    fi
+
+    # 3d. Migrate APT sources to deb822 format (Trixie recommendation)
+    # apt modernize-sources converts .list → .sources with Signed-By.
+    # Non-fatal: old format is supported until at least 2029.
+    if command -v apt &>/dev/null; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] apt -y modernize-sources"
+        elif apt modernize-sources --help &>/dev/null 2>&1; then
+            if run sudo apt -y modernize-sources; then
+                log "APT sources migrated to deb822 format"
+            else
+                warn "apt modernize-sources failed — old format still works"
+            fi
+        else
+            log "apt modernize-sources not available (pre-Trixie apt) — skipping"
+        fi
+    fi
 
     set_checkpoint 3
     log "Step 3 complete."
@@ -853,12 +946,13 @@ fi
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)"
 
-    # Stable packages — names consistent across Debian Bookworm
+    # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64)
+    # libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
     GPU_STABLE_PKGS=(
         mesa-utils
         libgl1-mesa-dri
-        libegl1-mesa
-        libgles2-mesa
+        libegl1
+        libgles2
         libvulkan1
         libwayland-client0
         libwayland-egl1
@@ -907,8 +1001,10 @@ if should_run_step 6; then
         write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
 # Prefer Wayland for GTK apps (sommelier handles the bridge).
-# NOTE: Some Electron apps (Slack, Discord) may ignore this or need
-# GDK_BACKEND unset.  VS Code uses --ozone-platform-hint=auto instead.
+# NOTE: GTK3/4 in Trixie default to Wayland when WAYLAND_DISPLAY is set,
+# making this variable redundant for most apps. Kept as defensive fallback.
+# VS Code uses --ozone-platform-hint=auto instead.
+# Some Electron apps (Slack, Discord) may need GDK_BACKEND unset.
 GDK_BACKEND=wayland,x11
 # Do NOT set MESA_LOADER_DRIVER_OVERRIDE — the driver name varies
 # across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
@@ -931,8 +1027,8 @@ if should_run_step 7; then
     step_banner 7 "Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)"
 
     AUDIO_PKGS=(
-        # ALSA — libasound2 is pulled in by alsa-utils and libasound2-plugins;
-        # listing it explicitly would break on the Trixie t64 rename.
+        # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by
+        # alsa-utils and libasound2-plugins; no explicit listing needed.
         alsa-utils
         libasound2-plugins
 
@@ -942,8 +1038,8 @@ if should_run_step 7; then
         pavucontrol
 
         # GStreamer codecs and media support
-        # gstreamer1.0-pulseaudio is a transitional empty package in Bookworm;
-        # the actual PulseAudio plugin is now in gstreamer1.0-plugins-good.
+        # gstreamer1.0-pulseaudio was removed; its PulseAudio plugin is in
+        # gstreamer1.0-plugins-good.
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
@@ -995,6 +1091,18 @@ PULSE_SERVER=unix:/run/user/${CROS_UID}/pulse/native
 EOF
     else
         log "Audio env already exists — skipping"
+    fi
+
+    # Mask PipeWire's PulseAudio replacement — Trixie defaults to PipeWire but
+    # Crostini forwards audio via the host's PulseAudio socket. pipewire-pulse
+    # would create a competing socket. No-op if pipewire-pulse is not installed.
+    if ! $DRY_RUN; then
+        systemctl --user mask pipewire-pulse.socket 2>/dev/null || true
+        systemctl --user mask pipewire-pulse.service 2>/dev/null || true
+        log "PipeWire-pulse masked (Crostini audio conflict prevention)"
+    else
+        log "[DRY-RUN] systemctl --user mask pipewire-pulse.socket"
+        log "[DRY-RUN] systemctl --user mask pipewire-pulse.service"
     fi
 
     unset AUDIO_PKGS AUDIO_ENV_FILE PA_CLIENT SND_DEV_COUNT
@@ -1117,6 +1225,8 @@ EOF
         write_file "$XRESOURCES" <<'EOF'
 ! Font rendering for X11 apps on Duet 5 (13.3" 1920x1080 OLED)
 ! OLED has no LCD subpixel stripe — use grayscale AA (rgba=none)
+! NOTE: sommelier DPI buckets are 72/96/160/240 — 120 is not in the set
+! and may round to 96. Affects pure X11 apps only (not Wayland/GTK4).
 Xft.dpi: 120
 Xft.antialias: true
 Xft.hinting: true
@@ -1237,8 +1347,8 @@ if should_run_step 9; then
         fonts-liberation
         fonts-firacode
         fonts-hack
+        # adwaita-icon-theme includes "full" set since 45.0-4 (removed in Trixie)
         adwaita-icon-theme
-        adwaita-icon-theme-full
     )
 
     install_pkgs_best_effort "${GUI_PKGS[@]}" || warn "Some GUI packages unavailable — non-fatal"
@@ -1327,6 +1437,39 @@ fi
 if should_run_step 11; then
     step_banner 11 "Node.js LTS arm64 via NodeSource"
 
+    # Refresh GPG keyring unconditionally when NodeSource repo is configured.
+    # NodeSource rotated from SHA1 to SHA-512 sigs on 2026-01-22; Trixie's
+    # Sequoia/sqv rejects old keyrings. Re-downloading is cheap (3KB).
+    if [[ -f /etc/apt/sources.list.d/nodesource.list ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] refresh NodeSource GPG keyring"
+        else
+            _ns_refresh="$(mktemp /tmp/nodesource-refresh-XXXXXXXX.asc)" || warn "Cannot create tmpfile for key refresh"
+            if [[ -n "${_ns_refresh:-}" ]] \
+               && curl -fsSL --connect-timeout 10 --max-time 30 \
+                    https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+                    -o "$_ns_refresh" 2>/dev/null \
+               && [[ -s "$_ns_refresh" ]]; then
+                _ns_rfp="$(gpg --dry-run --show-keys --with-colons "$_ns_refresh" 2>/dev/null \
+                    | awk -F: '/^fpr:/{print $10; exit}')" || true
+                if [[ "$_ns_rfp" == "$NODESOURCE_GPG_FP" ]]; then
+                    run sudo mkdir -p /etc/apt/keyrings || true
+                    sudo gpg --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+                        < "$_ns_refresh" >> "$LOG_FILE" 2>&1 \
+                        && log "NodeSource GPG keyring refreshed" \
+                        || warn "GPG dearmor failed during key refresh"
+                else
+                    warn "NodeSource fingerprint mismatch on refresh (got ${_ns_rfp:-empty}) — keeping existing"
+                fi
+                unset _ns_rfp
+            else
+                warn "NodeSource key refresh failed — keeping existing keyring"
+            fi
+            rm -f "${_ns_refresh:-}" 2>/dev/null
+            unset _ns_refresh
+        fi
+    fi
+
     if command -v node &>/dev/null; then
         log "Node.js already installed: $(timeout 3 node --version 2>/dev/null || echo 'unknown')"
     else
@@ -1340,6 +1483,8 @@ if should_run_step 11; then
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"
         else
             run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
+            # Skip key download if refresh (above) already created the keyring
+            if [[ ! -f /etc/apt/keyrings/nodesource.gpg ]]; then
             _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
             run curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
                 || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
@@ -1368,7 +1513,7 @@ if should_run_step 11; then
             sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
                 || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "Cannot move GPG keyring into place"; }
             rm -f "$_ns_key"
-            unset _ns_key _ns_gpg
+            fi # end keyring guard
             printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
                 | write_file_sudo /etc/apt/sources.list.d/nodesource.list
             # Verify sources file was written correctly (catches silent write_file_sudo failure)
@@ -1397,7 +1542,7 @@ if should_run_step 11; then
     log "Node version: $(timeout 3 node --version 2>/dev/null || echo 'not installed')"
     log "npm version: $(timeout 3 npm --version 2>/dev/null || echo 'not installed')"
 
-    unset NPM_GLOBAL
+    unset NPM_GLOBAL _ns_key _ns_gpg
     set_checkpoint 11
     log "Step 11 complete."
 fi
@@ -1464,11 +1609,6 @@ if should_run_step 13; then
             if [[ "$_vscode_rc" -ne 0 ]]; then
                 warn "VS Code download failed (curl exit ${_vscode_rc}). Install manually:"
                 warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-            fi
-
-            if [[ "$_vscode_rc" -ne 0 ]] && [[ ! -s "$_VSCODE_DEB" ]]; then
-                # curl failed and file is empty — already warned above; skip to cleanup
-                :
             elif [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
                 # Validate .deb structure before installing (catches corrupt/truncated downloads)
                 if ! dpkg-deb --info "$_VSCODE_DEB" > /dev/null 2>&1; then
@@ -1508,7 +1648,14 @@ fi
 if should_run_step 14; then
     step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
 
-    # 14a. Increase inotify watchers (VS Code and file-heavy tools need this)
+    # 14a. Install linux-sysctl-defaults (Trixie requirement for ping permissions)
+    # In Trixie, /etc/sysctl.conf is no longer honored by systemd-sysctl.
+    # This package provides /usr/lib/sysctl.d/50-default.conf which sets
+    # net.ipv4.ping_group_range for unprivileged ping access.
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
+        || warn "linux-sysctl-defaults unavailable (expected on Bookworm — Trixie-only package)"
+
+    # 14b. Increase inotify watchers (VS Code and file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
@@ -1522,7 +1669,7 @@ EOF
         log "sysctl tuning already applied"
     fi
 
-    # 14b. Set locale to en_US.UTF-8
+    # 14c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — if cp fails (disk full),
         # proceeding to sed -i risks corrupting locale.gen with no rollback.
@@ -1548,7 +1695,7 @@ EOF
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 14c. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 14d. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1583,7 +1730,7 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 14d. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
+    # 14e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
     # NOTE: sysctl --system may silently skip individual read-only keys (it only
     # fails on parse errors).  Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
@@ -1608,7 +1755,7 @@ MEMEOF
         log "Memory tuning config already exists"
     fi
 
-    # 14e. Ensure XDG dirs exist
+    # 14f. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
@@ -1920,9 +2067,17 @@ if should_run_step 18; then
     if command -v node &>/dev/null; then
         check_config "/etc/apt/sources.list.d/nodesource.list"   "NodeSource repo"
     fi
+    # PipeWire mask (Trixie audio conflict prevention)
+    _pw_mask="${HOME}/.config/systemd/user/pipewire-pulse.socket"
+    if [[ -L "$_pw_mask" ]]; then
+        logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "PipeWire-pulse masked" "$_pw_mask"
+        ((_verify_pass++)) || true
+    elif command -v pipewire &>/dev/null; then
+        logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "PipeWire-pulse not masked" "(may conflict with Crostini audio)"
+        ((_verify_warn++)) || true
+    fi
+    unset _pw_mask
     logprintf '\n'
-
-    # Quick-test commands
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU:     glxgears / glmark2-es2-wayland / vulkaninfo --summary\n'
     logprintf '  Audio:   pactl info / speaker-test -t wav -c 2 / pavucontrol\n'

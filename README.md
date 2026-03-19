@@ -1,11 +1,11 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.21.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.3.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
-(82QS0001US). Takes a fresh Debian Bookworm container from zero to a fully
+(82QS0001US). Takes a fresh Debian Bookworm or Trixie container from zero to a fully
 configured dev environment in one unattended run.
 
 ## Hardware
@@ -16,7 +16,7 @@ configured dev environment in one unattended run.
 | GPU | Adreno 618 → virgl (paravirtualized) |
 | RAM / Storage | 4 GB LPDDR4x / 128 GB eMMC |
 | Display | 13.3" 1920×1080 OLED |
-| Container | Debian Bookworm arm64, bash |
+| Container | Debian Bookworm/Trixie arm64, bash |
 
 ## Usage
 
@@ -64,7 +64,7 @@ bash crostini-setup-duet5.sh --version                    # show version
 |---|------|
 | 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
 | 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
-| 3 | System update, upgrade, and full-upgrade |
+| 3 | Upgrade to Trixie and full system update |
 | 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, …) |
 | 5 | Build essentials and development headers |
 | 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
@@ -89,13 +89,22 @@ for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, PulseAudio client,
 VS Code Wayland flags, inotify watchers, shell env + PATH, NodeSource apt
 repo. Memory tuning attempted if /proc/sys/vm/ is writable.
 
-## Trixie migration
+## Compatibility
 
-Bookworm is now oldstable. When Crostini containers upgrade to Trixie
-(Debian 13), package arrays need auditing for the t64 transition
-(`libasound2` → `libasound2t64`, `libncurses6` → `libncurses6t64`, etc.).
-See the [64-bit time wiki page](https://wiki.debian.org/NewIn64bitTime) for
-the full list. The script header comments flag this explicitly.
+Step 3 automatically upgrades Bookworm (Debian 12) containers to Trixie
+(Debian 13) by rewriting `/etc/apt/sources.list` and running
+`apt full-upgrade`. A backup of the original sources is saved as
+`/etc/apt/sources.list.pre-trixie`. If the container is already on Trixie,
+step 3 performs a normal update/upgrade only.
+
+Package arrays use canonical (non-transitional) names that resolve on both
+Bookworm and Trixie. The Trixie t64 transition (64-bit `time_t`) renamed
+library packages with a `t64` suffix on 32-bit architectures. On arm64,
+this is transparent (`libasound2t64` provides `libasound2`).
+
+The Crostini-managed `cros.list` in `/etc/apt/sources.list.d/` is also
+updated but may reset on container restart — this is expected ChromeOS
+behavior.
 
 ## Features
 
