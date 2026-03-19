@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.19.0
+# Version: 3.20.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.19.0"
+readonly SCRIPT_VERSION="3.20.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -396,15 +396,15 @@ USAGE:
     bash ${SCRIPT_NAME} [OPTIONS]
 
 OPTIONS:
-    --dry-run    Print commands without executing
+    --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
-    --from-step=N  Start (or restart) from step N (1–18; N=18 is same as --verify)
+    --from-step=N  Start (or restart) from step N (1-18; N=18 is same as --verify)
     --verify       Run only step 18 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
-    --help       Show this help message
-    --version    Show version
-    --reset      Clear checkpoint and start from step 1
-    --           Stop processing options (remaining args ignored)
+    --help         Show this help message
+    --version      Show version
+    --reset        Clear checkpoint and start from step 1
+    --             Stop processing options (remaining args ignored)
 
 STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
@@ -451,7 +451,7 @@ for arg in "$@"; do
             fi
             _from="${arg#*=}"
             if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 18 ]]; then
-                die "--from-step requires a number 1–18 (got '${_from}')"
+                die "--from-step requires a number 1-18 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="$((_from - 1))"
@@ -721,7 +721,7 @@ if should_run_step 2; then
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
         if ! $DRY_RUN && ! $UNATTENDED; then
-            _prompt '%b  → Consider increasing Linux disk allocation (20–30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
+            _prompt '%b  → Consider increasing Linux disk allocation (20-30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
             _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"

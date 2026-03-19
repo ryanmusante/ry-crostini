@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.19.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.20.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -47,7 +47,7 @@ bash crostini-setup-duet5.sh --version                    # show version
    - **Microphone**: Settings → Developers → Linux → Allow Linux to
      access your microphone → **On**
    - **Disk size**: Settings → Developers → Linux → Disk size →
-     increase to **20–30 GB** (the script aborts below 2 GB free and
+     increase to **20-30 GB** (the script aborts below 2 GB free and
      warns below 10 GB)
    - **Shared folders** *(optional)*: in the Files app, right-click any
      folder → Share with Linux. Shared folders appear at
@@ -99,16 +99,16 @@ the full list. The script header comments flag this explicitly.
 
 ## Features
 
-  * **Unattended by default** — all 7 prompts auto-answered; `--interactive` restores them
-  * **Checkpoint resume** — re-run to continue from last completed step
-  * **`--dry-run`** — zero side effects, zero network, zero interaction
-  * **`--minimal`** — skip heavy optional packages (e.g. gnome-disk-utility) for RAM-constrained devices
-  * **Idempotent** — config files skip if already present
-  * **Concurrent-safe** — PID-based mkdir lock
-  * **Atomic writes** — tmpfile + mv for all config files
-  * **No eval, no bash -c** — `run()` passes `"$@"` directly; no shell string interpolation anywhere
-  * **Colored output** — respects `NO_COLOR`
-  * **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600)
+- **Unattended by default** — all 7 prompts auto-answered; `--interactive` restores them
+- **Checkpoint resume** — re-run to continue from last completed step
+- **`--dry-run`** — zero side effects, zero network, zero interaction
+- **`--minimal`** — skip heavy optional packages (e.g. gnome-disk-utility) for RAM-constrained devices
+- **Idempotent** — config files skip if already present
+- **Concurrent-safe** — PID-based mkdir lock
+- **Atomic writes** — tmpfile + mv for all config files
+- **No eval, no bash -c** — `run()` passes `"$@"` directly; no shell string interpolation anywhere
+- **Colored output** — respects `NO_COLOR`
+- **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600)
 
 ## Limitations
 
@@ -132,19 +132,19 @@ covers what works, what doesn't, and advanced options.
 |------|-----------|-----|---------|
 | Excellent | ScummVM, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
-| Fair | RetroArch PSX | 300–500 MB | PS1 catalog |
+| Fair | RetroArch PSX | 300-500 MB | PS1 catalog |
 | Marginal | RetroArch N64 | ~500 MB | May lag at 4 GB |
-| Marginal | box86+Wine 2D/D3D8 | 1–2 GB | Older GOG Windows titles |
-| Poor | box86+Wine D3D9 3D | 2–3 GB | Expect < 15 FPS |
+| Marginal | box86+Wine 2D/D3D8 | 1-2 GB | Older GOG Windows titles |
+| Poor | box86+Wine D3D9 3D | 2-3 GB | Expect < 15 FPS |
 | No-go | Vulkan / D3D10+ / x86 Flatpaks | N/A | Steam, modern AAA |
 
 ### Native ARM64 (installed by step 16)
 
-**DOSBox** — classic DOS emulation (~30–50 MB). The `dosbox-staging` fork
+**DOSBox** — classic DOS emulation (~30-50 MB). The `dosbox-staging` fork
 is actively maintained but its Flathub Flatpak is x86\_64-only; compile
 from source or use the classic `dosbox` apt package.
 
-**ScummVM** — 200+ native engine reimplementations (~50–100 MB). No x86
+**ScummVM** — 200+ native engine reimplementations (~50-100 MB). No x86
 translation needed.
 
 **RetroArch** — multi-system emulator via Flatpak (`org.libretro.RetroArch`).
@@ -153,7 +153,7 @@ runs great; PSX playable; N64 may struggle at 4 GB.
 
 ### x86 translation (advanced, optional)
 
-> **Warning:** Complex setup. box86+Wine overhead consumes 500 MB–1 GB
+> **Warning:** Complex setup. box86+Wine overhead consumes 500 MB-1 GB
 > before the game loads. Only pursue for specific Windows-only titles.
 
 **box86** (32-bit x86 translator) and **box64** (64-bit x86\_64 translator)
@@ -174,7 +174,7 @@ suppress banner: `BOX86_NOBANNER=1 winetricks -q corefonts vcrun2010`.
 
 [Heroic Games Launcher](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
 has arm64 `.deb` releases (the Flathub Flatpak is x86\_64-only). Heavy for
-4 GB (Electron, ~200–400 MB). Alternative: download GOG Linux `.sh`
+4 GB (Electron, ~200-400 MB). Alternative: download GOG Linux `.sh`
 installers directly from [gog.com](https://www.gog.com) —
 `chmod +x installer.sh && ./installer.sh`, no launcher needed.
 

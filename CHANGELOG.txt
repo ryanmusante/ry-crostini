@@ -4,233 +4,94 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+3.20.0  2026-03-18
+  - fix usage() OPTIONS alignment: all descriptions now start at a
+    common column
+  - fix 3 en-dash (U+2013) sites in script and 8 in README -- now
+    ASCII hyphen-minus per 3.14.0 normalization policy
 3.19.0  2026-03-18
-
-  Audit follow-up -- cross-reference accuracy, quoting consistency,
-  and dry-run documentation.
-
-  * fix usage() step 2: align vocabulary to match README/banner
-    ("GPU, mic, USB, folders, ports, disk" not "GPU flag, microphone,
-    folder sharing, port forwarding").
-  * fix usage() step 4: add tool list parenthetical to match README.
-  * fix CHANGELOG 3.18.0 header: correct overstated "character-for-
-    character" claim to accurately describe the tiered title convention
-    (banner/section = base title, usage/README = base + detail).
-  * add dry-run log line at top of step 18 verification: "[DRY-RUN]
-    Verification runs live (all checks are read-only)".
-  * add above-line comments on 2 intentionally unquoted heredocs
-    (PA_CLIENT, AUDIO_ENV_FILE) explaining $CROS_UID expansion.
-  * quote $rc and $_tee_rc inside [[ ]] for consistency with quoting
-    discipline used elsewhere in the script (3 instances in run() and
-    cleanup()).
-
+  - fix usage() step 2/4 vocabulary to match README/banner
+  - fix CHANGELOG 3.18.0 header wording
+  - add dry-run log at top of step 18 verification
+  - add above-line comments on 2 unquoted heredocs ($CROS_UID)
+  - quote $rc/$_tee_rc inside [[ ]] for consistency (3 sites)
 3.18.0  2026-03-18
-
-  Cross-reference sync -- step_banner, section comments, and usage()
-  now use consistent titles; banner/section use the base title,
-  usage() matches README (which may include additional detail).
-
-  * add glmark2 to step 6 title (usage, banner, section comment).
-  * add "client" qualifier and pavucontrol to step 7 title (usage,
-    banner, section comment).
-  * add "Super key passthrough" and "DPI 120" to step 8 title (usage,
-    banner, section comment).
-  * sync step 11 wording to "Node.js LTS arm64 via NodeSource" (usage,
-    banner, section comment).
-  * sync step 12 wording to "Rust stable aarch64 via rustup" (usage,
-    banner, section comment).
-  * add missing parentheses to README step 13 table entry -- "VS Code
-    arm64 .deb + Wayland flags" -> "VS Code (arm64 .deb + Wayland flags)"
-    to match usage, banner, and section comment.
-
+  - sync step titles across banner, section comment, usage(), README
+    (steps 6-8, 11-13): add glmark2, pavucontrol, Super key, DPI 120,
+    "LTS arm64 via NodeSource", "stable aarch64 via rustup"
 3.17.0  2026-03-18
-
-  Comment audit -- all comments now above-line; no ambiguous references.
-
-  * move 3 inline comments to above-line (umask 077, chmod 644 in
-    write_file, AVAIL_MB_NOW sentinel value in step 2f).
-  * replace 5 orphaned issue-tracker references (#2, #4, #6) with
-    self-contained descriptive text (deferred checkpoint race, truncated
-    download, silent write_file_sudo failure).
-  * sync all 18 step section comments to match step_banner titles
-    character-for-character (steps 2-3, 6-9, 11-17 were abbreviated or
-    used different wording than the banner shown to the user).
-  * replace "Phase 2:" label (step 16) with plain description -- no
-    Phase 1 exists.
-  * replace "pavucontrol = GUI volume mixer" with em-dash to avoid
-    reading as assignment.
-  * move inline comment on shellcheck SC2024 directive to above-line
-    rationale comment.
-  * split step 17 section comment into title line (matches banner) plus
-    separate detail line for --interactive behavior.
-
+  - move 3 inline comments to above-line; replace 5 orphaned tracker
+    refs with descriptive text; sync 18 section comments to banners
+  - replace "Phase 2:" label, "=" assignment comment, inline SC2024
+  - split step 17 section comment for --interactive detail
 3.16.0  2026-03-18
-
-  * fix step 3 cross-ref: sync usage() and step_banner to match README
-    ("System update, upgrade, and full-upgrade" -- script runs all three).
-  * fix step 9 eog MIME defaults: add image/gif, image/webp, image/svg+xml,
-    image/bmp, image/tiff -- previously only png and jpeg were set, so
-    other image types fell back to system defaults instead of eog.
-  * fix step 18 verification gap: add check_config for apt download tuning
-    (/etc/apt/apt.conf.d/90parallel, written in step 3 but never verified)
-    and NodeSource repo (/etc/apt/sources.list.d/nodesource.list,
-    conditional on node being installed).
-
+  - fix step 3 cross-ref: sync usage()/banner to README
+  - fix step 9 eog MIME: add gif, webp, svg+xml, bmp, tiff
+  - fix step 18: add check_config for apt tuning and NodeSource repo
 3.15.0  2026-03-18
-
-  * add DEBIAN_FRONTEND=noninteractive to 2 apt-get update calls
-    (steps 3, 11) -- consistency with all other apt-get invocations;
-    apt-get update never prompts but the explicit variable ensures
-    uniform behavior if sudo env_keep changes in future.
-  * fix step 11 dry-run log to match live apt-get update command.
-
+  - add DEBIAN_FRONTEND=noninteractive to 2 apt-get update calls
+  - fix step 11 dry-run log to match live command
 3.14.0  2026-03-18
-
-  * add SC2329 suppression alongside SC2317 on 3 trap-invoked functions
-    (_handle_signal, _cleanup_warn, _strip_log_ansi) -- shellcheck 0.11
-    info-level false positive for indirectly-called functions.
-  * normalize CHANGELOG.txt to ASCII -- replace em-dash, en-dash, arrow,
-    section-sign with ASCII equivalents for portability.
-
+  - add SC2329 suppression on 3 trap-invoked functions
+  - normalize CHANGELOG.txt to ASCII (em-dash, en-dash, arrow, S.)
 3.13.0  2026-03-18
-
-  * inline gaming guide into README S. Gaming -- moved compatibility
-    tiers, native ARM64, x86 translation, GOG, cloud gaming from
-    separate file into README; script references updated.
-  * add TOFU comment to VS Code .deb download (step 13) -- documents
-    HTTPS-only trust model with dpkg-deb structural validation.
-  * add partial-application note to memory sysctl (step 14d).
-  * add --purge to apt-get autoremove (step 3).
-  * deduplicate VS Code download failure warnings (step 13).
-  * add ", memory" to step 14 banner and usage().
-  * add dosbox-staging Flatpak comment (step 16).
-  * add write_file() chmod 644 rationale comment.
-
+  - inline gaming guide into README S. Gaming
+  - add TOFU comment on VS Code .deb, partial-application note on
+    memory sysctl, --purge on autoremove, dosbox-staging comment
+  - deduplicate VS Code warnings; add ", memory" to step 14 title
 3.8.0 - 3.12.0  2026-03-16 - 2026-03-18
-
   Execution and safety:
-  * CRITICAL: fix set -e/pipefail restoration order crash in run() --
-    && short-circuit returned 1 under just-restored errexit; replaced
-    with if/then and reversed restore order (pipefail before errexit).
-  * CRITICAL: fix PIPESTATUS race in run() -- array reset between reads;
-    now saved atomically into local _ps.
-  * eliminate run_shell() (bash -c) entirely -- NodeSource repo write
-    replaced with printf | write_file_sudo; removes last shell-injection
-    surface.
-  * eliminate date(1) from cleanup/trap path -- _cleanup_warn() uses
-    $SECONDS (bash builtin) to avoid hanging on broken pipe/frozen cgroup.
-  * fix cleanup() recursive invocation -- clears traps on entry.
-  * fix signal exit codes -- cleanup re-raises with kill -SIG $$ for
-    correct 128+N exit to parent processes.
-  * guard 7 pipeline assignments against set -eo pipefail early abort.
-  * fix A&&B||C anti-pattern in run() -- replaced with if/fi blocks.
-  * gate locale.gen sed -i on successful backup (disk-full safety).
-  * write_file()/write_file_sudo() now set mode 644 on tmpfile before
-    mv -- umask 077 was creating config files as 0600.
-
-  Unattended / dry-run fidelity:
-  * all sudo apt-get calls now pass DEBIAN_FRONTEND=noninteractive
-    explicitly -- sudo env_reset was stripping the export.
-  * apt-get upgrade/full-upgrade pass --force-confdef --force-confold.
-  * dpkg -i for VS Code passes DEBIAN_FRONTEND=noninteractive.
-  * flatpak install passes --noninteractive (flatpak 1.14+).
-  * 8 dry-run fidelity fixes -- output now matches live commands; step 11
-    NodeSource guard restructured for dry-run without pre-existing node.
-  * --from-step/--verify now work in --dry-run (_CHECKPOINT_OVERRIDE).
-  * read -r prompts: -t 300 timeout on all 7 sites.
-
+  - CRITICAL: fix set -e/pipefail restore order crash in run()
+  - CRITICAL: fix PIPESTATUS race -- saved atomically into local _ps
+  - eliminate run_shell() (bash -c); eliminate date(1) from cleanup
+  - fix cleanup() recursion, signal exit codes (128+N re-raise)
+  - guard 7 pipelines against errexit; fix A&&B||C in run()
+  - gate locale.gen sed -i on backup; chmod 644 before mv in writers
+  Unattended / dry-run:
+  - all sudo apt-get passes DEBIAN_FRONTEND explicitly
+  - --force-confdef/--force-confold on upgrades; --noninteractive on
+    flatpak; 8 dry-run fidelity fixes; _CHECKPOINT_OVERRIDE for
+    --from-step/--verify in --dry-run; -t 300 on all 7 read prompts
   Logging and verification:
-  * add -r to all 9 xargs calls (empty-input guard).
-  * add verification counters to 5 uncounted step 18 checks.
-  * fix 10+ false success logs (steps 9, 14b, 15; conditional on
-    command success).
-  * ANSI strip: fix CSI/OSC/DEC sequences, single-pass at exit via
-    _strip_log_ansi.
-  * _tee_strip_log race eliminated -- synchronous tee, deferred strip.
-  * _prompt() function -- interactive output logged for audit trail.
-  * check_tool(): stdout-first with stderr fallback; SIGPIPE-safe.
-  * step 18 set_checkpoint before rm; "Step 18 complete." log added.
-
+  - -r on 9 xargs calls; counters on 5 uncounted checks; fix 10+
+    false success logs; single-pass ANSI strip; _prompt() for audit;
+    check_tool() stderr fallback; set_checkpoint before rm in step 18
   Packages and config:
-  * remove transitional gstreamer1.0-pulseaudio and explicit libasound2
-    from AUDIO_PKGS (Trixie t64 safety).
-  * libavcodec-extra gated behind --minimal.
-  * add wl-clipboard (step 4), xterm (step 9).
-  * add SOMMELIER_ACCELERATORS=Super_L (step 8).
-  * batch qt5 installs; apt Acquire::Retries "3".
-  * apt Queue-Mode "host" -> "access" for parallel downloads.
-  * adwaita-icon-theme-full merged into GUI_PKGS.
-  * NodeSource apt update failure now dies (not warns).
-  * /etc/profile.d PATH prepend dedup guard.
-  * step 18 Node.js major version mismatch warning.
-
+  - drop transitional gstreamer1.0-pulseaudio/explicit libasound2
+  - add wl-clipboard, xterm, SOMMELIER_ACCELERATORS=Super_L
+  - batch qt5; Acquire::Retries 3; Queue-Mode "access"; PATH dedup
+  - NodeSource apt update failure now dies; Node major version warn
   Lock and tempfiles:
-  * stale lock cleanup uses find -delete (catches orphaned tmpfiles).
-  * missing || die on mktemp in steps 12, 13.
-  * cleanup trap temp-file removal uses if/fi (not A&&B).
-  * NodeSource GPG fingerprint: split empty-extraction vs mismatch
-    die messages.
-
+  - stale lock find -delete; || die on mktemp (steps 12, 13)
+  - cleanup temp removal if/fi; GPG fingerprint split die messages
   Cross-reference and docs:
-  * sync all step banners, usage(), and README step table.
-  * sync README: prerequisites, config files, verify commands, files
-    section, version badge.
-  * Trixie migration note in script header and README.
-  * NodeSource maintenance-mode comment (step 11).
-  * rustup TOFU comment expanded.
-  * add --help/--version to README usage block.
-
+  - sync all banners/usage/README; Trixie migration note; NodeSource
+    maintenance-mode comment; rustup TOFU; --help/--version in README
 3.3.0 - 3.7.0  2026-03-15 - 2026-03-16
-
-  * CRITICAL: fix cleanup trap deleting lock on --help/--version exit.
-  * CRITICAL: fix run() dual process substitution race and PIPESTATUS
-    capture (|| true reset to 0).
-  * CRITICAL: revert broken SSH_ASKPASS for ssh-keygen.
-  * CRITICAL: 3 stale rm -rf on lock directory -> targeted rmdir.
-  * BREAKING: remove git configuration step and SSH key generation;
-    renumber steps 14-20 -> 13-18.
-  * fix set_checkpoint() non-atomic write -> mktemp+printf+mv.
-  * fix signal coverage: add HUP, PIPE, QUIT traps.
-  * fix --from-step/--verify conflict detection.
-  * fix logprintf() definition order; ANSI escapes leaking into log.
-  * fix install_pkgs_best_effort() callers unguarded under set -e.
-  * fix 10 false success logs; 10 inline --version calls missing timeout.
-  * fix source cargo/env, step 3 upgrade on stale apt indices.
-  * add install_pkgs_best_effort() batch+fallback helper.
-  * add step_banner() dual-write via logprintf.
-  * add parallel apt downloads, verification counters, elapsed time.
-  * add VS Code .deb integrity check (dpkg-deb --info).
-  * add -- option terminator.
-  * variable leak cleanup (55 variables confirmed unset at boundaries).
-
+  - CRITICAL: fix cleanup deleting lock on --help/--version exit
+  - CRITICAL: fix run() PIPESTATUS race (|| true reset to 0)
+  - CRITICAL: revert broken SSH_ASKPASS; 3 rm -rf -> targeted rmdir
+  - BREAKING: remove git/SSH step; renumber 14-20 -> 13-18
+  - fix set_checkpoint() atomicity, signal coverage (HUP/PIPE/QUIT),
+    --from-step/--verify conflict, logprintf() order, ANSI log leak,
+    install_pkgs_best_effort() set -e safety, 10 false success logs,
+    10 missing timeouts, source cargo/env, stale apt upgrade
+  - add batch+fallback installer, step_banner() dual-write, parallel
+    apt, verification counters, elapsed time, dpkg-deb --info, --
+  - variable leak cleanup (55 vars confirmed unset at boundaries)
 3.0.0 - 3.2.0  2026-03-15
-
-  * add step 17: gaming packages (DOSBox, ScummVM, RetroArch).
-  * fix run() exit code propagation via process substitution.
-  * fix --dry-run: arch/root checks warn instead of die; explicit
-    guards for steps 8, 12, 15.
-  * fix interactive read from stdin -> /dev/tty (7 sites); prompts
-    to stderr (19 printf calls).
-  * add --from-step=N, --verify, --reset flags.
-  * add lock stale detection (missing/empty PID file).
-  * add NodeSource GPG tmpfile+mv atomic keyring write.
-
+  - add step 17: gaming (DOSBox, ScummVM, RetroArch)
+  - fix run() exit code, --dry-run arch/root checks, interactive read
+    from stdin -> /dev/tty (7 sites), prompts to stderr (19 calls)
+  - add --from-step=N, --verify, --reset, stale PID detection,
+    NodeSource GPG atomic keyring write
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
-
-  * full rewrite: 19-step automated setup with checkpoint resume.
-  * add --dry-run, --interactive, --minimal flags.
-  * add unattended default mode (zero interactive prompts).
-  * add run(), write_file(), write_file_sudo() atomic helpers.
-  * add PID-based mkdir lock for concurrent-run safety.
-  * add GPU, audio, display, Wayland, Vulkan verification.
-  * replace all eval with direct "$@" execution.
-  * replace hardcoded UID 1000 with $(id -u).
-  * replace 'sudo apt' with 'sudo apt-get' (18 sites).
-  * add VM memory tuning with /proc/sys/vm writability check.
-  * fix OLED font rendering: rgba=none (no LCD subpixel stripe).
-  * remove pulseaudio daemon, standalone xwayland (Crostini conflicts).
-
+  - full rewrite: 19-step automated setup with checkpoint resume
+  - add --dry-run, --interactive, --minimal, unattended default
+  - add run()/write_file()/write_file_sudo() atomic helpers,
+    PID-based mkdir lock, GPU/audio/display/Vulkan verification
+  - replace eval with "$@", UID 1000 with $(id -u), apt with apt-get
+  - add VM memory tuning; fix OLED rgba=none; remove pulseaudio daemon
 1.0.0 - 1.1.0  2026-03-08
-
-  * initial release: Crostini bootstrap with checkpoint resume,
-    --dry-run, colored output, full logging, and GPU detection.
+  - initial release: Crostini bootstrap with checkpoint resume,
+    --dry-run, colored output, full logging, and GPU detection
