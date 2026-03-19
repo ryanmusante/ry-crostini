@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-3.17.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-3.19.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -74,7 +74,7 @@ bash crostini-setup-duet5.sh --version                    # show version
 | 10 | Python ecosystem (python3, pip, venv) |
 | 11 | Node.js LTS arm64 via NodeSource |
 | 12 | Rust stable aarch64 via rustup |
-| 13 | VS Code arm64 .deb + Wayland flags |
+| 13 | VS Code (arm64 .deb + Wayland flags) |
 | 14 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
 | 15 | Flatpak + Flathub (ARM64 app source) |
 | 16 | Gaming packages (DOSBox, ScummVM, RetroArch) |

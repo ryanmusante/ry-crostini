@@ -4,6 +4,45 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+3.19.0  2026-03-18
+
+  Audit follow-up -- cross-reference accuracy, quoting consistency,
+  and dry-run documentation.
+
+  * fix usage() step 2: align vocabulary to match README/banner
+    ("GPU, mic, USB, folders, ports, disk" not "GPU flag, microphone,
+    folder sharing, port forwarding").
+  * fix usage() step 4: add tool list parenthetical to match README.
+  * fix CHANGELOG 3.18.0 header: correct overstated "character-for-
+    character" claim to accurately describe the tiered title convention
+    (banner/section = base title, usage/README = base + detail).
+  * add dry-run log line at top of step 18 verification: "[DRY-RUN]
+    Verification runs live (all checks are read-only)".
+  * add above-line comments on 2 intentionally unquoted heredocs
+    (PA_CLIENT, AUDIO_ENV_FILE) explaining $CROS_UID expansion.
+  * quote $rc and $_tee_rc inside [[ ]] for consistency with quoting
+    discipline used elsewhere in the script (3 instances in run() and
+    cleanup()).
+
+3.18.0  2026-03-18
+
+  Cross-reference sync -- step_banner, section comments, and usage()
+  now use consistent titles; banner/section use the base title,
+  usage() matches README (which may include additional detail).
+
+  * add glmark2 to step 6 title (usage, banner, section comment).
+  * add "client" qualifier and pavucontrol to step 7 title (usage,
+    banner, section comment).
+  * add "Super key passthrough" and "DPI 120" to step 8 title (usage,
+    banner, section comment).
+  * sync step 11 wording to "Node.js LTS arm64 via NodeSource" (usage,
+    banner, section comment).
+  * sync step 12 wording to "Rust stable aarch64 via rustup" (usage,
+    banner, section comment).
+  * add missing parentheses to README step 13 table entry -- "VS Code
+    arm64 .deb + Wayland flags" -> "VS Code (arm64 .deb + Wayland flags)"
+    to match usage, banner, and section comment.
+
 3.17.0  2026-03-18
 
   Comment audit -- all comments now above-line; no ambiguous references.

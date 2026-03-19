@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 3.17.0
+# Version: 3.19.0
 # Date:    2026-03-18
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm container under ChromeOS Crostini
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="3.17.0"
+readonly SCRIPT_VERSION="3.19.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -79,7 +79,7 @@ cleanup() {
         find "$LOCK_FILE" -maxdepth 1 -type f -delete 2>/dev/null || true
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
-    if [[ $rc -ne 0 ]]; then
+    if [[ "$rc" -ne 0 ]]; then
         # @@WHY: $SECONDS is a bash builtin — no subprocess, cannot hang.
         # date(1) can hang on broken pipe / frozen cgroup; inside cleanup
         # all traps are cleared, so a hang here is uninterruptible.
@@ -264,10 +264,10 @@ run() {
     # exit code from a false && short-circuit entirely.
     if $_prev_pf; then set -o pipefail; fi
     if $_prev_e; then set -e; fi
-    if [[ $_tee_rc -ne 0 ]]; then
+    if [[ "$_tee_rc" -ne 0 ]]; then
         warn "Log pipeline failed (tee exit $_tee_rc) during: $*"
     fi
-    if [[ $rc -ne 0 ]]; then
+    if [[ "$rc" -ne 0 ]]; then
         warn "Command exited $rc: $*"
     fi
     return "$rc"
@@ -408,18 +408,20 @@ OPTIONS:
 
 STEPS PERFORMED:
      1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
-     2  ChromeOS integration (GPU flag, microphone, USB, folder sharing,
-        port forwarding, disk — opens settings pages with --interactive)
+     2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
+        --interactive opens ChromeOS settings pages for each toggle)
      3  System update, upgrade, and full-upgrade
-     4  Core CLI utilities
+     4  Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl,
+        htop, wl-clipboard, ...)
      5  Build essentials and development headers
-     6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
-     7  Audio stack (ALSA, PulseAudio, GStreamer codecs)
-     8  Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)
+     6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
+     7  Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)
+     8  Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt,
+        Xft DPI 120, fontconfig, cursor)
      9  GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
     10  Python ecosystem (python3, pip, venv)
-    11  Node.js via NodeSource (LTS, arm64)
-    12  Rust via rustup (aarch64)
+    11  Node.js LTS arm64 via NodeSource
+    12  Rust stable aarch64 via rustup
     13  VS Code (arm64 .deb + Wayland flags)
     14  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
     15  Flatpak + Flathub (ARM64 app source)
@@ -847,9 +849,9 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
-# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
+# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
 if should_run_step 6; then
-    step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
+    step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)"
 
     # Stable packages — names consistent across Debian Bookworm
     GPU_STABLE_PKGS=(
@@ -924,9 +926,9 @@ EOF
     set_checkpoint 6
     log "Step 6 complete."
 fi
-# Step 7: Audio stack (ALSA, PulseAudio, GStreamer codecs)
+# Step 7: Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)
 if should_run_step 7; then
-    step_banner 7 "Audio stack (ALSA, PulseAudio, GStreamer codecs)"
+    step_banner 7 "Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)"
 
     AUDIO_PKGS=(
         # ALSA — libasound2 is pulled in by alsa-utils and libasound2-plugins;
@@ -960,6 +962,7 @@ if should_run_step 7; then
     # PulseAudio config — point to Crostini host socket
     PA_CLIENT="${HOME}/.config/pulse/client.conf"
     if [[ ! -f "$PA_CLIENT" ]]; then
+        # Unquoted heredoc: $CROS_UID must expand to current user's UID
         write_file "$PA_CLIENT" <<EOF
 # Crostini PulseAudio — connect to host audio server
 default-server = unix:/run/user/${CROS_UID}/pulse/native
@@ -985,6 +988,7 @@ EOF
     # Audio environment
     AUDIO_ENV_FILE="${HOME}/.config/environment.d/audio.conf"
     if [[ ! -f "$AUDIO_ENV_FILE" ]]; then
+        # Unquoted heredoc: $CROS_UID must expand to current user's UID
         write_file "$AUDIO_ENV_FILE" <<EOF
 # Crostini audio environment
 PULSE_SERVER=unix:/run/user/${CROS_UID}/pulse/native
@@ -997,9 +1001,9 @@ EOF
     set_checkpoint 7
     log "Step 7 complete."
 fi
-# Step 8: Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)
+# Step 8: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor)
 if should_run_step 8; then
-    step_banner 8 "Display scaling and HiDPI (sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor)"
+    step_banner 8 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor)"
 
     # 13.3" FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
@@ -1314,14 +1318,14 @@ if should_run_step 10; then
     set_checkpoint 10
     log "Step 10 complete."
 fi
-# Step 11: Node.js LTS (arm64)
+# Step 11: Node.js LTS arm64 via NodeSource
 # NOTE: NodeSource is in maintenance mode and has had multiple GPG key rotations.
 # Alternative: download the binary tarball directly from https://nodejs.org/dist/
 # with SHA256 checksum verification (no repo, no key, smaller trust surface).
 # Keeping NodeSource for now as it integrates with apt upgrade and is the
 # documented method for Debian; the GPG fingerprint is pinned below.
 if should_run_step 11; then
-    step_banner 11 "Node.js LTS (arm64)"
+    step_banner 11 "Node.js LTS arm64 via NodeSource"
 
     if command -v node &>/dev/null; then
         log "Node.js already installed: $(timeout 3 node --version 2>/dev/null || echo 'unknown')"
@@ -1397,9 +1401,9 @@ if should_run_step 11; then
     set_checkpoint 11
     log "Step 11 complete."
 fi
-# Step 12: Rust toolchain (aarch64)
+# Step 12: Rust stable aarch64 via rustup
 if should_run_step 12; then
-    step_banner 12 "Rust toolchain (aarch64)"
+    step_banner 12 "Rust stable aarch64 via rustup"
 
     if command -v rustc &>/dev/null; then
         log "Rust already installed: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
@@ -1712,6 +1716,10 @@ fi
 # Step 18: Summary and verification
 if should_run_step 18; then
     step_banner 18 "Summary and verification"
+
+    if $DRY_RUN; then
+        log "[DRY-RUN] Verification runs live (all checks are read-only)"
+    fi
 
     logprintf '\n%bCROSTINI SETUP COMPLETE%b\n\n' "$GREEN" "$RESET"
 
