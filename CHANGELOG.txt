@@ -4,6 +4,26 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.5.1  2026-03-19
+  - fix step 7: route systemctl --user mask/enable calls through run()
+    with individual return-value checks; previous || true pattern silently
+    swallowed failures and logged unconditional success ("PipeWire audio
+    chain enabled") even when enable failed
+  - fix step 13: replace gpg --dearmor stdin redirect (< $_ms_key) with
+    positional argument so the call routes through run() for consistent
+    [EXEC] logging and terminal echo
+  - fix step 18: add fail branch to RetroArch Flatpak verification
+    (previously only incremented _verify_pass; missing package was
+    silently omitted instead of showing red X like dosbox/scummvm)
+  - remove step 1i: Baguette containerless VM detection block
+    (BAGUETTE_MODE was set but never consumed by any step, helper, or
+    conditional — dead code since introduction in 4.5.0; re-add when
+    Baguette-specific behavior is needed)
+  - fix 2 redundant redirects: &>/dev/null 2>&1 -> &>/dev/null (step 1
+    dpkg -l, step 3 apt modernize-sources); trailing 2>&1 is a no-op
+    after &>/dev/null
+  - renumber step 1 sub-checks (1a-1h after 1i removal)
+
 4.5.0  2026-03-19
   CRITICAL:
   - fix step 7: reverse audio architecture from PulseAudio-client to

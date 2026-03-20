@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.5.0
+# Version: 4.5.1
 # Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -23,7 +23,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.5.0"
+readonly SCRIPT_VERSION="4.5.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -605,16 +605,6 @@ if should_run_step 1; then
         warn "Sommelier not detected. GUI apps may not display until container restarts."
     fi
 
-    # 1i. Baguette (containerless VM) detection — ChromeOS 143+
-    BAGUETTE_MODE=false
-    if dpkg -l baguette-motd &>/dev/null 2>&1; then
-        BAGUETTE_MODE=true
-        log "Baguette (containerless) mode detected"
-    elif [[ "$(systemd-detect-virt 2>/dev/null)" == "kvm" ]] && [[ ! -d /dev/.lxc ]]; then
-        BAGUETTE_MODE=true
-        log "KVM virtualization detected (possible Baguette mode)"
-    fi
-
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
     set_checkpoint 1
     log "Step 1 complete."
@@ -876,7 +866,7 @@ EOF
     if command -v apt &>/dev/null; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt -y modernize-sources"
-        elif apt modernize-sources --help &>/dev/null 2>&1; then
+        elif apt modernize-sources --help &>/dev/null; then
             if run sudo apt -y modernize-sources; then
                 log "APT sources migrated to deb822 format"
             else
@@ -1068,13 +1058,23 @@ if should_run_step 7; then
     # Ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
         if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
-            systemctl --user mask pulseaudio.service 2>/dev/null || true
-            systemctl --user mask pulseaudio.socket 2>/dev/null || true
-            log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
+            if run systemctl --user mask pulseaudio.service && \
+               run systemctl --user mask pulseaudio.socket; then
+                log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
+            else
+                warn "PulseAudio mask failed — PipeWire may conflict"
+            fi
         fi
-        systemctl --user enable --now pipewire.socket 2>/dev/null || true
-        systemctl --user enable --now pipewire-pulse.socket 2>/dev/null || true
-        log "PipeWire audio chain enabled"
+        if run systemctl --user enable --now pipewire.socket; then
+            log "pipewire.socket enabled"
+        else
+            warn "pipewire.socket enable failed"
+        fi
+        if run systemctl --user enable --now pipewire-pulse.socket; then
+            log "pipewire-pulse.socket enabled"
+        else
+            warn "pipewire-pulse.socket enable failed"
+        fi
     else
         log "[DRY-RUN] systemctl --user mask pulseaudio.service (if installed)"
         log "[DRY-RUN] systemctl --user enable --now pipewire.socket"
@@ -1555,8 +1555,8 @@ if should_run_step 13; then
                 https://packages.microsoft.com/keys/microsoft.asc -o "$_ms_key" \
                 || { rm -f "$_ms_key"; die "Microsoft GPG key download failed"; }
             run sudo mkdir -p /usr/share/keyrings || true
-            sudo gpg --yes --dearmor -o /usr/share/keyrings/microsoft.gpg < "$_ms_key" \
-                >> "$LOG_FILE" 2>&1 || { rm -f "$_ms_key"; die "Microsoft GPG dearmor failed"; }
+            run sudo gpg --yes --dearmor -o /usr/share/keyrings/microsoft.gpg "$_ms_key" \
+                || { rm -f "$_ms_key"; die "Microsoft GPG dearmor failed"; }
             rm -f "$_ms_key"
 
             # DEB822 format repo
@@ -1963,6 +1963,9 @@ if should_run_step 18; then
     if timeout 5 flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
+    else
+        logprintf '  %-14s %b✗%b  not found\n' "retroarch" "$RED" "$RESET"
+        ((_verify_fail++)) || true
     fi
     logprintf '\n'
 
