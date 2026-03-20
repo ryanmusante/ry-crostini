@@ -4,6 +4,16 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.3.1  2026-03-19
+  - fix step 11: add missing shellcheck suppress on NodeSource GPG
+    refresh path (SC2024 sudo redirect, SC2015 intentional && || ;
+    matches existing suppress on install path)
+  - fix colors: declare RED/GREEN/YELLOW/BOLD/RESET readonly after
+    assignment (consistency with all other script constants)
+  - fix step 3: add dry-run trace for sources.list backup cp
+  - fix README: add PipeWire-pulse mask to Config files written prose
+    (added in 4.3.0, missing from documentation)
+
 4.3.0  2026-03-19
   - fix step 9: remove adwaita-icon-theme-full (merged into
     adwaita-icon-theme since 45.0-4; removed in Trixie)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.3.0
+# Version: 4.3.1
 # Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -21,7 +21,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.3.0"
+readonly SCRIPT_VERSION="4.3.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -115,6 +115,7 @@ if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
 else
     RED='' GREEN='' YELLOW='' BOLD='' RESET=''
 fi
+readonly RED GREEN YELLOW BOLD RESET
 
 # Logging
 log() {
@@ -776,6 +777,7 @@ EOF
     if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         if $DRY_RUN; then
+            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
             log "[DRY-RUN] apt-get update && apt-get full-upgrade (dist-upgrade to Trixie)"
@@ -1454,6 +1456,8 @@ if should_run_step 11; then
                     | awk -F: '/^fpr:/{print $10; exit}')" || true
                 if [[ "$_ns_rfp" == "$NODESOURCE_GPG_FP" ]]; then
                     run sudo mkdir -p /etc/apt/keyrings || true
+                    # Redirect captures gpg log messages, not dearmored output (-o flag)
+                    # shellcheck disable=SC2024,SC2015
                     sudo gpg --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg \
                         < "$_ns_refresh" >> "$LOG_FILE" 2>&1 \
                         && log "NodeSource GPG keyring refreshed" \
