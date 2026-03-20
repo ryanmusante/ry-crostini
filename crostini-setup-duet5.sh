@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.3.1
+# Version: 4.4.0
 # Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
 #              [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
+# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential
+#   is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version.
 #   Package arrays use canonical (non-transitional) names that resolve on both.
@@ -21,7 +23,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.3.1"
+readonly SCRIPT_VERSION="4.4.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -266,7 +268,7 @@ run() {
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
     # Restore caller's shell options — never force-enable what wasn't set.
-    # Restore pipefail BEFORE errexit: if pipefail was off, the old
+    # Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old
     # `false && set -o pipefail` returned 1, which killed the script
     # under the just-restored set -e.  Using if/then avoids the non-zero
     # exit code from a false && short-circuit entirely.
@@ -774,13 +776,20 @@ EOF
 
     # 3a. Upgrade to Trixie if still on Bookworm (or any pre-Trixie release)
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z]+$ ]]; then
+        die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting upgrade"
+    fi
     if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         if $DRY_RUN; then
             log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
-            log "[DRY-RUN] apt-get update && apt-get full-upgrade (dist-upgrade to Trixie)"
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup)"
+            log "[DRY-RUN] apt-get update (failure skips upgrade/full-upgrade)"
+            log "[DRY-RUN] apt-get upgrade -y --force-confdef --force-confold"
+            log "[DRY-RUN] apt-get full-upgrade -y --force-confdef --force-confold"
+            log "[DRY-RUN] apt-get autoremove --purge -y"
         else
             # Back up sources before rewriting
             if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
@@ -813,8 +822,10 @@ EOF
                 [[ -f "$_sfile" ]] || continue
                 [[ "$_sfile" == *.pre-trixie ]] && continue
                 if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
+                    run sudo cp -- "$_sfile" "${_sfile}.pre-trixie" \
+                        || { warn "Cannot back up ${_sfile} — skipping"; continue; }
                     run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
-                        || warn "Failed to update ${_sfile} — continuing"
+                        || warn "Failed to update ${_sfile} — backup at ${_sfile}.pre-trixie"
                 fi
             done
             unset _sfile
@@ -1373,13 +1384,19 @@ if should_run_step 9; then
     fi
 
     # Set default file manager
+    # Desktop file was renamed in Thunar 4.20 (Xfce reverse-DNS convention)
+    _thunar_desktop="thunar.desktop"
+    if [[ -f /usr/share/applications/org.xfce.thunar.desktop ]]; then
+        _thunar_desktop="org.xfce.thunar.desktop"
+    fi
     if command -v thunar &>/dev/null || $DRY_RUN; then
-        if run xdg-mime default thunar.desktop inode/directory; then
-            $DRY_RUN || log "Thunar set as default file manager"
+        if run xdg-mime default "$_thunar_desktop" inode/directory; then
+            $DRY_RUN || log "Thunar set as default file manager ($_thunar_desktop)"
         else
             warn "xdg-mime default for Thunar failed"
         fi
     fi
+    unset _thunar_desktop
 
     # Set default PDF viewer
     if command -v evince &>/dev/null || $DRY_RUN; then

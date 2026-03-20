@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.3.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.4.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -30,6 +30,7 @@ bash crostini-setup-duet5.sh --verify                     # run only summary/ver
 bash crostini-setup-duet5.sh --reset                      # clear checkpoint, start over
 bash crostini-setup-duet5.sh --help                       # show usage and step list
 bash crostini-setup-duet5.sh --version                    # show version
+bash crostini-setup-duet5.sh --                           # stop processing options
 ```
 
 ## Prerequisites
@@ -94,9 +95,11 @@ attempted if /proc/sys/vm/ is writable.
 
 Step 3 automatically upgrades Bookworm (Debian 12) containers to Trixie
 (Debian 13) by rewriting `/etc/apt/sources.list` and running
-`apt full-upgrade`. A backup of the original sources is saved as
-`/etc/apt/sources.list.pre-trixie`. If the container is already on Trixie,
-step 3 performs a normal update/upgrade only.
+`apt full-upgrade`. Backups of all modified source files are saved with a
+`.pre-trixie` suffix (`sources.list`, `cros.list`, and any additional
+`.list`/`.sources` files in `sources.list.d/`). The `VERSION_CODENAME`
+is validated as alphanumeric before any rewrite. If the container is already
+on Trixie, step 3 performs a normal update/upgrade only.
 
 Package arrays use canonical (non-transitional) names that resolve on both
 Bookworm and Trixie. The Trixie t64 transition (64-bit `time_t`) renamed

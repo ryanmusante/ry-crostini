@@ -4,6 +4,23 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.4.0  2026-03-19
+  - fix step 3: validate VERSION_CODENAME is alphanumeric before sed
+    substitution (prevents theoretical regex injection)
+  - fix step 3: back up each .list/.sources file in sources.list.d/
+    before sed -i during Trixie upgrade (matches sources.list and
+    cros.list backup pattern)
+  - fix step 3: split dry-run trace into separate commands matching
+    live control flow; add trace for sources.list.d glob loop
+  - fix step 9: detect thunar desktop file name dynamically
+    (thunar.desktop vs org.xfce.thunar.desktop) for xdg-mime default
+  - add LICENSE file (MIT) referenced by README
+  - add sudo credential caching note to script header
+  - add CHANGELOG cross-reference to run() pipefail fix comment
+  - sync README Compatibility section with sources.list.d backup
+    behavior and VERSION_CODENAME validation
+  - sync README Usage block: add -- (stop processing options)
+
 4.3.1  2026-03-19
   - fix step 11: add missing shellcheck suppress on NodeSource GPG
     refresh path (SC2024 sudo redirect, SC2015 intentional && || ;
