@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.4.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.4.1-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -66,7 +66,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
 | 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
 | 3 | Upgrade to Trixie and full system update |
-| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, …) |
+| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, ...) |
 | 5 | Build essentials and development headers |
 | 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
 | 7 | Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol) |
@@ -98,7 +98,7 @@ Step 3 automatically upgrades Bookworm (Debian 12) containers to Trixie
 `apt full-upgrade`. Backups of all modified source files are saved with a
 `.pre-trixie` suffix (`sources.list`, `cros.list`, and any additional
 `.list`/`.sources` files in `sources.list.d/`). The `VERSION_CODENAME`
-is validated as alphanumeric before any rewrite. If the container is already
+is validated as lowercase alphanumeric (with hyphens) before any rewrite. If the container is already
 on Trixie, step 3 performs a normal update/upgrade only.
 
 Package arrays use canonical (non-transitional) names that resolve on both

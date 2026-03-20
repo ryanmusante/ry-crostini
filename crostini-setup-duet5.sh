@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.4.0
+# Version: 4.4.1
 # Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -23,7 +23,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.4.0"
+readonly SCRIPT_VERSION="4.4.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -776,7 +776,7 @@ EOF
 
     # 3a. Upgrade to Trixie if still on Bookworm (or any pre-Trixie release)
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-    if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z]+$ ]]; then
+    if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting upgrade"
     fi
     if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
@@ -1563,7 +1563,7 @@ if should_run_step 11; then
     log "Node version: $(timeout 3 node --version 2>/dev/null || echo 'not installed')"
     log "npm version: $(timeout 3 npm --version 2>/dev/null || echo 'not installed')"
 
-    unset NPM_GLOBAL _ns_key _ns_gpg
+    unset NPM_GLOBAL _ns_key _ns_gpg _ns_refresh
     set_checkpoint 11
     log "Step 11 complete."
 fi

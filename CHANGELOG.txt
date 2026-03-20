@@ -4,6 +4,16 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.4.1  2026-03-19
+  - fix step 3: widen VERSION_CODENAME validation from ^[a-z]+$ to
+    ^[a-z][a-z0-9-]*$ (future-proofs for hypothetical hyphenated or
+    digit-containing Debian codenames; still requires leading lowercase)
+  - fix step 11: add _ns_refresh to boundary unset (variable was already
+    cleared inline at L1490 but missing from step-end cleanup pattern)
+  - sync README Compatibility section with widened regex description
+  - fix README: normalize Unicode ellipsis (U+2026) to ASCII in step 4
+    table (consistency with usage() and 3.20.0 ASCII policy)
+
 4.4.0  2026-03-19
   - fix step 3: validate VERSION_CODENAME is alphanumeric before sed
     substitution (prevents theoretical regex injection)
