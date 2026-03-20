@@ -4,6 +4,56 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.5.0  2026-03-19
+  CRITICAL:
+  - fix step 7: reverse audio architecture from PulseAudio-client to
+    PipeWire-native (Crostini uses PipeWire since Bullseye; masking
+    pipewire-pulse broke audio for all PulseAudio-API apps); add
+    pipewire-audio metapackage; mask legacy pulseaudio daemon if present;
+    enable pipewire.socket and pipewire-pulse.socket; remove PA_CLIENT
+    heredoc, PULSE_SERVER env var, and CROS_UID constant (no consumers)
+  - add step 15: Flatpak Mesa Zink crash warning (Freedesktop Platform
+    >=25.08 + virgl incompatibility; pin to 24.08 runtime;
+    zen-browser/desktop#12276)
+  HIGH:
+  - replace step 11: remove ~130 lines of NodeSource GPG setup; install
+    native Trixie nodejs 20.19.2 arm64 via apt (NodeSource had recurring
+    SHA-1 failures under Trixie's sqv/Sequoia-PGP); remove NODE_MAJOR,
+    NODESOURCE_GPG_FP constants, cleanup trap vars, Step 18 mismatch check
+  - replace step 13: VS Code via Microsoft apt repo (DEB822 format,
+    Signed-By) instead of direct .deb download; remove code-flags.conf
+    (--ozone-platform-hint=auto removed in Electron 38/39; VS Code
+    auto-detects Wayland)
+  MEDIUM:
+  - fix step 6: remove LIBGL_DRI3_DISABLE=0 from gpu.conf (GLX/X11-only,
+    value 0 = false = no-op; absent from current Mesa docs)
+  - add step 1: GPU preflight warning (ChromeOS 131+ disabled virgl by
+    default; chrome://flags#crostini-gpu-support required)
+  - add step 9: optional Chromium install (chromium 146.0 in Trixie arm64;
+    guarded by ! $MINIMAL; ~400 MB)
+  - add step 16: dosbox-x (2025.02.01+dfsg-3 in Trixie arm64)
+  - fix step 12: update rustup TOFU comment (remove stale NodeSource ref)
+  LOW:
+  - add step 1: Baguette containerless VM detection (ChromeOS 143+;
+    baguette-motd package + KVM/!LXC heuristic)
+  - add step 12: SHA-256 checksum verification for rustup-init binary
+    (download from static.rust-lang.org instead of sh.rustup.rs wrapper;
+    GPG removed in rustup 1.26.0)
+  - update gpu.conf comments: GDK_BACKEND redundancy on Trixie,
+    Electron 39+ Wayland auto-detection
+  - renumber step 1 sub-checks (1e GPU warning, 1f net, 1g root, 1h
+    sommelier, 1i Baguette)
+  README:
+  - add Limitations: Flatpak Mesa Zink workaround, multi-container flag
+    expiry at milestone 140
+  - add Browsers section: Brave arm64 Linux, Chrome ARM64 Q2 2026
+  - add Known Issues: Firefox ESR Wayland glitches (Bug 1957911)
+  - update Steps table: step 7 PipeWire, step 9 Chromium, step 11
+    Debian native, step 13 Microsoft apt repo
+  - update Config files written: remove PulseAudio client, PipeWire-pulse
+    mask, VS Code Wayland flags, NodeSource repo; add VS Code DEB822 repo
+  - sync step 9 banner/comment/help/README with Chromium addition
+
 4.4.1  2026-03-19
   - fix step 3: widen VERSION_CODENAME validation from ^[a-z]+$ to
     ^[a-z][a-z0-9-]*$ (future-proofs for hypothetical hyphenated or

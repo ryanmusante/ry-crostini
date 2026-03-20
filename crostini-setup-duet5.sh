@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.4.1
+# Version: 4.5.0
 # Date:    2026-03-19
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -13,8 +13,8 @@
 # NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version.
 #   Package arrays use canonical (non-transitional) names that resolve on both.
 #   If upgrading manually: see https://wiki.debian.org/DebianUpgrade
-# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (NodeSource
-#   key, rustup installer, VS Code deb) are transient and small (<200 MB);
+# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup
+#   installer, Microsoft GPG key) are transient and small (<100 MB);
 #   they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
@@ -23,23 +23,14 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.4.1"
+readonly SCRIPT_VERSION="4.5.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.crostini-setup-checkpoint"
 readonly LOCK_FILE="${HOME}/.crostini-setup.lock"
-readonly NODE_MAJOR=22
-# NodeSource GPG key fingerprint — re-signed SHA-512 on 2026-01-22
-# Trixie's apt (Sequoia/sqv) rejects SHA1 binding sigs since 2026-02-01.
-# Key is refreshed on every run to prevent stale keyring issues.
-# Verify: curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-#           | gpg --show-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}'
-readonly NODESOURCE_GPG_FP="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
 readonly SYSCTL_CONF="/etc/sysctl.d/99-crostini-tuning.conf"
-_cros_uid="$(id -u)" || { printf 'FATAL: cannot determine UID\n' >&2; exit 1; }
-readonly CROS_UID="$_cros_uid"
-unset _log_ts _cros_uid
+unset _log_ts
 _start_epoch="$(date +%s)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly _START_EPOCH="$_start_epoch"
 unset _start_epoch
@@ -76,11 +67,9 @@ cleanup() {
     # which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
     # Remove temp files
-    if [[ -n "${_VSCODE_DEB:-}" ]]; then rm -f "$_VSCODE_DEB" 2>/dev/null; fi
-    if [[ -n "${_ns_key:-}" ]]; then rm -f "$_ns_key" 2>/dev/null; fi
-    if [[ -n "${_ns_refresh:-}" ]]; then rm -f "$_ns_refresh" 2>/dev/null; fi
-    if [[ -n "${_ns_gpg:-}" ]]; then sudo -n rm -f "$_ns_gpg" 2>/dev/null; fi
+    if [[ -n "${_ms_key:-}" ]]; then rm -f "$_ms_key" 2>/dev/null; fi
     if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
+    if [[ -n "${_rustup_sha:-}" ]]; then rm -f "$_rustup_sha" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         # Remove all files (pid + any orphaned tmpfiles from crash)
@@ -425,14 +414,14 @@ STEPS PERFORMED:
         htop, wl-clipboard, ...)
      5  Build essentials and development headers
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
-     7  Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)
+     7  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)
      8  Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt,
         Xft DPI 120, fontconfig, cursor)
-     9  GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
+     9  GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
     10  Python ecosystem (python3, pip, venv)
-    11  Node.js LTS arm64 via NodeSource
+    11  Node.js LTS arm64 (Debian native)
     12  Rust stable aarch64 via rustup
-    13  VS Code (arm64 .deb + Wayland flags)
+    13  VS Code (arm64 via Microsoft apt repo)
     14  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
     15  Flatpak + Flathub (ARM64 app source)
     16  Gaming packages (DOSBox, ScummVM, RetroArch)
@@ -585,7 +574,12 @@ if should_run_step 1; then
     fi
     log "Available disk: ${AVAIL_MB} MB ✓"
 
-    # 1e. Network connectivity (uses detected codename for repo URL)
+    # 1e. GPU acceleration warning (disabled by default since ChromeOS 131)
+    warn "IMPORTANT: GPU acceleration is disabled by default since ChromeOS 131."
+    warn "Enable: chrome://flags#crostini-gpu-support → Enabled → full Chromebook reboot."
+    warn "GPU packages will be installed regardless; /dev/dri/renderD128 requires the flag."
+
+    # 1f. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
     elif curl -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
@@ -594,7 +588,7 @@ if should_run_step 1; then
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
     fi
 
-    # 1f. Not running as root
+    # 1g. Not running as root
     if [[ "$EUID" -eq 0 ]]; then
         if $DRY_RUN; then
             warn "[DRY-RUN] Running as root. Would abort in live mode."
@@ -604,11 +598,21 @@ if should_run_step 1; then
     fi
     log "Running as user: $(whoami) ✓"
 
-    # 1g. Sommelier (Wayland bridge) — needed for all GUI apps
+    # 1h. Sommelier (Wayland bridge) — needed for all GUI apps
     if pgrep -x sommelier &>/dev/null; then
         log "Sommelier (Wayland bridge): running ✓"
     else
         warn "Sommelier not detected. GUI apps may not display until container restarts."
+    fi
+
+    # 1i. Baguette (containerless VM) detection — ChromeOS 143+
+    BAGUETTE_MODE=false
+    if dpkg -l baguette-motd &>/dev/null 2>&1; then
+        BAGUETTE_MODE=true
+        log "Baguette (containerless) mode detected"
+    elif [[ "$(systemd-detect-virt 2>/dev/null)" == "kvm" ]] && [[ ! -d /dev/.lxc ]]; then
+        BAGUETTE_MODE=true
+        log "KVM virtualization detected (possible Baguette mode)"
     fi
 
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
@@ -1013,17 +1017,14 @@ if should_run_step 6; then
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
-# Prefer Wayland for GTK apps (sommelier handles the bridge).
-# NOTE: GTK3/4 in Trixie default to Wayland when WAYLAND_DISPLAY is set,
-# making this variable redundant for most apps. Kept as defensive fallback.
-# VS Code uses --ozone-platform-hint=auto instead.
+# Matches GTK3/4 default fallback (wayland → x11). Explicit for clarity;
+# redundant on Trixie where WAYLAND_DISPLAY triggers Wayland automatically.
+# VS Code auto-detects Wayland via Electron 39+ (no flag needed).
 # Some Electron apps (Slack, Discord) may need GDK_BACKEND unset.
 GDK_BACKEND=wayland,x11
 # Do NOT set MESA_LOADER_DRIVER_OVERRIDE — the driver name varies
 # across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
 # auto-detect the correct driver from /dev/dri.
-# Enable DRI3
-LIBGL_DRI3_DISABLE=0
 # Wayland EGL
 EGL_PLATFORM=wayland
 EOF
@@ -1035,9 +1036,9 @@ EOF
     set_checkpoint 6
     log "Step 6 complete."
 fi
-# Step 7: Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)
+# Step 7: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)
 if should_run_step 7; then
-    step_banner 7 "Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol)"
+    step_banner 7 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)"
 
     AUDIO_PKGS=(
         # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by
@@ -1045,8 +1046,11 @@ if should_run_step 7; then
         alsa-utils
         libasound2-plugins
 
-        # PulseAudio client only — do NOT install the daemon (conflicts with host)
-        # pavucontrol — GUI volume mixer
+        # PipeWire audio — Crostini uses PipeWire since Bullseye.
+        # pipewire-audio metapackage: pipewire + wireplumber + pipewire-pulse + pipewire-alsa
+        pipewire-audio
+
+        # PulseAudio client utilities + GUI mixer
         pulseaudio-utils
         pavucontrol
 
@@ -1060,25 +1064,29 @@ if should_run_step 7; then
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
+    # Mask legacy PulseAudio daemon if present (conflicts with PipeWire)
+    # Ensure PipeWire audio chain is active
+    if ! $DRY_RUN; then
+        if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
+            systemctl --user mask pulseaudio.service 2>/dev/null || true
+            systemctl --user mask pulseaudio.socket 2>/dev/null || true
+            log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
+        fi
+        systemctl --user enable --now pipewire.socket 2>/dev/null || true
+        systemctl --user enable --now pipewire-pulse.socket 2>/dev/null || true
+        log "PipeWire audio chain enabled"
+    else
+        log "[DRY-RUN] systemctl --user mask pulseaudio.service (if installed)"
+        log "[DRY-RUN] systemctl --user enable --now pipewire.socket"
+        log "[DRY-RUN] systemctl --user enable --now pipewire-pulse.socket"
+    fi
+
     # libavcodec-extra (~80 MB of codec libraries) — skip with --minimal
     if ! $MINIMAL; then
         run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libavcodec-extra \
             || warn "libavcodec-extra unavailable — media codec support may be limited"
     else
         log "Skipping libavcodec-extra (--minimal mode)"
-    fi
-
-    # PulseAudio config — point to Crostini host socket
-    PA_CLIENT="${HOME}/.config/pulse/client.conf"
-    if [[ ! -f "$PA_CLIENT" ]]; then
-        # Unquoted heredoc: $CROS_UID must expand to current user's UID
-        write_file "$PA_CLIENT" <<EOF
-# Crostini PulseAudio — connect to host audio server
-default-server = unix:/run/user/${CROS_UID}/pulse/native
-autospawn = no
-EOF
-    else
-        log "PulseAudio client config already exists"
     fi
 
     # Verify audio
@@ -1097,28 +1105,15 @@ EOF
     # Audio environment
     AUDIO_ENV_FILE="${HOME}/.config/environment.d/audio.conf"
     if [[ ! -f "$AUDIO_ENV_FILE" ]]; then
-        # Unquoted heredoc: $CROS_UID must expand to current user's UID
-        write_file "$AUDIO_ENV_FILE" <<EOF
+        write_file "$AUDIO_ENV_FILE" <<'EOF'
 # Crostini audio environment
-PULSE_SERVER=unix:/run/user/${CROS_UID}/pulse/native
+# PipeWire provides PulseAudio socket natively via pipewire-pulse
 EOF
     else
         log "Audio env already exists — skipping"
     fi
 
-    # Mask PipeWire's PulseAudio replacement — Trixie defaults to PipeWire but
-    # Crostini forwards audio via the host's PulseAudio socket. pipewire-pulse
-    # would create a competing socket. No-op if pipewire-pulse is not installed.
-    if ! $DRY_RUN; then
-        systemctl --user mask pipewire-pulse.socket 2>/dev/null || true
-        systemctl --user mask pipewire-pulse.service 2>/dev/null || true
-        log "PipeWire-pulse masked (Crostini audio conflict prevention)"
-    else
-        log "[DRY-RUN] systemctl --user mask pipewire-pulse.socket"
-        log "[DRY-RUN] systemctl --user mask pipewire-pulse.service"
-    fi
-
-    unset AUDIO_PKGS AUDIO_ENV_FILE PA_CLIENT SND_DEV_COUNT
+    unset AUDIO_PKGS AUDIO_ENV_FILE SND_DEV_COUNT
     set_checkpoint 7
     log "Step 7 complete."
 fi
@@ -1318,9 +1313,9 @@ EOF
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
+# Step 9: GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
 if should_run_step 9; then
-    step_banner 9 "GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)"
+    step_banner 9 "GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)"
 
     GUI_PKGS=(
         # Browser
@@ -1381,6 +1376,12 @@ if should_run_step 9; then
         else
             warn "update-alternatives for Firefox ESR failed"
         fi
+    fi
+
+    # Native Chromium (optional — heavy, ~400 MB)
+    if ! $MINIMAL; then
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y chromium \
+            || warn "chromium install failed (non-fatal)"
     fi
 
     # Set default file manager
@@ -1447,123 +1448,31 @@ if should_run_step 10; then
     set_checkpoint 10
     log "Step 10 complete."
 fi
-# Step 11: Node.js LTS arm64 via NodeSource
-# NOTE: NodeSource is in maintenance mode and has had multiple GPG key rotations.
-# Alternative: download the binary tarball directly from https://nodejs.org/dist/
-# with SHA256 checksum verification (no repo, no key, smaller trust surface).
-# Keeping NodeSource for now as it integrates with apt upgrade and is the
-# documented method for Debian; the GPG fingerprint is pinned below.
+# Step 11: Node.js LTS arm64 (Debian native)
+# Trixie ships nodejs 20.19.2 arm64 — no third-party repo needed.
+# For Node 22+: install fnm (Fast Node Manager).
 if should_run_step 11; then
-    step_banner 11 "Node.js LTS arm64 via NodeSource"
-
-    # Refresh GPG keyring unconditionally when NodeSource repo is configured.
-    # NodeSource rotated from SHA1 to SHA-512 sigs on 2026-01-22; Trixie's
-    # Sequoia/sqv rejects old keyrings. Re-downloading is cheap (3KB).
-    if [[ -f /etc/apt/sources.list.d/nodesource.list ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] refresh NodeSource GPG keyring"
-        else
-            _ns_refresh="$(mktemp /tmp/nodesource-refresh-XXXXXXXX.asc)" || warn "Cannot create tmpfile for key refresh"
-            if [[ -n "${_ns_refresh:-}" ]] \
-               && curl -fsSL --connect-timeout 10 --max-time 30 \
-                    https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-                    -o "$_ns_refresh" 2>/dev/null \
-               && [[ -s "$_ns_refresh" ]]; then
-                _ns_rfp="$(gpg --dry-run --show-keys --with-colons "$_ns_refresh" 2>/dev/null \
-                    | awk -F: '/^fpr:/{print $10; exit}')" || true
-                if [[ "$_ns_rfp" == "$NODESOURCE_GPG_FP" ]]; then
-                    run sudo mkdir -p /etc/apt/keyrings || true
-                    # Redirect captures gpg log messages, not dearmored output (-o flag)
-                    # shellcheck disable=SC2024,SC2015
-                    sudo gpg --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-                        < "$_ns_refresh" >> "$LOG_FILE" 2>&1 \
-                        && log "NodeSource GPG keyring refreshed" \
-                        || warn "GPG dearmor failed during key refresh"
-                else
-                    warn "NodeSource fingerprint mismatch on refresh (got ${_ns_rfp:-empty}) — keeping existing"
-                fi
-                unset _ns_rfp
-            else
-                warn "NodeSource key refresh failed — keeping existing keyring"
-            fi
-            rm -f "${_ns_refresh:-}" 2>/dev/null
-            unset _ns_refresh
-        fi
-    fi
+    step_banner 11 "Node.js LTS arm64 (Debian native)"
 
     if command -v node &>/dev/null; then
         log "Node.js already installed: $(timeout 3 node --version 2>/dev/null || echo 'unknown')"
     else
-        log "Installing Node.js ${NODE_MAJOR}.x LTS from NodeSource..."
-
-        if $DRY_RUN; then
-            log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource-key-XXXXXXXX.asc"
-            log "[DRY-RUN] gpg --dearmor → /etc/apt/keyrings/nodesource.gpg (fingerprint: ${NODESOURCE_GPG_FP})"
-            log "[DRY-RUN] write /etc/apt/sources.list.d/nodesource.list (arch=arm64, node_${NODE_MAJOR}.x)"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get update"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs"
-        else
-            run sudo mkdir -p /etc/apt/keyrings || die "Cannot create /etc/apt/keyrings"
-            # Skip key download if refresh (above) already created the keyring
-            if [[ ! -f /etc/apt/keyrings/nodesource.gpg ]]; then
-            _ns_key="$(mktemp /tmp/nodesource-key-XXXXXXXX.asc)" || die "Cannot create tmpfile for NodeSource key"
-            run curl -fsSL --connect-timeout 10 --max-time 30 https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$_ns_key" \
-                || { rm -f "$_ns_key"; die "NodeSource GPG key download failed"; }
-            if [[ ! -s "$_ns_key" ]]; then
-                rm -f "$_ns_key"; die "NodeSource GPG key is empty"
-            fi
-            # Verify GPG key fingerprint to prevent supply-chain substitution
-            _ns_fp="$(gpg --dry-run --show-keys --with-colons "$_ns_key" 2>/dev/null \
-                | awk -F: '/^fpr:/{print $10; exit}')" || true
-            if [[ -z "$_ns_fp" ]]; then
-                rm -f "$_ns_key"
-                die "NodeSource GPG fingerprint extraction failed — key file may be corrupt or gpg cannot parse it."
-            fi
-            if [[ "$_ns_fp" != "$NODESOURCE_GPG_FP" ]]; then
-                rm -f "$_ns_key"
-                die "NodeSource GPG fingerprint mismatch: expected ${NODESOURCE_GPG_FP}, got ${_ns_fp}. Possible key rotation or supply-chain compromise."
-            fi
-            log "NodeSource GPG fingerprint verified: ${_ns_fp}"
-            unset _ns_fp
-            _ns_gpg="$(sudo mktemp /etc/apt/keyrings/.tmp_XXXXXXXX)" \
-                || { rm -f "$_ns_key"; die "Cannot create tmpfile for GPG keyring"; }
-            # Redirect captures gpg log messages, not dearmored output (-o flag)
-            # shellcheck disable=SC2024
-            sudo gpg --yes --dearmor -o "$_ns_gpg" < "$_ns_key" >> "$LOG_FILE" 2>&1 \
-                || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "NodeSource GPG dearmor failed"; }
-            sudo mv "$_ns_gpg" /etc/apt/keyrings/nodesource.gpg \
-                || { rm -f "$_ns_key"; sudo -n rm -f "$_ns_gpg" 2>/dev/null; die "Cannot move GPG keyring into place"; }
-            rm -f "$_ns_key"
-            fi # end keyring guard
-            printf 'deb [arch=arm64 signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$NODE_MAJOR" \
-                | write_file_sudo /etc/apt/sources.list.d/nodesource.list
-            # Verify sources file was written correctly (catches silent write_file_sudo failure)
-            if [[ ! -s /etc/apt/sources.list.d/nodesource.list ]]; then
-                die "NodeSource sources.list is empty or missing after write"
-            fi
-            if ! grep -q "deb.*nodesource" /etc/apt/sources.list.d/nodesource.list; then
-                die "NodeSource sources.list content invalid"
-            fi
-            run sudo DEBIAN_FRONTEND=noninteractive apt-get update || die "apt update failed after adding NodeSource repo — check GPG key and network"
-            run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || die "nodejs install failed — check NodeSource repo setup above"
-        fi
+        install_pkgs_best_effort nodejs npm || die "nodejs install failed"
     fi
 
-    # Configure npm global prefix to avoid sudo for global installs
+    # npm global prefix — avoid sudo for global installs
     NPM_GLOBAL="${HOME}/.npm-global"
     if command -v npm &>/dev/null; then
         run mkdir -p "$NPM_GLOBAL" || warn "Cannot create npm global dir"
-        if run npm config set prefix "${NPM_GLOBAL}"; then
-            $DRY_RUN || log "npm global prefix set to ${NPM_GLOBAL}"
-        else
-            warn "npm config set prefix failed"
-        fi
+        run npm config set prefix "${NPM_GLOBAL}" || warn "npm config set prefix failed"
     fi
 
     log "Node version: $(timeout 3 node --version 2>/dev/null || echo 'not installed')"
     log "npm version: $(timeout 3 npm --version 2>/dev/null || echo 'not installed')"
+    # For Node 22+: install fnm (Fast Node Manager):
+    #   curl -fsSL https://fnm.vercel.app/install | bash
 
-    unset NPM_GLOBAL _ns_key _ns_gpg _ns_refresh
+    unset NPM_GLOBAL
     set_checkpoint 11
     log "Step 11 complete."
 fi
@@ -1576,15 +1485,17 @@ if should_run_step 12; then
     else
         log "Installing Rust via rustup (non-interactive)..."
         if $DRY_RUN; then
-            log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o /tmp/rustup-init-XXXXXXXXXX.sh"
-            log "[DRY-RUN] sh /tmp/rustup-init-XXXXXXXXXX.sh -y --default-toolchain stable"
+            log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init-XXXXXXXXXX"
+            log "[DRY-RUN] sha256sum verify against rustup-init.sha256"
+            log "[DRY-RUN] /tmp/rustup-init-XXXXXXXXXX -y --default-toolchain stable"
         else
-            # TOFU (Trust On First Use): HTTPS-only download with no signature/checksum
-            # verification — this is the official rustup install method. Unlike NodeSource
-            # (GPG fingerprint pinned), rustup.rs does not publish a stable signing key.
-            # Download to tmpfile to prevent executing a truncated script on partial download.
-            _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX.sh)" || die "Cannot create tmpfile for rustup installer"
-            if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://sh.rustup.rs -o "$_rustup_tmp"; then
+            # TOFU (Trust On First Use): HTTPS-only. rustup.rs does not publish a stable
+            # signing key (GPG removed in 1.26.0). SHA-256 verify added below.
+            # Download binary directly (not shell wrapper) to enable checksum verification.
+            _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX)" || die "Cannot create tmpfile for rustup installer"
+            if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 \
+                "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init" \
+                -o "$_rustup_tmp"; then
                 rm -f "$_rustup_tmp"
                 die "Rustup download failed"
             fi
@@ -1592,9 +1503,26 @@ if should_run_step 12; then
                 rm -f "$_rustup_tmp"
                 die "Rustup installer is empty"
             fi
-            run sh "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
+            # Verify SHA-256 checksum (TOFU via HTTPS, no GPG since rustup 1.26.0)
+            _rustup_sha="$(mktemp /tmp/rustup-sha-XXXXXXXXXX)" || warn "Cannot create checksum tmpfile"
+            if curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 30 \
+                "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init.sha256" \
+                -o "$_rustup_sha" 2>/dev/null && [[ -s "$_rustup_sha" ]]; then
+                _expected="$(awk '{print $1}' "$_rustup_sha")"
+                _actual="$(sha256sum "$_rustup_tmp" | awk '{print $1}')"
+                if [[ "$_expected" != "$_actual" ]]; then
+                    rm -f "$_rustup_tmp" "$_rustup_sha"
+                    die "rustup-init SHA-256 mismatch: expected ${_expected}, got ${_actual}"
+                fi
+                log "rustup-init SHA-256 verified: ${_actual}"
+            else
+                warn "Cannot download rustup checksum — proceeding with TOFU"
+            fi
+            rm -f "$_rustup_sha"
+            chmod +x "$_rustup_tmp"
+            run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
             rm -f "$_rustup_tmp"
-            unset _rustup_tmp
+            unset _rustup_tmp _rustup_sha
         fi
 
         if [[ -f "${HOME}/.cargo/env" ]]; then
@@ -1609,59 +1537,44 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: VS Code (arm64 .deb + Wayland flags)
+# Step 13: VS Code (arm64 via Microsoft apt repo)
 if should_run_step 13; then
-    step_banner 13 "VS Code (arm64 .deb + Wayland flags)"
+    step_banner 13 "VS Code (arm64 via Microsoft apt repo)"
 
     if command -v code &>/dev/null; then
         log "VS Code already installed: $(timeout 3 code --version 2>/dev/null | head -1 || true)"
     else
         if $DRY_RUN; then
-            log "[DRY-RUN] curl -fsSL --connect-timeout 10 --max-time 120 https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 -o /tmp/vscode-arm64-XXXXXXXXXX.deb"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/vscode-arm64-XXXXXXXXXX.deb"
+            log "[DRY-RUN] curl Microsoft GPG key → /usr/share/keyrings/microsoft.gpg"
+            log "[DRY-RUN] write /etc/apt/sources.list.d/vscode.sources (DEB822, arm64)"
+            log "[DRY-RUN] apt-get update && apt-get install -y code"
         else
-            # TOFU (Trust On First Use): HTTPS-only download from code.visualstudio.com.
-            # No GPG signature is available for direct .deb downloads (unlike the
-            # Microsoft apt repo).  Integrity is validated by dpkg-deb --info below.
-            log "Downloading VS Code arm64 .deb..."
-            _VSCODE_DEB="$(mktemp /tmp/vscode-arm64-XXXXXXXXXX.deb)" || die "Cannot create tmpfile for VS Code download"
-            _vscode_rc=0
-            run curl -fsSL --connect-timeout 10 --max-time 120 "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64" -o "${_VSCODE_DEB}" || _vscode_rc=$?
-            if [[ "$_vscode_rc" -ne 0 ]]; then
-                warn "VS Code download failed (curl exit ${_vscode_rc}). Install manually:"
-                warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-            elif [[ -f "$_VSCODE_DEB" ]] && [[ -s "$_VSCODE_DEB" ]]; then
-                # Validate .deb structure before installing (catches corrupt/truncated downloads)
-                if ! dpkg-deb --info "$_VSCODE_DEB" > /dev/null 2>&1; then
-                    warn "VS Code .deb is corrupt or invalid. Install manually:"
-                    warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-                elif run sudo DEBIAN_FRONTEND=noninteractive dpkg -i "$_VSCODE_DEB"; then
-                    log "VS Code installed ✓"
-                elif run sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y; then
-                    log "VS Code installed (dpkg deps resolved by apt-get -f) ✓"
-                else
-                    warn "VS Code install failed (dpkg and apt-get -f both failed). Install manually:"
-                    warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-                fi
-            else
-                warn "VS Code download failed. Install manually:"
-                warn "  https://code.visualstudio.com/download (select ARM64 .deb)"
-            fi
-            rm -f "$_VSCODE_DEB" 2>/dev/null
+            # Microsoft GPG key
+            _ms_key="$(mktemp /tmp/microsoft-key-XXXXXXXX.asc)" || die "Cannot create tmpfile"
+            run curl -fsSL --connect-timeout 10 --max-time 30 \
+                https://packages.microsoft.com/keys/microsoft.asc -o "$_ms_key" \
+                || { rm -f "$_ms_key"; die "Microsoft GPG key download failed"; }
+            run sudo mkdir -p /usr/share/keyrings || true
+            sudo gpg --yes --dearmor -o /usr/share/keyrings/microsoft.gpg < "$_ms_key" \
+                >> "$LOG_FILE" 2>&1 || { rm -f "$_ms_key"; die "Microsoft GPG dearmor failed"; }
+            rm -f "$_ms_key"
+
+            # DEB822 format repo
+            write_file_sudo /etc/apt/sources.list.d/vscode.sources <<'EOF'
+Types: deb
+URIs: https://packages.microsoft.com/repos/code
+Suites: stable
+Components: main
+Architectures: arm64
+Signed-By: /usr/share/keyrings/microsoft.gpg
+EOF
+
+            run sudo DEBIAN_FRONTEND=noninteractive apt-get update || warn "apt update failed"
+            run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y code || warn "VS Code install failed"
         fi
     fi
 
-    # VS Code Wayland flags for better rendering on Crostini
-    VSCODE_FLAGS="${HOME}/.config/code-flags.conf"
-    if [[ ! -f "$VSCODE_FLAGS" ]]; then
-        write_file "$VSCODE_FLAGS" <<'EOF'
---ozone-platform-hint=auto
-EOF
-    else
-        log "VS Code flags already exist"
-    fi
-
-    unset VSCODE_FLAGS _VSCODE_DEB _vscode_rc
+    unset _ms_key
     set_checkpoint 13
     log "Step 13 complete."
 fi
@@ -1806,6 +1719,9 @@ if should_run_step 15; then
     else
         warn "flatpak binary not available — skipping Flathub remote"
     fi
+    warn "NOTE: Flatpak apps using Freedesktop Platform ≥25.08 may crash on"
+    warn "Crostini (Mesa Zink driver incompatibility). Pin affected apps to 24.08:"
+    warn "  flatpak install --runtime org.freedesktop.Platform//24.08"
     log "Install apps: flatpak install flathub <app-id>"
 
     set_checkpoint 15
@@ -1817,7 +1733,7 @@ if should_run_step 16; then
 
     # Native ARM packages (no translation layer needed)
     # dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
-    install_pkgs_best_effort dosbox scummvm || warn "Some gaming packages failed"
+    install_pkgs_best_effort dosbox dosbox-x scummvm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub)
     if $DRY_RUN; then
@@ -2014,17 +1930,6 @@ if should_run_step 18; then
     check_tool "python3"     python3
     check_tool "pip"         pip3
     check_tool "node"        node
-    # Warn if installed node major doesn't match expected NODE_MAJOR
-    if command -v node &>/dev/null; then
-        _node_ver="$(timeout 3 node --version 2>/dev/null)" || true
-        _node_maj="${_node_ver#v}"
-        _node_maj="${_node_maj%%.*}"
-        if [[ -n "$_node_maj" ]] && [[ "$_node_maj" =~ ^[0-9]+$ ]] && [[ "$_node_maj" -ne "$NODE_MAJOR" ]]; then
-            logprintf '  %b⚠%b  Node.js major version mismatch: installed v%s, expected %s.x\n' "$YELLOW" "$RESET" "$_node_maj" "$NODE_MAJOR"
-            ((_verify_warn++)) || true
-        fi
-        unset _node_ver _node_maj
-    fi
     check_tool "npm"         npm
     check_tool "rustc"       rustc
     check_tool "cargo"       cargo
@@ -2044,9 +1949,11 @@ if should_run_step 18; then
     check_tool "pavucontrol" pavucontrol
     check_tool "flatpak"     flatpak
     check_tool "dosbox"      dosbox
+    check_tool "dosbox-x"    dosbox-x
     check_tool "scummvm"     scummvm
     check_tool "code"        code
     check_tool "firefox-esr" firefox-esr
+    if ! $MINIMAL; then check_tool "chromium" chromium; fi
     check_tool "thunar"      thunar
     check_tool "evince"      evince
     check_tool "eog"         eog
@@ -2073,7 +1980,6 @@ if should_run_step 18; then
     check_config "${HOME}/.Xresources"                           "Xft DPI + rendering"
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
-    check_config "${HOME}/.config/pulse/client.conf"             "PulseAudio client"
     check_config "/etc/profile.d/crostini-env.sh"                "Shell env + PATH"
     check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify watchers"
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
@@ -2083,21 +1989,16 @@ if should_run_step 18; then
         ((_verify_warn++)) || true
     fi
     if command -v code &>/dev/null; then
-        check_config "${HOME}/.config/code-flags.conf"           "VS Code Wayland"
+        check_config "/etc/apt/sources.list.d/vscode.sources"      "VS Code apt repo (DEB822)"
     fi
-    if command -v node &>/dev/null; then
-        check_config "/etc/apt/sources.list.d/nodesource.list"   "NodeSource repo"
-    fi
-    # PipeWire mask (Trixie audio conflict prevention)
-    _pw_mask="${HOME}/.config/systemd/user/pipewire-pulse.socket"
-    if [[ -L "$_pw_mask" ]]; then
-        logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "PipeWire-pulse masked" "$_pw_mask"
+    # PipeWire audio chain verification
+    if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
         ((_verify_pass++)) || true
-    elif command -v pipewire &>/dev/null; then
-        logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "PipeWire-pulse not masked" "(may conflict with Crostini audio)"
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "PipeWire-pulse not running — restart terminal"
         ((_verify_warn++)) || true
     fi
-    unset _pw_mask
     logprintf '\n'
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU:     glxgears / glmark2-es2-wayland / vulkaninfo --summary\n'

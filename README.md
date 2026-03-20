@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.4.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.5.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -69,13 +69,13 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, ...) |
 | 5 | Build essentials and development headers |
 | 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
-| 7 | Audio stack (ALSA, PulseAudio client, GStreamer codecs, pavucontrol) |
+| 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol) |
 | 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
-| 9 | GUI applications (Firefox ESR, Thunar, Evince, xterm, fonts, screenshots, MIME defaults) |
+| 9 | GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults) |
 | 10 | Python ecosystem (python3, pip, venv) |
-| 11 | Node.js LTS arm64 via NodeSource |
+| 11 | Node.js LTS arm64 (Debian native) |
 | 12 | Rust stable aarch64 via rustup |
-| 13 | VS Code (arm64 .deb + Wayland flags) |
+| 13 | VS Code (arm64 via Microsoft apt repo) |
 | 14 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
 | 15 | Flatpak + Flathub (ARM64 app source) |
 | 16 | Gaming packages (DOSBox, ScummVM, RetroArch) |
@@ -86,10 +86,9 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 
 Apt download tuning, GPU env, audio env, sommelier scaling + Super key
 passthrough, Qt theming, GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA
-for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, PulseAudio client,
-PipeWire-pulse mask (Trixie audio conflict prevention), VS Code Wayland flags,
-inotify watchers, shell env + PATH, NodeSource apt repo. Memory tuning
-attempted if /proc/sys/vm/ is writable.
+for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, VS Code apt repo
+(DEB822), inotify watchers, shell env + PATH. Memory tuning attempted if
+/proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -133,6 +132,29 @@ paravirtualized GPU. Use
 [GeForce NOW](https://play.geforcenow.com) or
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
 Always download the **arm64** `.deb` variant.
+
+Flatpak apps bundled with Freedesktop Platform ≥25.08 may crash on Crostini
+due to Mesa 25.x Zink driver incompatibility with virgl GPU passthrough.
+Workaround: pin to 24.08 runtime. See zen-browser/desktop#12276.
+This workaround is temporary — track Mesa/virgl upstream for a permanent fix.
+
+The `#crostini-multi-container` Chrome flag expires at milestone 140 and will
+not be re-enabled (Baguette containerless VM replaces multi-container support).
+
+## Browsers
+
+[Brave](https://brave.com/linux/) offers native arm64 Linux packages (DEB/RPM).
+Use DEB822 format with Signed-By for the apt repo.
+
+Google Chrome for ARM64 Linux expected Q2 2026
+(https://blog.chromium.org/2026/03/bringing-chrome-to-arm64-linux-devices.html).
+
+## Known Issues
+
+- **Firefox ESR Wayland glitches** (Bug 1957911, Crostini-specific): notification
+  and popup windows may render at zero size. Separately, some UI actions (e.g.
+  hamburger menu) can trigger broken-pipe crashes on Nightly builds. ESR channel
+  is more stable than mainline Firefox in Crostini.
 
 ## Gaming
 
