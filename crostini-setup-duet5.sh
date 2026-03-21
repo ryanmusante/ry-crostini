@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.7.5
+# Version: 4.7.6
 # Date:    2026-03-20
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~50 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.7.5"
+readonly SCRIPT_VERSION="4.7.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"

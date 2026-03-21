@@ -4,6 +4,9 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.7.6  2026-03-20
+  - fix header: sudo call count ~60 → ~50 (actual non-comment count: 51)
+
 4.7.5  2026-03-20
   Script:
   - trim 7 function docstrings to single-line (logprintf, _prompt,
