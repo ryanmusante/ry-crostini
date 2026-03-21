@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.7.3-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.7.5-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -75,7 +75,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 10 | Rust stable aarch64 via rustup |
 | 11 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
 | 12 | Flatpak + Flathub (ARM64 app source) |
-| 13 | Gaming packages (DOSBox, ScummVM, RetroArch) |
+| 13 | Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
@@ -95,12 +95,9 @@ Step 3 automatically upgrades Bookworm (Debian 12) containers to Trixie
 `.pre-trixie` suffix under `/etc/apt/` (not inside `sources.list.d/`, which
 would cause APT "Ignoring file" warnings). The `VERSION_CODENAME`
 is validated as lowercase alphanumeric (with hyphens) before any rewrite. If the container is already
-on Trixie, step 3 performs a normal update/upgrade only.
-
-Package arrays use canonical (non-transitional) names that resolve on both
-Bookworm and Trixie. The Trixie t64 transition (64-bit `time_t`) renamed
-library packages with a `t64` suffix on 32-bit architectures. On arm64,
-this is transparent (`libasound2t64` provides `libasound2`).
+on Trixie, step 3 performs a normal update/upgrade only. Package arrays
+use canonical (non-transitional) names that resolve on both releases; the
+Trixie t64 transition is transparent on arm64.
 
 The Crostini-managed `cros.list` in `/etc/apt/sources.list.d/` is also
 updated but may reset on container restart — this is expected ChromeOS
@@ -128,7 +125,6 @@ Crostini and unusable for gaming on this device's 4 GB RAM and virgl
 paravirtualized GPU. Use
 [GeForce NOW](https://play.geforcenow.com) or
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
-Always download the **arm64** `.deb` variant.
 
 Flatpak apps bundled with Freedesktop Platform ≥25.08 may crash on Crostini
 due to Mesa 25.x Zink driver incompatibility with virgl GPU passthrough.
@@ -138,10 +134,8 @@ This workaround is temporary — track Mesa/virgl upstream for a permanent fix.
 The `#crostini-multi-container` Chrome flag expires at milestone 140 and will
 not be re-enabled (Baguette containerless VM replaces multi-container support).
 
-Flatpak system-mode installs require polkit grants (`GetRevokefsFd`, `Deploy`)
-which are blocked in Crostini containers. The script uses `flatpak install
---user` for all Flatpak apps. System-level `flatpak remote-add` may also fail;
-a user-level remote is added as fallback.
+Flatpak uses `--user` mode; system-mode installs are blocked by polkit in
+Crostini containers.
 
 `fs.inotify.max_user_watches` is written to `/etc/sysctl.d/` but the Termina
 VM may block the write at runtime. The default 8192 is sufficient for most
@@ -165,14 +159,14 @@ Google Chrome for ARM64 Linux expected Q2 2026
 
 ## Gaming
 
-Step 13 installs DOSBox, ScummVM, and RetroArch (Flatpak). This section
+Step 13 installs DOSBox, DOSBox-X, ScummVM, and RetroArch (Flatpak). This section
 covers what works, what doesn't, and advanced options.
 
 ### Compatibility tiers
 
 | Tier | What runs | RAM | Examples |
 |------|-----------|-----|---------|
-| Excellent | ScummVM, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
+| Excellent | ScummVM, DOSBox, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
 | Fair | RetroArch PSX | 300-500 MB | PS1 catalog |
 | Marginal | RetroArch N64 | ~500 MB | May lag at 4 GB |
@@ -182,9 +176,11 @@ covers what works, what doesn't, and advanced options.
 
 ### Native ARM64 (installed by step 13)
 
-**DOSBox** — classic DOS emulation (~30-50 MB). The `dosbox-staging` fork
-is actively maintained but its Flathub Flatpak is x86\_64-only; compile
-from source or use the classic `dosbox` apt package.
+**DOSBox** — classic DOS emulation (~30-50 MB).
+
+**DOSBox-X** — enhanced DOSBox fork with PC-98, NEC, and Tandy support,
+printer emulation, and better Windows 3.x/9x guest compatibility. Available
+as `dosbox-x` in Trixie arm64.
 
 **ScummVM** — 200+ native engine reimplementations (~50-100 MB). No x86
 translation needed.
@@ -206,11 +202,10 @@ no detached GPG signature; inspect keys before adding to `trusted.gpg.d`.
 **Wine** — must use x86 Wine via box86 (not `apt install wine`, which
 installs wine-arm). See the
 [box86 x86 Wine docs](https://github.com/ptitSeb/box86/blob/master/docs/X86WINE.md).
-WineD3D only (no DXVK); practical ceiling is D3D8/D3D9.
-
-**winetricks** — install `cabextract` and `unzip`, then download the script
-from the [Winetricks repo](https://github.com/Winetricks/winetricks). Must
-suppress banner: `BOX86_NOBANNER=1 winetricks -q corefonts vcrun2010`.
+WineD3D only (no DXVK); practical ceiling is D3D8/D3D9. For winetricks,
+install `cabextract` and `unzip`, download from the
+[Winetricks repo](https://github.com/Winetricks/winetricks), and suppress
+banner: `BOX86_NOBANNER=1 winetricks -q corefonts vcrun2010`.
 
 ### GOG games
 
@@ -227,13 +222,6 @@ limitations: [GeForce NOW](https://play.geforcenow.com),
 [Xbox Cloud Gaming](https://xbox.com/play),
 [Amazon Luna](https://luna.amazon.com).
 
-### Recommended approach
-
-1. Use the native ARM64 packages from step 13 (DOSBox, ScummVM, RetroArch)
-2. Buy GOG Linux-native titles; download `.sh` installers directly
-3. Attempt box86/box64+Wine only for specific Windows-only games
-4. Use cloud gaming for anything demanding
-
 ## Verify
 
 ```bash
@@ -248,17 +236,6 @@ xrandr                          # display outputs
 fc-match sans-serif             # fonts
 fc-match monospace              # fonts
 ```
-
-## Files
-
-```
-crostini-setup-duet5.sh    main script (bash)
-README.md                  this file
-CHANGELOG.txt              version history
-LICENSE                    MIT license
-```
-
-See [CHANGELOG.txt](CHANGELOG.txt) for the full version history.
 
 ## License
 

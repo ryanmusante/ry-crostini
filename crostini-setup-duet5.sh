@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.7.3
+# Version: 4.7.5
 # Date:    2026-03-20
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -8,7 +8,7 @@
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
-# NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version. Package arrays use canonical (non-transitional) names that resolve on both. If upgrading manually: see https://wiki.debian.org/DebianUpgrade
+# NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.7.3"
+readonly SCRIPT_VERSION="4.7.5"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -118,7 +118,7 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
-# logprintf: printf to both stdout and log file (for verification output) MUST be defined before step_banner (which calls it). ANSI codes are stripped from the log in a single pass at exit (see _strip_log_ansi).
+# logprintf: printf to both stdout and log file. MUST be defined before step_banner.
 logprintf() {
     # shellcheck disable=SC2059
     printf "$@"
@@ -126,7 +126,7 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _prompt: interactive prompt — displays on stderr (user-facing) and appends to log. Usage identical to printf.  All interactive instructions and "Press Enter" lines go through here so the audit trail is complete.
+# _prompt: interactive prompt — stderr + log. All "Press Enter" lines route here for audit.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -134,7 +134,7 @@ _prompt() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _cleanup_warn: log helper safe for use inside cleanup/trap context. Uses $SECONDS (bash builtin, no subprocess) instead of date(1) to avoid hanging on a broken pipe, frozen cgroup, or killed date process.
+# _cleanup_warn: log helper safe inside cleanup/trap. Uses $SECONDS (builtin, no subprocess).
 # shellcheck disable=SC2317,SC2329
 _cleanup_warn() {
     printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" >&2
@@ -142,7 +142,7 @@ _cleanup_warn() {
         >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _strip_log_ansi: single-pass ANSI-escape removal from the log file. Called once at script exit (cleanup) rather than per-line, avoiding both process-substitution races and per-call sed forks.
+# _strip_log_ansi: single-pass ANSI removal from log file. Called once at exit.
 # shellcheck disable=SC2317,SC2329
 _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
@@ -203,12 +203,12 @@ should_run_step() {
     [[ "$step_num" -gt "$checkpoint" ]]
 }
 
-# _tee_log: tee stdin to terminal (raw) + log file (raw). Terminal output preserves color; log file receives raw output (ANSI codes are stripped in a single pass at script exit via _strip_log_ansi). Previous versions used process substitution >(sed ...) which created an asynchronous subprocess not tracked by wait — log data could be lost on early exit.  Synchronous tee -a eliminates that race entirely.
+# _tee_log: tee stdin to terminal + log file. ANSI stripped at exit by _strip_log_ansi.
 _tee_log() {
     tee -a "$LOG_FILE"
 }
 
-# run: execute "$@" directly; respects dry-run. NOTE: stderr is merged into stdout (2>&1) so both streams are captured in the log file and displayed in execution order.  This is a deliberate trade-off: callers that need separated stderr should capture it themselves.
+# run: execute "$@" directly; respects dry-run. stderr merged into stdout (2>&1) for log capture.
 run() {
     if $DRY_RUN; then
         log "[DRY-RUN] $*"
@@ -257,7 +257,7 @@ write_file() {
     log "Wrote $dest"
 }
 
-# write_file_sudo: atomic write via sudo, respects dry-run Output file mode is 644 (readable by all) — appropriate for /etc/ config files. Callers that need a different mode should chmod after calling.
+# write_file_sudo: atomic write via sudo, respects dry-run. Output mode 644.
 write_file_sudo() {
     local dest="$1"
     if $DRY_RUN; then
@@ -274,7 +274,7 @@ write_file_sudo() {
     log "Wrote $dest (sudo)"
 }
 
-# install_pkgs_best_effort: batch install, fallback to per-package on failure Usage: install_pkgs_best_effort pkg1 pkg2 ... Returns: 0 if all succeeded (batch or individual), 1 if any individual installs failed
+# install_pkgs_best_effort: batch install, fallback to per-package. Returns 1 if any failed.
 install_pkgs_best_effort() {
     if $DRY_RUN; then
         log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $*"
@@ -378,7 +378,7 @@ STEPS PERFORMED:
     10  Rust stable aarch64 via rustup
     11  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
     12  Flatpak + Flathub (ARM64 app source)
-    13  Gaming packages (DOSBox, ScummVM, RetroArch)
+    13  Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)
     14  Container backup (opens ChromeOS backup page with --interactive)
     15  Summary and verification
 
@@ -1341,13 +1341,10 @@ if should_run_step 9; then
     # Set default image viewer
     if command -v eog &>/dev/null || $DRY_RUN; then
         _eog_ok=true
-        run xdg-mime default org.gnome.eog.desktop image/png || { warn "xdg-mime default for eog/png failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/jpeg || { warn "xdg-mime default for eog/jpeg failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/gif || { warn "xdg-mime default for eog/gif failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/webp || { warn "xdg-mime default for eog/webp failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/svg+xml || { warn "xdg-mime default for eog/svg failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/bmp || { warn "xdg-mime default for eog/bmp failed"; _eog_ok=false; }
-        run xdg-mime default org.gnome.eog.desktop image/tiff || { warn "xdg-mime default for eog/tiff failed"; _eog_ok=false; }
+        for _mime in image/png image/jpeg image/gif image/webp image/svg+xml image/bmp image/tiff; do
+            run xdg-mime default org.gnome.eog.desktop "$_mime" || { warn "xdg-mime default for eog/${_mime#image/} failed"; _eog_ok=false; }
+        done
+        unset _mime
         $_eog_ok && { $DRY_RUN || log "Eye of GNOME set as default image viewer"; }
         unset _eog_ok
     fi
@@ -1592,9 +1589,9 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch)
+# Step 13: Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch)"
+    step_banner 13 "Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)"
 
     # Native ARM packages (no translation layer needed) dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
     install_pkgs_best_effort dosbox dosbox-x scummvm || warn "Some gaming packages failed"
@@ -1872,22 +1869,16 @@ if should_run_step 15; then
     fi
     logprintf '\n'
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
-    logprintf '  GPU:     glxgears / glmark2-es2-wayland / vulkaninfo --summary\n'
-    logprintf '  Audio:   pactl info / speaker-test -t wav -c 2 / pavucontrol\n'
-    logprintf '  Display: xdpyinfo | grep resolution / xrandr\n'
-    logprintf '  Fonts:   fc-match sans-serif / fc-match monospace\n'
+    logprintf '  GPU/Audio:   glxgears / glmark2-es2-wayland / vulkaninfo --summary / pactl info\n'
+    logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
     logprintf '\n'
 
     # Reminders
     logprintf '%bReminders:%b\n' "$YELLOW" "$RESET"
-    logprintf '  • Steam is x86-only — no native ARM64 build exists\n'
-    logprintf '  • box64/box86 (community x86 translation) exists but is\n'
-    logprintf '    unsupported and unusable for gaming on 4 GB RAM / virgl GPU\n'
-    logprintf '  • Cloud gaming: GeForce NOW / Xbox Cloud Gaming in ChromeOS browser\n'
     logprintf '  • Manual .deb downloads: always get the arm64 variant\n'
-    logprintf '  • Flatpak apps: flatpak install flathub <app-id>\n'
-    logprintf '  • Gaming (box86/Wine/GOG): see README.md § Gaming\n'
+    logprintf '  • Flatpak apps: flatpak install --user flathub <app-id>\n'
     logprintf '  • If GPU not active: reboot entire Chromebook (not just container)\n'
+    logprintf '  • Gaming (box86/Wine/GOG/cloud): see README.md § Gaming\n'
     logprintf '\n'
 
     logprintf '%bLog file:%b %s\n' "$BOLD" "$RESET" "$LOG_FILE"
