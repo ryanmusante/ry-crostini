@@ -4,6 +4,13 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.7.7  2026-03-21
+  - add BASH_VERSINFO[0] -lt 5 guard to step 1 preflight (README claims 5.0+)
+  - add "--" end-of-options to all 5 mv calls: _strip_log_ansi, set_checkpoint,
+    write_file, write_file_sudo, PID file write
+  - fix step 3 dry-run traces: add sudo, DEBIAN_FRONTEND=noninteractive,
+    and -o Dpkg::Options::= syntax to match actual L790-801 commands
+
 4.7.6  2026-03-20
   - fix header: sudo call count ~60 → ~50 (actual non-comment count: 51)
 

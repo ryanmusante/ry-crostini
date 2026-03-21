@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.7.6
-# Date:    2026-03-20
+# Version: 4.7.7
+# Date:    2026-03-21
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.7.6"
+readonly SCRIPT_VERSION="4.7.7"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -150,7 +150,7 @@ _strip_log_ansi() {
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
     chmod 600 "$_tmp" 2>/dev/null || true
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
-        mv "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
+        mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
         rm -f "$_tmp"
         _cleanup_warn "ANSI strip failed — log file retains escape codes"
@@ -193,7 +193,7 @@ set_checkpoint() {
     local _ckpt_tmp
     _ckpt_tmp="$(mktemp "${STEP_FILE}.tmp_XXXXXXXX")" || { warn "Cannot create checkpoint tmpfile"; return 1; }
     printf '%s\n' "$1" > "$_ckpt_tmp" || { rm -f "$_ckpt_tmp"; warn "Cannot write checkpoint"; return 1; }
-    mv "$_ckpt_tmp" "$STEP_FILE" || { rm -f "$_ckpt_tmp"; warn "Cannot move checkpoint into place"; return 1; }
+    mv -- "$_ckpt_tmp" "$STEP_FILE" || { rm -f "$_ckpt_tmp"; warn "Cannot move checkpoint into place"; return 1; }
 }
 
 should_run_step() {
@@ -253,7 +253,7 @@ write_file() {
     cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
     # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
     chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
-    mv "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
+    mv -- "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
 }
 
@@ -270,7 +270,7 @@ write_file_sudo() {
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     sudo tee "$tmp" > /dev/null || { sudo rm -f "$tmp"; die "Cannot write $dest"; }
     sudo chmod 644 "$tmp" || { sudo rm -f "$tmp"; die "Cannot chmod tmpfile for $dest"; }
-    sudo mv "$tmp" "$dest" || { sudo rm -f "$tmp"; die "Cannot move $dest into place"; }
+    sudo mv -- "$tmp" "$dest" || { sudo rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest (sudo)"
 }
 
@@ -465,7 +465,7 @@ fi
 _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
     || die "Cannot create PID tmpfile"
 printf '%s\n' "$$" > "$_pid_tmp"
-mv "$_pid_tmp" "$LOCK_FILE/pid" \
+mv -- "$_pid_tmp" "$LOCK_FILE/pid" \
     || { rm -f "$_pid_tmp"; die "Cannot write PID file"; }
 _LOCK_ACQUIRED=true
 unset _pid_tmp
@@ -495,6 +495,11 @@ if should_run_step 1; then
         fi
     fi
     log "Architecture: ${CURRENT_ARCH} ✓"
+
+    # 1a2. Bash version (mapfile, PIPESTATUS, local -a require bash 4+; 5.0 for consistency)
+    if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+        die "Requires bash 5.0+ (got ${BASH_VERSION:-unknown}). Crostini ships bash 5.x by default."
+    fi
 
     # 1b. Crostini container detection
     if [[ -f /dev/.cros_milestone ]]; then
@@ -733,10 +738,10 @@ EOF
             log "[DRY-RUN] cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie (if exists)"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
-            log "[DRY-RUN] apt-get update (failure skips upgrade/full-upgrade)"
-            log "[DRY-RUN] apt-get upgrade -y --force-confdef --force-confold"
-            log "[DRY-RUN] apt-get full-upgrade -y --force-confdef --force-confold"
-            log "[DRY-RUN] apt-get autoremove --purge -y"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get update"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y"
         else
             # Back up sources before rewriting
             if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
