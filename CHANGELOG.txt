@@ -4,6 +4,44 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.8.0  2026-03-21
+  Gaming optimization spec (SPEC-crostini-gaming-optimization.md):
+
+  OOM and memory:
+  - add /tmp tmpfs 512M cap drop-in to step 3 (OOM mitigation on 4 GB)
+  - add vm.overcommit_memory=1 to 99-crostini-tuning.conf (step 11)
+  - add CARGO_BUILD_JOBS=2 to /etc/profile.d/crostini-env.sh (step 11)
+
+  GPU and display:
+  - remove GDK_BACKEND=wayland,x11 from gpu.conf — redundant on Trixie,
+    breaks Electron apps (step 6)
+  - add GTK_THEME=Adwaita:dark to gpu.conf (step 6)
+  - update DPI comment in .Xresources — sommelier now uses exact DPI
+    (step 8)
+
+  Audio:
+  - add PipeWire quantum=256 drop-in
+    /etc/pipewire/pipewire.conf.d/99-quantum.conf (step 7)
+
+  Packages:
+  - pin Flatpak Freedesktop Platform 24.08 in step 12 (replaces
+    warn-only; Zink crash mitigation)
+  - add qt6-gtk-platformtheme install to step 8
+
+  Services:
+  - add crostini-sysctl.service for sysctl persistence at container
+    start (step 11); daemon-reload before enable
+  - guard apt modernize-sources against duplicate cros.list/.sources
+    in step 3; fix missing fi in guard block and false success log on
+    mv failure
+  - add || warn guards on both new daemon-reload calls (non-fatal;
+    config persists to next container start)
+
+  Verification:
+  - add vm.overcommit_memory read-back check in step 11
+  - add step 15 checks for tmp.mount drop-in, PipeWire quantum,
+    crostini-sysctl.service
+
 4.7.7  2026-03-21
   - add BASH_VERSINFO[0] -lt 5 guard to step 1 preflight (README claims 5.0+)
   - add "--" end-of-options to all 5 mv calls: _strip_log_ansi, set_checkpoint,

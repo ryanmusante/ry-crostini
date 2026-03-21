@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.7.7
+# Version: 4.8.0
 # Date:    2026-03-21
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.7.7"
+readonly SCRIPT_VERSION="4.8.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -812,13 +812,42 @@ EOF
         unset _post_codename
     fi
 
-    # 3d. Migrate APT sources to deb822 format (Trixie recommendation) apt modernize-sources converts .list → .sources with Signed-By. Non-fatal: old format is supported until at least 2029.
+    # 3d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
+    _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
+    if [[ ! -f "$_TMP_DROPIN" ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in (if tmp.mount active)"
+        elif systemctl is-active --quiet tmp.mount 2>/dev/null; then
+            write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
+[Mount]
+Options=mode=1777,nosuid,nodev,size=512M
+TMPEOF
+            run sudo systemctl daemon-reload \
+                || warn "daemon-reload failed — /tmp cap takes effect on next container start"
+            log "/tmp tmpfs capped at 512M (OOM mitigation)"
+        else
+            log "/tmp not mounted as tmpfs — no mitigation needed"
+        fi
+    else
+        log "tmp.mount drop-in already exists"
+    fi
+    unset _TMP_DROPIN
+
+    # 3e. Migrate APT sources to deb822 format (Trixie recommendation) apt modernize-sources converts .list → .sources with Signed-By. Non-fatal: old format is supported until at least 2029.
     if command -v apt &>/dev/null; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt -y modernize-sources"
         elif apt modernize-sources --help &>/dev/null; then
             if run sudo apt -y modernize-sources; then
                 log "APT sources migrated to deb822 format"
+                # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries. Remove the .list if its .sources equivalent was created.
+                if [[ -f /etc/apt/sources.list.d/cros.sources ]] && [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+                    if run sudo mv -- /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-modernize; then
+                        log "Removed duplicate cros.list (modernize-sources created cros.sources)"
+                    else
+                        warn "cros.list duplicate removal failed — both cros.list and cros.sources may exist"
+                    fi
+                fi
             else
                 warn "apt modernize-sources failed — old format still works"
             fi
@@ -954,16 +983,14 @@ if should_run_step 6; then
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
-# Matches GTK3/4 default fallback (wayland → x11). Explicit for clarity;
-# redundant on Trixie where WAYLAND_DISPLAY triggers Wayland automatically.
-# VS Code auto-detects Wayland via Electron 39+ (no flag needed).
-# Some Electron apps (Slack, Discord) may need GDK_BACKEND unset.
-GDK_BACKEND=wayland,x11
+# Do NOT set GDK_BACKEND — redundant on Trixie and breaks Electron apps.
 # Do NOT set MESA_LOADER_DRIVER_OVERRIDE — the driver name varies
 # across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
 # auto-detect the correct driver from /dev/dri.
 # Wayland EGL
 EGL_PLATFORM=wayland
+# GTK4 dark mode
+GTK_THEME=Adwaita:dark
 EOF
     else
         log "GPU env already exists — skipping"
@@ -1054,6 +1081,19 @@ EOF
     else
         log "Audio env already exists — skipping"
     fi
+
+    # PipeWire quantum override — reduce buffer for lower audio latency
+    _PW_QUANTUM="/etc/pipewire/pipewire.conf.d/99-quantum.conf"
+    if [[ ! -f "$_PW_QUANTUM" ]]; then
+        write_file_sudo "$_PW_QUANTUM" <<'QEOF'
+context.properties = {
+    default.clock.quantum = 256
+}
+QEOF
+    else
+        log "PipeWire quantum override already exists"
+    fi
+    unset _PW_QUANTUM
 
     unset AUDIO_PKGS AUDIO_ENV_FILE SND_DEV_COUNT
     set_checkpoint 7
@@ -1166,14 +1206,19 @@ EOF
         install_pkgs_best_effort qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
 
+    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme
+    # WARNING: qt5ct conflicts with QT_QPA_PLATFORMTHEME=gtk3 (set in qt.conf above)
+    install_pkgs_best_effort qt6-gtk-platformtheme || \
+        warn "qt6-gtk-platformtheme not available — Qt6 apps may not follow dark theme"
+
     # 8f. Xft / Xresources (for pure X11 apps)
     XRESOURCES="${HOME}/.Xresources"
     if [[ ! -f "$XRESOURCES" ]]; then
         write_file "$XRESOURCES" <<'EOF'
 ! Font rendering for X11 apps on Duet 5 (13.3in 1920x1080 OLED)
 ! OLED has no LCD subpixel stripe — use grayscale AA (rgba=none)
-! NOTE: sommelier DPI buckets are 72/96/160/240 — 120 is not in the set
-! and may round to 96. Affects pure X11 apps only (not Wayland/GTK4).
+! NOTE: sommelier now passes exact DPI to X clients.
+! 120 DPI affects pure X11 apps only (not Wayland/GTK4).
 Xft.dpi: 120
 Xft.antialias: true
 Xft.hinting: true
@@ -1450,6 +1495,8 @@ if should_run_step 11; then
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
+# Allow overcommit — prevents malloc failures in emulators on 4 GB RAM
+vm.overcommit_memory=1
 EOF
         if run sudo sysctl --system; then
             if ! $DRY_RUN; then
@@ -1461,6 +1508,13 @@ EOF
                     warn "May take effect after container restart; if not, this is a Crostini limitation"
                 fi
                 unset _inotify_val
+                _overcommit_val="$(sysctl -n vm.overcommit_memory 2>/dev/null)" || true
+                if [[ "$_overcommit_val" == "1" ]]; then
+                    log "vm.overcommit_memory applied (1) ✓"
+                else
+                    warn "vm.overcommit_memory is ${_overcommit_val:-unknown} (may be read-only in this container)"
+                fi
+                unset _overcommit_val
             fi
         else
             warn "sysctl apply failed — inotify setting written to file but not active until reboot"
@@ -1468,6 +1522,30 @@ EOF
     else
         log "sysctl tuning already applied"
     fi
+
+    # 11b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
+    _SYSCTL_SVC="/etc/systemd/system/crostini-sysctl.service"
+    if [[ ! -f "$_SYSCTL_SVC" ]]; then
+        write_file_sudo "$_SYSCTL_SVC" <<'SVCEOF'
+[Unit]
+Description=Apply sysctl settings at container start
+After=systemd-sysctl.service
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/sysctl --system
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+        run sudo systemctl daemon-reload \
+            || warn "daemon-reload failed — service enable may fail"
+        run sudo systemctl enable crostini-sysctl.service || warn "crostini-sysctl.service enable failed"
+    else
+        log "crostini-sysctl.service already exists"
+    fi
+    unset _SYSCTL_SVC
 
     # 11c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
@@ -1516,6 +1594,8 @@ _crostini_path_prepend() {
 
 # Cargo/Rust
 [ -d "$HOME/.cargo/bin" ] && _crostini_path_prepend "$HOME/.cargo/bin"
+# Limit cargo parallel jobs — 4 GB RAM constraint
+export CARGO_BUILD_JOBS=2
 
 # Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _crostini_path_prepend "$HOME/.local/bin"
@@ -1583,11 +1663,13 @@ if should_run_step 12; then
         warn "flatpak binary not available — skipping Flathub remote"
     fi
     if ! $DRY_RUN; then
-        warn "NOTE: Flatpak apps using Freedesktop Platform ≥25.08 may crash on"
-        warn "Crostini (Mesa Zink driver incompatibility). Pin affected apps to 24.08:"
-        warn "  flatpak install --runtime org.freedesktop.Platform//24.08"
+        # Pin Freedesktop Platform 24.08 — ≥25.08 crashes on Crostini (Mesa Zink incompatibility)
+        if command -v flatpak &>/dev/null; then
+            run flatpak install --user --noninteractive -y flathub org.freedesktop.Platform//24.08 \
+                || warn "Freedesktop Platform 24.08 install failed — pin per-app with: flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl <app-id>"
+        fi
     else
-        log "[DRY-RUN] NOTE: Flatpak ≥25.08 runtime may crash on Crostini (Mesa Zink); pin to 24.08"
+        log "[DRY-RUN] flatpak install --user org.freedesktop.Platform//24.08"
     fi
     log "Install apps: flatpak install flathub <app-id>"
 
@@ -1857,7 +1939,16 @@ if should_run_step 15; then
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/crostini-env.sh"                "Shell env + PATH"
-    check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify watchers"
+    check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify + overcommit"
+    if [[ -f "/etc/systemd/system/crostini-sysctl.service" ]]; then
+        check_config "/etc/systemd/system/crostini-sysctl.service" "Sysctl persistence service"
+    fi
+    if [[ -f "/etc/systemd/system/tmp.mount.d/override.conf" ]]; then
+        check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
+    fi
+    if [[ -f "/etc/pipewire/pipewire.conf.d/99-quantum.conf" ]]; then
+        check_config "/etc/pipewire/pipewire.conf.d/99-quantum.conf" "PipeWire quantum override"
+    fi
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else

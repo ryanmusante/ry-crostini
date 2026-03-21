@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.7.7-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.8.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -81,11 +81,12 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 
 ## Config files written
 
-Apt download tuning, GPU env, audio env, sommelier scaling + Super key
-passthrough, Qt theming, GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA
-for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, inotify watchers,
-shell env + PATH. Memory tuning attempted if
-/proc/sys/vm/ is writable.
+Apt download tuning, GPU env (EGL, GTK dark theme), audio env, PipeWire quantum
+override, sommelier scaling + Super key passthrough, Qt 5/6 theming, GTK 2/3/4
+dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
+fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory, sysctl
+persistence service, shell env + PATH + CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap
+(Trixie). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -101,7 +102,11 @@ Trixie t64 transition is transparent on arm64.
 
 The Crostini-managed `cros.list` in `/etc/apt/sources.list.d/` is also
 updated but may reset on container restart — this is expected ChromeOS
-behavior.
+behavior. After `apt modernize-sources`, any duplicate `cros.list` is removed
+if a `.sources` equivalent was created.
+
+Trixie mounts `/tmp` as RAM-backed tmpfs. Step 3 caps it at 512 MB via
+systemd drop-in to prevent OOM on 4 GB devices.
 
 ## Features
 
@@ -128,7 +133,10 @@ paravirtualized GPU. Use
 
 Flatpak apps bundled with Freedesktop Platform ≥25.08 may crash on Crostini
 due to Mesa 25.x Zink driver incompatibility with virgl GPU passthrough.
-Workaround: pin to 24.08 runtime. See zen-browser/desktop#12276.
+Step 12 automatically pins Freedesktop Platform 24.08; for apps that still
+crash, apply a per-app virgl override:
+`flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl <app-id>`.
+See zen-browser/desktop#12276.
 This workaround is temporary — track Mesa/virgl upstream for a permanent fix.
 
 The `#crostini-multi-container` Chrome flag expires at milestone 140 and will
@@ -137,10 +145,12 @@ not be re-enabled (Baguette containerless VM replaces multi-container support).
 Flatpak uses `--user` mode; system-mode installs are blocked by polkit in
 Crostini containers.
 
-`fs.inotify.max_user_watches` is written to `/etc/sysctl.d/` but the Termina
-VM may block the write at runtime. The default 8192 is sufficient for most
-use cases; larger projects with file watchers (ripgrep, inotifywait) may hit
-the limit. Verify after restart: `sysctl fs.inotify.max_user_watches`.
+`fs.inotify.max_user_watches` and `vm.overcommit_memory` are written to
+`/etc/sysctl.d/` and applied by `crostini-sysctl.service` on container start,
+but the Termina VM may block writes at runtime. The default inotify 8192 is
+sufficient for most use cases; larger projects with file watchers (ripgrep,
+inotifywait) may hit the limit. Verify after restart:
+`sysctl fs.inotify.max_user_watches vm.overcommit_memory`.
 
 ## Browsers
 
