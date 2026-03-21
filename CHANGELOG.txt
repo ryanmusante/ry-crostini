@@ -4,6 +4,91 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.7.3  2026-03-20
+  - fix step 14: split run-together section comment into title line and
+    description line (inconsistent with steps 1-13 single-title pattern)
+  - fix step 15: move _verify_pass/_verify_fail/_verify_warn init from
+    global scope to top of step 15 block (locality — counters were
+    1350+ lines from their only consumers check_tool/check_config)
+  - fix step 12: gate Flatpak Mesa Zink warn() behind ! $DRY_RUN; add
+    single-line [DRY-RUN] log() trace (three stderr warnings polluted
+    dry-run output for an advisory that only applies to live installs)
+  - remove extra blank line left at former verify counter location
+
+4.7.2  2026-03-20
+  - fix step 10: unset _expected/_actual after SHA-256 verify (variable
+    leak past step boundary into subsequent steps)
+  - fix step 3: add dry-run trace for cros.list backup cp and update
+    glob backup trace to show /etc/apt/ destination (fidelity gap with
+    live path)
+  - fix step 11: remove stale "pip" from profile.d LOCAL_BIN comment
+    (Python step removed in 4.6.0; comment still referenced pip)
+  - fix step 13: add dosbox-x to inline verification (installed at
+    L1600 but only dosbox/scummvm/retroarch were verified inline;
+    step 15 check_tool already covered it)
+
+4.7.1  2026-03-20
+  - merge all multi-line comments into single above-line comments;
+    no inline comments remain; heredoc config content and shellcheck
+    directives preserved; header Usage continuation merged to one line
+  - net -81 lines from comment consolidation
+
+4.7.0  2026-03-20
+  HIGH:
+  - fix step 13: switch RetroArch Flatpak from system to user install
+    (--user flag); system-mode flatpak-system-helper requires polkit
+    grants (GetRevokefsFd, Deploy) which are blocked in Crostini
+    containers — all runtimes failed to deploy
+  - fix step 12: add user-level Flathub remote (flatpak remote-add
+    --user --if-not-exists) alongside system-level; system remote
+    demoted to non-fatal (polkit may block it)
+  - fix step 15: update RetroArch verification to flatpak list --user
+  MEDIUM:
+  - fix step 10: add ~/.rustup existence check to Rust guard; if
+    ~/.rustup exists but rustc not in PATH, source ~/.cargo/env before
+    falling through to reinstall (avoids clobbering custom toolchains)
+  - fix step 11: verify actual inotify watcher value after sysctl
+    --system (sysctl may succeed but Termina VM may block the write;
+    previously logged success unconditionally)
+  LOW:
+  - fix step 1: gate GPU flag warning on [[ ! -e /dev/dri/renderD128 ]];
+    previously warned unconditionally even when GPU was already active
+  - fix step 3: move Trixie backup files (.pre-trixie) from
+    /etc/apt/sources.list.d/ to /etc/apt/ to avoid APT "Ignoring file"
+    warnings on unrecognized extensions (~80 per apt call); remove stale
+    .pre-trixie skip filter from glob loop
+  - fix step 4: remove software-properties-common from CORE_PKGS
+    (package absent in Trixie; always triggered batch-install fallback)
+  - fix step 8: replace inch-mark (") with "in" in .Xresources heredoc
+    comment (xrdb preprocessor treated unmatched " as string delimiter;
+    cosmetic warning)
+  README:
+  - update Compatibility: document backup file location change
+  - update Limitations: add inotify Crostini constraint note
+  - update version badge (4.7.0)
+
+4.6.0  2026-03-20
+  - remove step 10 (Python ecosystem): python3, pip, venv, dev headers,
+    setuptools, wheel — pure dev tooling with no downstream consumers
+  - remove step 11 (Node.js LTS): nodejs, npm, npm-global prefix — pure
+    dev tooling with no downstream consumers
+  - remove step 13 (VS Code): Microsoft GPG key, DEB822 apt source,
+    code package — pure dev tooling with no downstream consumers
+  - remove dead references: _ms_key cleanup in EXIT trap, check_tool
+    lines for python3/pip/node/npm/code in verification, vscode.sources
+    check_config block, npm-global PATH entry in /etc/profile.d, MS GPG
+    key mention in /tmp tmpfs NOTE header comment
+  - renumber steps 12-18 to 10-15 (net 15 steps); update --from-step
+    bounds (1-15), --verify checkpoint (14), usage block, all step
+    comments, banners, checkpoints, and completion messages
+  - reword step 11b inotify comment (drop VS Code mention)
+  README:
+  - update Steps table (15 entries); remove Python, Node.js, VS Code rows
+  - remove VS Code apt repo from Config files written prose
+  - renumber gaming section references (step 16 -> 13)
+  - update version badge (4.6.0)
+  - update description (dev environment -> desktop environment)
+
 4.5.1  2026-03-19
   - fix step 7: route systemctl --user mask/enable calls through run()
     with individual return-value checks; previous || true pattern silently

@@ -1,12 +1,12 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.5.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.7.3-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Takes a fresh Debian Bookworm or Trixie container from zero to a fully
-configured dev environment in one unattended run.
+configured desktop environment in one unattended run.
 
 ## Hardware
 
@@ -72,22 +72,19 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol) |
 | 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
 | 9 | GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults) |
-| 10 | Python ecosystem (python3, pip, venv) |
-| 11 | Node.js LTS arm64 (Debian native) |
-| 12 | Rust stable aarch64 via rustup |
-| 13 | VS Code (arm64 via Microsoft apt repo) |
-| 14 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
-| 15 | Flatpak + Flathub (ARM64 app source) |
-| 16 | Gaming packages (DOSBox, ScummVM, RetroArch) |
-| 17 | Container backup (`--interactive`) |
-| 18 | Summary and verification |
+| 10 | Rust stable aarch64 via rustup |
+| 11 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
+| 12 | Flatpak + Flathub (ARM64 app source) |
+| 13 | Gaming packages (DOSBox, ScummVM, RetroArch) |
+| 14 | Container backup (`--interactive`) |
+| 15 | Summary and verification |
 
 ## Config files written
 
 Apt download tuning, GPU env, audio env, sommelier scaling + Super key
 passthrough, Qt theming, GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA
-for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, VS Code apt repo
-(DEB822), inotify watchers, shell env + PATH. Memory tuning attempted if
+for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, inotify watchers,
+shell env + PATH. Memory tuning attempted if
 /proc/sys/vm/ is writable.
 
 ## Compatibility
@@ -95,8 +92,8 @@ for OLED), Xresources DPI 120, fontconfig, Adwaita cursor, VS Code apt repo
 Step 3 automatically upgrades Bookworm (Debian 12) containers to Trixie
 (Debian 13) by rewriting `/etc/apt/sources.list` and running
 `apt full-upgrade`. Backups of all modified source files are saved with a
-`.pre-trixie` suffix (`sources.list`, `cros.list`, and any additional
-`.list`/`.sources` files in `sources.list.d/`). The `VERSION_CODENAME`
+`.pre-trixie` suffix under `/etc/apt/` (not inside `sources.list.d/`, which
+would cause APT "Ignoring file" warnings). The `VERSION_CODENAME`
 is validated as lowercase alphanumeric (with hyphens) before any rewrite. If the container is already
 on Trixie, step 3 performs a normal update/upgrade only.
 
@@ -141,6 +138,16 @@ This workaround is temporary — track Mesa/virgl upstream for a permanent fix.
 The `#crostini-multi-container` Chrome flag expires at milestone 140 and will
 not be re-enabled (Baguette containerless VM replaces multi-container support).
 
+Flatpak system-mode installs require polkit grants (`GetRevokefsFd`, `Deploy`)
+which are blocked in Crostini containers. The script uses `flatpak install
+--user` for all Flatpak apps. System-level `flatpak remote-add` may also fail;
+a user-level remote is added as fallback.
+
+`fs.inotify.max_user_watches` is written to `/etc/sysctl.d/` but the Termina
+VM may block the write at runtime. The default 8192 is sufficient for most
+use cases; larger projects with file watchers (ripgrep, inotifywait) may hit
+the limit. Verify after restart: `sysctl fs.inotify.max_user_watches`.
+
 ## Browsers
 
 [Brave](https://brave.com/linux/) offers native arm64 Linux packages (DEB/RPM).
@@ -158,7 +165,7 @@ Google Chrome for ARM64 Linux expected Q2 2026
 
 ## Gaming
 
-Step 16 installs DOSBox, ScummVM, and RetroArch (Flatpak). This section
+Step 13 installs DOSBox, ScummVM, and RetroArch (Flatpak). This section
 covers what works, what doesn't, and advanced options.
 
 ### Compatibility tiers
@@ -173,7 +180,7 @@ covers what works, what doesn't, and advanced options.
 | Poor | box86+Wine D3D9 3D | 2-3 GB | Expect < 15 FPS |
 | No-go | Vulkan / D3D10+ / x86 Flatpaks | N/A | Steam, modern AAA |
 
-### Native ARM64 (installed by step 16)
+### Native ARM64 (installed by step 13)
 
 **DOSBox** — classic DOS emulation (~30-50 MB). The `dosbox-staging` fork
 is actively maintained but its Flathub Flatpak is x86\_64-only; compile
@@ -222,7 +229,7 @@ limitations: [GeForce NOW](https://play.geforcenow.com),
 
 ### Recommended approach
 
-1. Use the native ARM64 packages from step 16 (DOSBox, ScummVM, RetroArch)
+1. Use the native ARM64 packages from step 13 (DOSBox, ScummVM, RetroArch)
 2. Buy GOG Linux-native titles; download `.sh` installers directly
 3. Attempt box86/box64+Wine only for specific Windows-only games
 4. Use cloud gaming for anything demanding

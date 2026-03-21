@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.5.1
-# Date:    2026-03-19
+# Version: 4.7.3
+# Date:    2026-03-20
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
-# Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal]
-#              [--from-step=N] [--verify] [--reset] [--help] [--version]
+# Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential
-#   is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
-# NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version.
-#   Package arrays use canonical (non-transitional) names that resolve on both.
-#   If upgrading manually: see https://wiki.debian.org/DebianUpgrade
-# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup
-#   installer, Microsoft GPG key) are transient and small (<100 MB);
-#   they are cleaned up in both normal flow and EXIT trap.
+# NOTE: Crostini may ship Bookworm or Trixie depending on ChromeOS version. Package arrays use canonical (non-transitional) names that resolve on both. If upgrading manually: see https://wiki.debian.org/DebianUpgrade
+# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
 # Restrict tempfiles/logs to owner-only by default
@@ -23,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.5.1"
+readonly SCRIPT_VERSION="4.7.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -62,12 +56,9 @@ cleanup() {
     trap - EXIT INT TERM HUP PIPE QUIT
     # Disable set -e inside cleanup to guarantee full execution
     set +e
-    # Strip ANSI escape codes from the log file in a single pass.
-    # This replaces the previous per-line sed approach (via process substitution)
-    # which was racy — the background sed could be killed before flushing.
+    # Strip ANSI escape codes from the log file in a single pass. This replaces the previous per-line sed approach (via process substitution) which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
     # Remove temp files
-    if [[ -n "${_ms_key:-}" ]]; then rm -f "$_ms_key" 2>/dev/null; fi
     if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
     if [[ -n "${_rustup_sha:-}" ]]; then rm -f "$_rustup_sha" 2>/dev/null; fi
     # Release lock only if this instance acquired it
@@ -77,9 +68,7 @@ cleanup() {
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ "$rc" -ne 0 ]]; then
-        # @@WHY: $SECONDS is a bash builtin — no subprocess, cannot hang.
-        # date(1) can hang on broken pipe / frozen cgroup; inside cleanup
-        # all traps are cleared, so a hang here is uninterruptible.
+        # @@WHY: $SECONDS is a bash builtin — no subprocess, cannot hang. date(1) can hang on broken pipe / frozen cgroup; inside cleanup all traps are cleared, so a hang here is uninterruptible.
         local _elapsed="${SECONDS:-unknown}"
         _cleanup_warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
     fi
@@ -129,9 +118,7 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
-# logprintf: printf to both stdout and log file (for verification output)
-# MUST be defined before step_banner (which calls it).
-# ANSI codes are stripped from the log in a single pass at exit (see _strip_log_ansi).
+# logprintf: printf to both stdout and log file (for verification output) MUST be defined before step_banner (which calls it). ANSI codes are stripped from the log in a single pass at exit (see _strip_log_ansi).
 logprintf() {
     # shellcheck disable=SC2059
     printf "$@"
@@ -139,9 +126,7 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _prompt: interactive prompt — displays on stderr (user-facing) and appends to log.
-# Usage identical to printf.  All interactive instructions and "Press Enter" lines
-# go through here so the audit trail is complete.
+# _prompt: interactive prompt — displays on stderr (user-facing) and appends to log. Usage identical to printf.  All interactive instructions and "Press Enter" lines go through here so the audit trail is complete.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -149,9 +134,7 @@ _prompt() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _cleanup_warn: log helper safe for use inside cleanup/trap context.
-# Uses $SECONDS (bash builtin, no subprocess) instead of date(1) to avoid
-# hanging on a broken pipe, frozen cgroup, or killed date process.
+# _cleanup_warn: log helper safe for use inside cleanup/trap context. Uses $SECONDS (bash builtin, no subprocess) instead of date(1) to avoid hanging on a broken pipe, frozen cgroup, or killed date process.
 # shellcheck disable=SC2317,SC2329
 _cleanup_warn() {
     printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" >&2
@@ -159,9 +142,7 @@ _cleanup_warn() {
         >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _strip_log_ansi: single-pass ANSI-escape removal from the log file.
-# Called once at script exit (cleanup) rather than per-line, avoiding both
-# process-substitution races and per-call sed forks.
+# _strip_log_ansi: single-pass ANSI-escape removal from the log file. Called once at script exit (cleanup) rather than per-line, avoiding both process-substitution races and per-call sed forks.
 # shellcheck disable=SC2317,SC2329
 _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
@@ -184,8 +165,7 @@ step_banner() {
 
 # Checkpoint system
 get_checkpoint() {
-    # In-memory override: set by --from-step/--verify so should_run_step
-    # works in --dry-run mode (where set_checkpoint is a no-op).
+    # In-memory override: set by --from-step/--verify so should_run_step works in --dry-run mode (where set_checkpoint is a no-op).
     if [[ -n "$_CHECKPOINT_OVERRIDE" ]]; then
         echo "$_CHECKPOINT_OVERRIDE"
         return 0
@@ -223,20 +203,12 @@ should_run_step() {
     [[ "$step_num" -gt "$checkpoint" ]]
 }
 
-# _tee_log: tee stdin to terminal (raw) + log file (raw).
-# Terminal output preserves color; log file receives raw output (ANSI codes
-# are stripped in a single pass at script exit via _strip_log_ansi).
-# Previous versions used process substitution >(sed ...) which created an
-# asynchronous subprocess not tracked by wait — log data could be lost on
-# early exit.  Synchronous tee -a eliminates that race entirely.
+# _tee_log: tee stdin to terminal (raw) + log file (raw). Terminal output preserves color; log file receives raw output (ANSI codes are stripped in a single pass at script exit via _strip_log_ansi). Previous versions used process substitution >(sed ...) which created an asynchronous subprocess not tracked by wait — log data could be lost on early exit.  Synchronous tee -a eliminates that race entirely.
 _tee_log() {
     tee -a "$LOG_FILE"
 }
 
-# run: execute "$@" directly; respects dry-run.
-# NOTE: stderr is merged into stdout (2>&1) so both streams are captured in
-# the log file and displayed in execution order.  This is a deliberate
-# trade-off: callers that need separated stderr should capture it themselves.
+# run: execute "$@" directly; respects dry-run. NOTE: stderr is merged into stdout (2>&1) so both streams are captured in the log file and displayed in execution order.  This is a deliberate trade-off: callers that need separated stderr should capture it themselves.
 run() {
     if $DRY_RUN; then
         log "[DRY-RUN] $*"
@@ -247,20 +219,14 @@ run() {
     # Save caller's shell option state before disabling
     [[ "$-" == *e* ]] && _prev_e=true
     shopt -qo pipefail 2>/dev/null && _prev_pf=true
-    # Temporarily disable errexit+pipefail so:
-    #   1) set -e doesn't kill us on pipeline failure
-    #   2) PIPESTATUS is not reset by an || guard
+    # Temporarily disable errexit+pipefail so: 1) set -e doesn't kill us on pipeline failure 2) PIPESTATUS is not reset by an || guard
     set +eo pipefail
     "$@" 2>&1 | _tee_log
     # Capture PIPESTATUS atomically — any subsequent command resets it
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    # Restore caller's shell options — never force-enable what wasn't set.
-    # Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old
-    # `false && set -o pipefail` returned 1, which killed the script
-    # under the just-restored set -e.  Using if/then avoids the non-zero
-    # exit code from a false && short-circuit entirely.
+    # Restore caller's shell options — never force-enable what wasn't set. Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old `false && set -o pipefail` returned 1, which killed the script under the just-restored set -e.  Using if/then avoids the non-zero exit code from a false && short-circuit entirely.
     if $_prev_pf; then set -o pipefail; fi
     if $_prev_e; then set -e; fi
     if [[ "$_tee_rc" -ne 0 ]]; then
@@ -291,9 +257,7 @@ write_file() {
     log "Wrote $dest"
 }
 
-# write_file_sudo: atomic write via sudo, respects dry-run
-# Output file mode is 644 (readable by all) — appropriate for /etc/ config files.
-# Callers that need a different mode should chmod after calling.
+# write_file_sudo: atomic write via sudo, respects dry-run Output file mode is 644 (readable by all) — appropriate for /etc/ config files. Callers that need a different mode should chmod after calling.
 write_file_sudo() {
     local dest="$1"
     if $DRY_RUN; then
@@ -310,9 +274,7 @@ write_file_sudo() {
     log "Wrote $dest (sudo)"
 }
 
-# install_pkgs_best_effort: batch install, fallback to per-package on failure
-# Usage: install_pkgs_best_effort pkg1 pkg2 ...
-# Returns: 0 if all succeeded (batch or individual), 1 if any individual installs failed
+# install_pkgs_best_effort: batch install, fallback to per-package on failure Usage: install_pkgs_best_effort pkg1 pkg2 ... Returns: 0 if all succeeded (batch or individual), 1 if any individual installs failed
 install_pkgs_best_effort() {
     if $DRY_RUN; then
         log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $*"
@@ -347,11 +309,6 @@ open_chromeos_url() {
         warn "Cannot auto-open URL. Manually navigate to: $url"
     fi
 }
-
-# Verification counters (used by check_tool / check_config in step 18)
-_verify_pass=0
-_verify_fail=0
-_verify_warn=0
 
 check_tool() {
     local name="$1" cmd="$2"
@@ -397,8 +354,8 @@ USAGE:
 OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
-    --from-step=N  Start (or restart) from step N (1-18; N=18 is same as --verify)
-    --verify       Run only step 18 (summary and verification)
+    --from-step=N  Start (or restart) from step N (1-15; N=15 is same as --verify)
+    --verify       Run only step 15 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
     --help         Show this help message
     --version      Show version
@@ -418,15 +375,12 @@ STEPS PERFORMED:
      8  Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt,
         Xft DPI 120, fontconfig, cursor)
      9  GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
-    10  Python ecosystem (python3, pip, venv)
-    11  Node.js LTS arm64 (Debian native)
-    12  Rust stable aarch64 via rustup
-    13  VS Code (arm64 via Microsoft apt repo)
-    14  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
-    15  Flatpak + Flathub (ARM64 app source)
-    16  Gaming packages (DOSBox, ScummVM, RetroArch)
-    17  Container backup (opens ChromeOS backup page with --interactive)
-    18  Summary and verification
+    10  Rust stable aarch64 via rustup
+    11  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
+    12  Flatpak + Flathub (ARM64 app source)
+    13  Gaming packages (DOSBox, ScummVM, RetroArch)
+    14  Container backup (opens ChromeOS backup page with --interactive)
+    15  Summary and verification
 
 CHECKPOINT:
     Progress is saved after each step to ${STEP_FILE}.
@@ -449,8 +403,8 @@ for arg in "$@"; do
                 die "Cannot specify --from-step more than once, or combine with --verify"
             fi
             _from="${arg#*=}"
-            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 18 ]]; then
-                die "--from-step requires a number 1-18 (got '${_from}')"
+            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 15 ]]; then
+                die "--from-step requires a number 1-15 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="$((_from - 1))"
@@ -462,8 +416,8 @@ for arg in "$@"; do
                 die "Cannot specify --verify more than once, or combine with --from-step"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
-            _DEFERRED_CHECKPOINT="17"
-            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 17; running verification only."
+            _DEFERRED_CHECKPOINT="14"
+            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 14; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
         --help)    rm -f "$LOG_FILE" 2>/dev/null; usage ;;
@@ -518,16 +472,14 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock to avoid race with concurrent instances)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
-    # In-memory override ensures should_run_step works even in --dry-run
-    # (where set_checkpoint is a no-op and the file is never written).
+    # In-memory override ensures should_run_step works even in --dry-run (where set_checkpoint is a no-op and the file is never written).
     _CHECKPOINT_OVERRIDE="$_DEFERRED_CHECKPOINT"
     set_checkpoint "$_DEFERRED_CHECKPOINT" || die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
-# Set noninteractive for any direct (non-sudo) dpkg/apt invocations.
-# NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
+# Set noninteractive for any direct (non-sudo) dpkg/apt invocations. NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
 export DEBIAN_FRONTEND=noninteractive
 # Step 1: Preflight checks
 if should_run_step 1; then
@@ -575,9 +527,13 @@ if should_run_step 1; then
     log "Available disk: ${AVAIL_MB} MB ✓"
 
     # 1e. GPU acceleration warning (disabled by default since ChromeOS 131)
-    warn "IMPORTANT: GPU acceleration is disabled by default since ChromeOS 131."
-    warn "Enable: chrome://flags#crostini-gpu-support → Enabled → full Chromebook reboot."
-    warn "GPU packages will be installed regardless; /dev/dri/renderD128 requires the flag."
+    if [[ ! -e /dev/dri/renderD128 ]]; then
+        warn "IMPORTANT: GPU acceleration is disabled by default since ChromeOS 131."
+        warn "Enable: chrome://flags#crostini-gpu-support → Enabled → full Chromebook reboot."
+        warn "GPU packages will be installed regardless; /dev/dri/renderD128 requires the flag."
+    else
+        log "GPU render node: /dev/dri/renderD128 already active ✓"
+    fi
 
     # 1f. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
@@ -748,11 +704,7 @@ fi
 if should_run_step 3; then
     step_banner 3 "Upgrade to Trixie and full system update"
 
-    # Enable HTTP pipelining — sends multiple requests per TCP connection.
-    # Queue-Mode "access" allows parallel connections across URIs.
-    # Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint.
-    # NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default)
-    # benefit from Queue-Mode parallelism but not HTTP pipelining.
+    # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -778,8 +730,9 @@ EOF
         if $DRY_RUN; then
             log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
+            log "[DRY-RUN] cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie (if exists)"
             log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup)"
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
             log "[DRY-RUN] apt-get update (failure skips upgrade/full-upgrade)"
             log "[DRY-RUN] apt-get upgrade -y --force-confdef --force-confold"
             log "[DRY-RUN] apt-get full-upgrade -y --force-confdef --force-confold"
@@ -797,11 +750,9 @@ EOF
                 die "Trixie upgrade aborted"
             fi
             log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
-            # Also update cros-packages repo if present (Crostini-managed)
-            # NOTE: cros.list may reset on container restart; this handles the
-            # current session so the full-upgrade resolves all dependencies.
+            # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
             if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/sources.list.d/cros.list.pre-trixie || true
+                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
                 if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
                     log "Rewrote cros.list: ${_cur_codename} → trixie"
                     warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
@@ -810,19 +761,18 @@ EOF
                     warn "cros.list rewrite failed — continuing (non-fatal)"
                 fi
             fi
-            # Also handle -security and -updates sources if in separate files
-            # Handle both legacy .list format and deb822 .sources format
+            # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
             for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
                 [[ -f "$_sfile" ]] || continue
-                [[ "$_sfile" == *.pre-trixie ]] && continue
                 if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
-                    run sudo cp -- "$_sfile" "${_sfile}.pre-trixie" \
+                    _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
+                    run sudo cp -- "$_sfile" "$_sfile_bak" \
                         || { warn "Cannot back up ${_sfile} — skipping"; continue; }
                     run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
-                        || warn "Failed to update ${_sfile} — backup at ${_sfile}.pre-trixie"
+                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
                 fi
             done
-            unset _sfile
+            unset _sfile _sfile_bak
         fi
     elif [[ "$_cur_codename" == "trixie" ]]; then
         log "Already running Trixie — no upgrade needed"
@@ -833,10 +783,7 @@ EOF
 
     # 3b. Update, upgrade, full-upgrade (also serves as Trixie dist-upgrade)
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
-        # --force-confdef --force-confold: accept package maintainer defaults for
-        # new conffiles, keep existing modified conffiles. Without these, dpkg can
-        # prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive
-        # (which sudo strips via env_reset unless sudoers has env_keep).
+        # --force-confdef --force-confold: accept package maintainer defaults for new conffiles, keep existing modified conffiles. Without these, dpkg can prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive (which sudo strips via env_reset unless sudoers has env_keep).
         run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
@@ -860,9 +807,7 @@ EOF
         unset _post_codename
     fi
 
-    # 3d. Migrate APT sources to deb822 format (Trixie recommendation)
-    # apt modernize-sources converts .list → .sources with Signed-By.
-    # Non-fatal: old format is supported until at least 2029.
+    # 3d. Migrate APT sources to deb822 format (Trixie recommendation) apt modernize-sources converts .list → .sources with Signed-By. Non-fatal: old format is supported until at least 2029.
     if command -v apt &>/dev/null; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt -y modernize-sources"
@@ -903,7 +848,6 @@ if should_run_step 4; then
 
         # Misc
         tmux screen man-db bash-completion locales
-        software-properties-common
 
         # Wayland clipboard (wl-copy / wl-paste for terminal ↔ GUI integration)
         wl-clipboard
@@ -953,8 +897,7 @@ fi
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)"
 
-    # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64)
-    # libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
+    # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64) libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
     GPU_STABLE_PKGS=(
         mesa-utils
         libgl1-mesa-dri
@@ -971,8 +914,7 @@ if should_run_step 6; then
 
     install_pkgs_best_effort "${GPU_STABLE_PKGS[@]}" || warn "Some GPU packages unavailable — non-fatal"
 
-    # Volatile packages — names may differ across Debian versions
-    # libgl1 replaces the transitional libgl1-mesa-glx
+    # Volatile packages — names may differ across Debian versions libgl1 replaces the transitional libgl1-mesa-glx
     GPU_VOLATILE_PKGS=(
         mesa-vulkan-drivers
         libgl1
@@ -1031,22 +973,18 @@ if should_run_step 7; then
     step_banner 7 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)"
 
     AUDIO_PKGS=(
-        # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by
-        # alsa-utils and libasound2-plugins; no explicit listing needed.
+        # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by alsa-utils and libasound2-plugins; no explicit listing needed.
         alsa-utils
         libasound2-plugins
 
-        # PipeWire audio — Crostini uses PipeWire since Bullseye.
-        # pipewire-audio metapackage: pipewire + wireplumber + pipewire-pulse + pipewire-alsa
+        # PipeWire audio — Crostini uses PipeWire since Bullseye. pipewire-audio metapackage: pipewire + wireplumber + pipewire-pulse + pipewire-alsa
         pipewire-audio
 
         # PulseAudio client utilities + GUI mixer
         pulseaudio-utils
         pavucontrol
 
-        # GStreamer codecs and media support
-        # gstreamer1.0-pulseaudio was removed; its PulseAudio plugin is in
-        # gstreamer1.0-plugins-good.
+        # GStreamer codecs and media support gstreamer1.0-pulseaudio was removed; its PulseAudio plugin is in gstreamer1.0-plugins-good.
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
@@ -1054,8 +992,7 @@ if should_run_step 7; then
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
-    # Mask legacy PulseAudio daemon if present (conflicts with PipeWire)
-    # Ensure PipeWire audio chain is active
+    # Mask legacy PulseAudio daemon if present (conflicts with PipeWire) Ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
         if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
             if run systemctl --user mask pulseaudio.service && \
@@ -1121,7 +1058,7 @@ fi
 if should_run_step 8; then
     step_banner 8 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor)"
 
-    # 13.3" FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
+    # 13.3in FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
     # 8a. Sommelier environment (controls Linux app scaling)
     SOMMELIER_ENV="${HOME}/.config/environment.d/sommelier.conf"
@@ -1219,10 +1156,7 @@ EOF
         log "Qt env already exists — skipping"
     fi
 
-    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme.
-    # Batch qt5ct with preferred platform theme; if qt5-gtk-platformtheme is
-    # unavailable, install_pkgs_best_effort falls back to per-package (qt5ct
-    # succeeds individually) and the || arm tries the alternative name.
+    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme. Batch qt5ct with preferred platform theme; if qt5-gtk-platformtheme is unavailable, install_pkgs_best_effort falls back to per-package (qt5ct succeeds individually) and the || arm tries the alternative name.
     install_pkgs_best_effort qt5ct qt5-gtk-platformtheme || \
         install_pkgs_best_effort qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
@@ -1231,7 +1165,7 @@ EOF
     XRESOURCES="${HOME}/.Xresources"
     if [[ ! -f "$XRESOURCES" ]]; then
         write_file "$XRESOURCES" <<'EOF'
-! Font rendering for X11 apps on Duet 5 (13.3" 1920x1080 OLED)
+! Font rendering for X11 apps on Duet 5 (13.3in 1920x1080 OLED)
 ! OLED has no LCD subpixel stripe — use grayscale AA (rgba=none)
 ! NOTE: sommelier DPI buckets are 72/96/160/240 — 120 is not in the set
 ! and may round to 96. Affects pure X11 apps only (not Wayland/GTK4).
@@ -1336,15 +1270,12 @@ if should_run_step 9; then
         file-roller
         xdg-utils
 
-        # Session support: D-Bus for X11, accessibility (suppresses GTK warnings),
-        # desktop notifications (notify-send)
+        # Session support: D-Bus for X11, accessibility (suppresses GTK warnings), desktop notifications (notify-send)
         dbus-x11
         at-spi2-core
         libnotify-bin
 
-        # Terminal emulator — needed for Thunar "Open Terminal Here" and
-        # other desktop actions. xterm is the standard X11 fallback that
-        # sensible-terminal and xdg-terminal-exec resolve to.
+        # Terminal emulator — needed for Thunar "Open Terminal Here" and other desktop actions. xterm is the standard X11 fallback that sensible-terminal and xdg-terminal-exec resolve to.
         xterm
 
         # Fonts — comprehensive set for international content
@@ -1384,8 +1315,7 @@ if should_run_step 9; then
             || warn "chromium install failed (non-fatal)"
     fi
 
-    # Set default file manager
-    # Desktop file was renamed in Thunar 4.20 (Xfce reverse-DNS convention)
+    # Set default file manager Desktop file was renamed in Thunar 4.20 (Xfce reverse-DNS convention)
     _thunar_desktop="thunar.desktop"
     if [[ -f /usr/share/applications/org.xfce.thunar.desktop ]]; then
         _thunar_desktop="org.xfce.thunar.desktop"
@@ -1433,65 +1363,34 @@ if should_run_step 9; then
     set_checkpoint 9
     log "Step 9 complete."
 fi
-# Step 10: Python ecosystem
+# Step 10: Rust stable aarch64 via rustup
 if should_run_step 10; then
-    step_banner 10 "Python ecosystem"
-
-    install_pkgs_best_effort python3 python3-pip python3-venv python3-dev python3-setuptools python3-wheel \
-        || warn "Some Python packages failed — continuing"
-
-    run mkdir -p "${HOME}/.local/bin" || warn "Cannot create ~/.local/bin"
-
-    log "Python version: $(timeout 3 python3 --version 2>/dev/null || echo 'not installed')"
-    log "pip version: $(timeout 3 python3 -m pip --version 2>/dev/null || echo 'not installed')"
-
-    set_checkpoint 10
-    log "Step 10 complete."
-fi
-# Step 11: Node.js LTS arm64 (Debian native)
-# Trixie ships nodejs 20.19.2 arm64 — no third-party repo needed.
-# For Node 22+: install fnm (Fast Node Manager).
-if should_run_step 11; then
-    step_banner 11 "Node.js LTS arm64 (Debian native)"
-
-    if command -v node &>/dev/null; then
-        log "Node.js already installed: $(timeout 3 node --version 2>/dev/null || echo 'unknown')"
-    else
-        install_pkgs_best_effort nodejs npm || die "nodejs install failed"
-    fi
-
-    # npm global prefix — avoid sudo for global installs
-    NPM_GLOBAL="${HOME}/.npm-global"
-    if command -v npm &>/dev/null; then
-        run mkdir -p "$NPM_GLOBAL" || warn "Cannot create npm global dir"
-        run npm config set prefix "${NPM_GLOBAL}" || warn "npm config set prefix failed"
-    fi
-
-    log "Node version: $(timeout 3 node --version 2>/dev/null || echo 'not installed')"
-    log "npm version: $(timeout 3 npm --version 2>/dev/null || echo 'not installed')"
-    # For Node 22+: install fnm (Fast Node Manager):
-    #   curl -fsSL https://fnm.vercel.app/install | bash
-
-    unset NPM_GLOBAL
-    set_checkpoint 11
-    log "Step 11 complete."
-fi
-# Step 12: Rust stable aarch64 via rustup
-if should_run_step 12; then
-    step_banner 12 "Rust stable aarch64 via rustup"
+    step_banner 10 "Rust stable aarch64 via rustup"
 
     if command -v rustc &>/dev/null; then
         log "Rust already installed: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
-    else
+    elif [[ -d "${HOME}/.rustup" ]]; then
+        # ~/.rustup exists but rustc not in PATH — source cargo/env to recover
+        warn "Existing ~/.rustup detected but rustc not in PATH"
+        if [[ -f "${HOME}/.cargo/env" ]]; then
+            # shellcheck source=/dev/null
+            source "${HOME}/.cargo/env" || true
+        fi
+        if command -v rustc &>/dev/null; then
+            log "Rust recovered via cargo/env: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
+        else
+            warn "rustc still not found after sourcing cargo/env — re-running rustup"
+        fi
+    fi
+
+    if ! command -v rustc &>/dev/null; then
         log "Installing Rust via rustup (non-interactive)..."
         if $DRY_RUN; then
             log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init-XXXXXXXXXX"
             log "[DRY-RUN] sha256sum verify against rustup-init.sha256"
             log "[DRY-RUN] /tmp/rustup-init-XXXXXXXXXX -y --default-toolchain stable"
         else
-            # TOFU (Trust On First Use): HTTPS-only. rustup.rs does not publish a stable
-            # signing key (GPG removed in 1.26.0). SHA-256 verify added below.
-            # Download binary directly (not shell wrapper) to enable checksum verification.
+            # TOFU (Trust On First Use): HTTPS-only. rustup.rs does not publish a stable signing key (GPG removed in 1.26.0). SHA-256 verify added below. Download binary directly (not shell wrapper) to enable checksum verification.
             _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX)" || die "Cannot create tmpfile for rustup installer"
             if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 \
                 "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init" \
@@ -1522,7 +1421,7 @@ if should_run_step 12; then
             chmod +x "$_rustup_tmp"
             run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
             rm -f "$_rustup_tmp"
-            unset _rustup_tmp _rustup_sha
+            unset _rustup_tmp _rustup_sha _expected _actual
         fi
 
         if [[ -f "${HOME}/.cargo/env" ]]; then
@@ -1534,68 +1433,33 @@ if should_run_step 12; then
     log "rustc version: $(timeout 3 rustc --version 2>/dev/null || echo 'not installed')"
     log "cargo version: $(timeout 3 cargo --version 2>/dev/null || echo 'not installed')"
 
-    set_checkpoint 12
-    log "Step 12 complete."
+    set_checkpoint 10
+    log "Step 10 complete."
 fi
-# Step 13: VS Code (arm64 via Microsoft apt repo)
-if should_run_step 13; then
-    step_banner 13 "VS Code (arm64 via Microsoft apt repo)"
+# Step 11: Container resource tuning (sysctl, locale, env, XDG, paths, memory)
+if should_run_step 11; then
+    step_banner 11 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
 
-    if command -v code &>/dev/null; then
-        log "VS Code already installed: $(timeout 3 code --version 2>/dev/null | head -1 || true)"
-    else
-        if $DRY_RUN; then
-            log "[DRY-RUN] curl Microsoft GPG key → /usr/share/keyrings/microsoft.gpg"
-            log "[DRY-RUN] write /etc/apt/sources.list.d/vscode.sources (DEB822, arm64)"
-            log "[DRY-RUN] apt-get update && apt-get install -y code"
-        else
-            # Microsoft GPG key
-            _ms_key="$(mktemp /tmp/microsoft-key-XXXXXXXX.asc)" || die "Cannot create tmpfile"
-            run curl -fsSL --connect-timeout 10 --max-time 30 \
-                https://packages.microsoft.com/keys/microsoft.asc -o "$_ms_key" \
-                || { rm -f "$_ms_key"; die "Microsoft GPG key download failed"; }
-            run sudo mkdir -p /usr/share/keyrings || true
-            run sudo gpg --yes --dearmor -o /usr/share/keyrings/microsoft.gpg "$_ms_key" \
-                || { rm -f "$_ms_key"; die "Microsoft GPG dearmor failed"; }
-            rm -f "$_ms_key"
-
-            # DEB822 format repo
-            write_file_sudo /etc/apt/sources.list.d/vscode.sources <<'EOF'
-Types: deb
-URIs: https://packages.microsoft.com/repos/code
-Suites: stable
-Components: main
-Architectures: arm64
-Signed-By: /usr/share/keyrings/microsoft.gpg
-EOF
-
-            run sudo DEBIAN_FRONTEND=noninteractive apt-get update || warn "apt update failed"
-            run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y code || warn "VS Code install failed"
-        fi
-    fi
-
-    unset _ms_key
-    set_checkpoint 13
-    log "Step 13 complete."
-fi
-# Step 14: Container resource tuning (sysctl, locale, env, XDG, paths, memory)
-if should_run_step 14; then
-    step_banner 14 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
-
-    # 14a. Install linux-sysctl-defaults (Trixie requirement for ping permissions)
-    # In Trixie, /etc/sysctl.conf is no longer honored by systemd-sysctl.
-    # This package provides /usr/lib/sysctl.d/50-default.conf which sets
-    # net.ipv4.ping_group_range for unprivileged ping access.
+    # 11a. Install linux-sysctl-defaults (Trixie requirement for ping permissions) In Trixie, /etc/sysctl.conf is no longer honored by systemd-sysctl. This package provides /usr/lib/sysctl.d/50-default.conf which sets net.ipv4.ping_group_range for unprivileged ping access.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
         || warn "linux-sysctl-defaults unavailable (expected on Bookworm — Trixie-only package)"
 
-    # 14b. Increase inotify watchers (VS Code and file-heavy tools need this)
+    # 11b. Increase inotify watchers (file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
 EOF
         if run sudo sysctl --system; then
-            $DRY_RUN || log "inotify watchers applied (524288)"
+            if ! $DRY_RUN; then
+                _inotify_val="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
+                if [[ "$_inotify_val" == "524288" ]]; then
+                    log "inotify watchers applied (524288) ✓"
+                else
+                    warn "inotify config written but value is ${_inotify_val:-unknown} (Termina VM may block writes)"
+                    warn "May take effect after container restart; if not, this is a Crostini limitation"
+                fi
+                unset _inotify_val
+            fi
         else
             warn "sysctl apply failed — inotify setting written to file but not active until reboot"
         fi
@@ -1603,10 +1467,9 @@ EOF
         log "sysctl tuning already applied"
     fi
 
-    # 14c. Set locale to en_US.UTF-8
+    # 11c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
-        # @@WHY: Gate sed on successful backup — if cp fails (disk full),
-        # proceeding to sed -i risks corrupting locale.gen with no rollback.
+        # @@WHY: Gate sed on successful backup — if cp fails (disk full), proceeding to sed -i risks corrupting locale.gen with no rollback.
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run sudo locale-gen; then
@@ -1629,7 +1492,7 @@ EOF
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 14d. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 11d. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1652,11 +1515,8 @@ _crostini_path_prepend() {
 # Cargo/Rust
 [ -d "$HOME/.cargo/bin" ] && _crostini_path_prepend "$HOME/.cargo/bin"
 
-# Local bin (pip, user scripts)
+# Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _crostini_path_prepend "$HOME/.local/bin"
-
-# npm global
-[ -d "$HOME/.npm-global/bin" ] && _crostini_path_prepend "$HOME/.npm-global/bin"
 
 unset -f _crostini_path_prepend
 ENVEOF
@@ -1664,9 +1524,7 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 14e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
-    # NOTE: sysctl --system may silently skip individual read-only keys (it only
-    # fails on parse errors).  Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
+    # 11e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying NOTE: sysctl --system may silently skip individual read-only keys (it only fails on parse errors).  Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
@@ -1689,7 +1547,7 @@ MEMEOF
         log "Memory tuning config already exists"
     fi
 
-    # 14f. Ensure XDG dirs exist
+    # 11f. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
@@ -1701,46 +1559,52 @@ MEMEOF
     fi
 
     unset PROFILE_D MEM_CONF
-    set_checkpoint 14
-    log "Step 14 complete."
+    set_checkpoint 11
+    log "Step 11 complete."
 fi
-# Step 15: Flatpak + Flathub (ARM64 app source)
-if should_run_step 15; then
-    step_banner 15 "Flatpak + Flathub (ARM64 app source)"
+# Step 12: Flatpak + Flathub (ARM64 app source)
+if should_run_step 12; then
+    step_banner 12 "Flatpak + Flathub (ARM64 app source)"
 
     run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak || warn "flatpak install failed"
     if $DRY_RUN; then
-        # In dry-run, apt install is a no-op so flatpak binary won't exist;
-        # always trace the planned remote-add.
+        # In dry-run, apt install is a no-op so flatpak binary won't exist; always trace the planned remote-add.
         run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+        run flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     elif command -v flatpak &>/dev/null; then
-        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "Flathub remote add failed"
+        # System-level remote (may fail due to polkit in Crostini — non-fatal)
+        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "System Flathub remote add failed (polkit) — user remote below"
+        # User-level remote (no polkit needed; required for --user installs)
+        run flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "User Flathub remote add failed"
         log "Flatpak installed with Flathub remote."
     else
         warn "flatpak binary not available — skipping Flathub remote"
     fi
-    warn "NOTE: Flatpak apps using Freedesktop Platform ≥25.08 may crash on"
-    warn "Crostini (Mesa Zink driver incompatibility). Pin affected apps to 24.08:"
-    warn "  flatpak install --runtime org.freedesktop.Platform//24.08"
+    if ! $DRY_RUN; then
+        warn "NOTE: Flatpak apps using Freedesktop Platform ≥25.08 may crash on"
+        warn "Crostini (Mesa Zink driver incompatibility). Pin affected apps to 24.08:"
+        warn "  flatpak install --runtime org.freedesktop.Platform//24.08"
+    else
+        log "[DRY-RUN] NOTE: Flatpak ≥25.08 runtime may crash on Crostini (Mesa Zink); pin to 24.08"
+    fi
     log "Install apps: flatpak install flathub <app-id>"
 
-    set_checkpoint 15
-    log "Step 15 complete."
+    set_checkpoint 12
+    log "Step 12 complete."
 fi
-# Step 16: Gaming packages (DOSBox, ScummVM, RetroArch)
-if should_run_step 16; then
-    step_banner 16 "Gaming packages (DOSBox, ScummVM, RetroArch)"
+# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch)
+if should_run_step 13; then
+    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch)"
 
-    # Native ARM packages (no translation layer needed)
-    # dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
+    # Native ARM packages (no translation layer needed) dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
     install_pkgs_best_effort dosbox dosbox-x scummvm || warn "Some gaming packages failed"
 
-    # RetroArch via Flatpak (aarch64 confirmed on Flathub)
+    # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
     if $DRY_RUN; then
         # In dry-run, flatpak may not exist (apt install was a no-op); always trace.
-        run flatpak install --noninteractive -y flathub org.libretro.RetroArch
+        run flatpak install --user --noninteractive -y flathub org.libretro.RetroArch
     elif command -v flatpak &>/dev/null; then
-        run flatpak install --noninteractive -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
+        run flatpak install --user --noninteractive -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
     else
         warn "flatpak not available — skip RetroArch (install flatpak first)"
     fi
@@ -1754,6 +1618,13 @@ if should_run_step 16; then
         else
             warn "dosbox not found"
         fi
+        if command -v dosbox-x &>/dev/null; then
+            _dosboxx_ver="$(timeout 3 dosbox-x --version 2>/dev/null | head -1 || true)"
+            log "dosbox-x: ${_dosboxx_ver:-installed} ✓"
+            unset _dosboxx_ver
+        else
+            warn "dosbox-x not found"
+        fi
         if command -v scummvm &>/dev/null; then
             _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
             log "scummvm: ${_scummvm_ver:-installed} ✓"
@@ -1761,7 +1632,7 @@ if should_run_step 16; then
         else
             warn "scummvm not found"
         fi
-        if timeout 5 flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
+        if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
             log "RetroArch Flatpak: installed ✓"
         else
             warn "RetroArch Flatpak not detected"
@@ -1770,13 +1641,13 @@ if should_run_step 16; then
 
     log "For advanced gaming (box86/Wine/GOG): see README.md § Gaming"
 
-    set_checkpoint 16
-    log "Step 16 complete."
+    set_checkpoint 13
+    log "Step 13 complete."
 fi
-# Step 17: Container backup
+# Step 14: Container backup
 # Opens ChromeOS backup page when run with --interactive.
-if should_run_step 17; then
-    step_banner 17 "Container backup"
+if should_run_step 14; then
+    step_banner 14 "Container backup"
 
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening ChromeOS backup page to snapshot this fresh setup..."
@@ -1794,12 +1665,17 @@ if should_run_step 17; then
         log "Skipping interactive backup prompt (unattended mode)"
     fi
 
-    set_checkpoint 17
-    log "Step 17 complete."
+    set_checkpoint 14
+    log "Step 14 complete."
 fi
-# Step 18: Summary and verification
-if should_run_step 18; then
-    step_banner 18 "Summary and verification"
+# Step 15: Summary and verification
+if should_run_step 15; then
+    step_banner 15 "Summary and verification"
+
+    # Verification counters (used by check_tool / check_config below)
+    _verify_pass=0
+    _verify_fail=0
+    _verify_warn=0
 
     if $DRY_RUN; then
         log "[DRY-RUN] Verification runs live (all checks are read-only)"
@@ -1927,10 +1803,6 @@ if should_run_step 18; then
     # Installed tools
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
-    check_tool "python3"     python3
-    check_tool "pip"         pip3
-    check_tool "node"        node
-    check_tool "npm"         npm
     check_tool "rustc"       rustc
     check_tool "cargo"       cargo
     check_tool "vim"         vim
@@ -1951,7 +1823,6 @@ if should_run_step 18; then
     check_tool "dosbox"      dosbox
     check_tool "dosbox-x"    dosbox-x
     check_tool "scummvm"     scummvm
-    check_tool "code"        code
     check_tool "firefox-esr" firefox-esr
     if ! $MINIMAL; then check_tool "chromium" chromium; fi
     check_tool "thunar"      thunar
@@ -1960,8 +1831,8 @@ if should_run_step 18; then
     check_tool "file-roller" file-roller
     check_tool "gnome-screenshot" gnome-screenshot
     check_tool "xterm"       xterm
-    if timeout 5 flatpak list --app 2>/dev/null | grep -q org.libretro.RetroArch; then
-        logprintf '  %-14s %b✓%b  Flatpak\n' "retroarch" "$GREEN" "$RESET"
+    if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
+        logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
     else
         logprintf '  %-14s %b✗%b  not found\n' "retroarch" "$RED" "$RESET"
@@ -1990,9 +1861,6 @@ if should_run_step 18; then
     else
         logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "Memory tuning (4 GB)" "skipped (vm.* read-only in container)"
         ((_verify_warn++)) || true
-    fi
-    if command -v code &>/dev/null; then
-        check_config "/etc/apt/sources.list.d/vscode.sources"      "VS Code apt repo (DEB822)"
     fi
     # PipeWire audio chain verification
     if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
@@ -2031,9 +1899,8 @@ if should_run_step 18; then
     [[ "$_verify_fail" -gt 0 ]] && logprintf '  %b%s failed%b' "$RED" "$_verify_fail" "$RESET"
     logprintf '\n'
 
-    # Mark step 18 complete before removing the checkpoint file.
-    # This ensures a crash between here and rm -f still shows step 18 done.
-    set_checkpoint 18
+    # Mark step 15 complete before removing the checkpoint file. This ensures a crash between here and rm -f still shows step 15 done.
+    set_checkpoint 15
 
     # Clean up checkpoint — all steps finished, no resume needed
     if $DRY_RUN; then
@@ -2043,7 +1910,7 @@ if should_run_step 18; then
         log "Checkpoint file removed. Setup fully complete."
     fi
 
-    # Clean up step 18 variables
+    # Clean up step 15 variables
     unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
     unset _verify_pass _verify_fail _verify_warn
 
@@ -2058,7 +1925,7 @@ if should_run_step 18; then
     unset _now_epoch _elapsed
 
     logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
-    log "Step 18 complete."
+    log "Step 15 complete."
 fi
 
 exit 0
