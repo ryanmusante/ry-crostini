@@ -17,308 +17,108 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - add DEBIAN_FRONTEND=noninteractive to sudo apt modernize-sources (step 3)
     matches all other sudo apt-get/apt calls; prevents regressions
 
-4.8.3  2026-03-21
-  Audit fixes (AUDIT-crostini-setup-duet5-4.8.2.txt):
-
-  Verification:
-  - add 12 missing check_tool entries to step 15 for step 4 CLI packages
-    (file, tree, less, wget, dig, ssh, lsof, screen, zip, unzip, 7z, rename)
-
-4.8.2  2026-03-21
-  Audit fixes (AUDIT-crostini-setup-duet5-4.8.1.txt):
-
-  Correctness:
-  - guard rustup SHA-256 verify block against mktemp failure (step 10)
-    if mktemp fails, _rustup_sha="" caused curl -o "" (undefined behavior);
-    now guarded with [[ -n "$_rustup_sha" ]] and falls through to TOFU
-
-4.8.1  2026-03-21
-  Audit fixes (AUDIT-crostini-setup-duet5-4.8.0.txt):
-
-  Correctness:
-  - update header sudo count from ~50 to ~60 (actual: 59)
-  - use canonical /usr/sbin/sysctl in crostini-sysctl.service ExecStart
-    (/sbin is a usr-merge compat symlink on Trixie; forward-compatible)
-
-  Verification:
-  - add check_tool for htop, nano, ncdu, strace, rsync to step 15
-    (previously installed in step 4 but not verified by --verify)
-
-  Documentation:
-  - add version references to gpu.conf "Do NOT set" comments
-    (GDK_BACKEND removed in 4.8.0, MESA_LOADER_DRIVER_OVERRIDE in 4.7.7)
-
-4.8.0  2026-03-21
-  Gaming optimization spec (SPEC-crostini-gaming-optimization.md):
+4.8.0 - 4.8.3  2026-03-21
+  Gaming optimization spec + three audit fix cycles.
 
   OOM and memory:
-  - add /tmp tmpfs 512M cap drop-in to step 3 (OOM mitigation on 4 GB)
-  - add vm.overcommit_memory=1 to 99-crostini-tuning.conf (step 11)
-  - add CARGO_BUILD_JOBS=2 to /etc/profile.d/crostini-env.sh (step 11)
+  - add /tmp tmpfs 512M cap drop-in (step 3); vm.overcommit_memory=1
+    (step 11); CARGO_BUILD_JOBS=2 (step 11)
 
   GPU and display:
-  - remove GDK_BACKEND=wayland,x11 from gpu.conf — redundant on Trixie,
-    breaks Electron apps (step 6)
-  - add GTK_THEME=Adwaita:dark to gpu.conf (step 6)
-  - update DPI comment in .Xresources — sommelier now uses exact DPI
-    (step 8)
+  - remove GDK_BACKEND from gpu.conf (redundant on Trixie, breaks Electron)
+  - add GTK_THEME=Adwaita:dark; update .Xresources DPI comment
 
   Audio:
-  - add PipeWire quantum=256 drop-in
-    /etc/pipewire/pipewire.conf.d/99-quantum.conf (step 7)
+  - add PipeWire quantum=256 drop-in (step 7)
 
-  Packages:
-  - pin Flatpak Freedesktop Platform 24.08 in step 12 (replaces
-    warn-only; Zink crash mitigation)
-  - add qt6-gtk-platformtheme install to step 8
-
-  Services:
-  - add crostini-sysctl.service for sysctl persistence at container
-    start (step 11); daemon-reload before enable
+  Packages and services:
+  - pin Flatpak Freedesktop Platform 24.08 (Zink crash mitigation)
+  - add qt6-gtk-platformtheme; add crostini-sysctl.service for persistence
   - guard apt modernize-sources against duplicate cros.list/.sources
-    in step 3; fix missing fi in guard block and false success log on
-    mv failure
-  - add || warn guards on both new daemon-reload calls (non-fatal;
-    config persists to next container start)
 
   Verification:
-  - add vm.overcommit_memory read-back check in step 11
-  - add step 15 checks for tmp.mount drop-in, PipeWire quantum,
-    crostini-sysctl.service
+  - add 17 missing check_tool entries to step 15
+  - add checks for tmp.mount drop-in, PipeWire quantum, sysctl service
 
-4.7.7  2026-03-21
-  - add BASH_VERSINFO[0] -lt 5 guard to step 1 preflight (README claims 5.0+)
-  - add "--" end-of-options to all 5 mv calls: _strip_log_ansi, set_checkpoint,
-    write_file, write_file_sudo, PID file write
-  - fix step 3 dry-run traces: add sudo, DEBIAN_FRONTEND=noninteractive,
-    and -o Dpkg::Options::= syntax to match actual L790-801 commands
+  Correctness (audit):
+  - guard rustup SHA-256 verify against mktemp failure (step 10)
+  - update header sudo count to ~60; use /usr/sbin/sysctl in unit file
+  - add version references to gpu.conf removal comments
 
-4.7.6  2026-03-20
-  - fix header: sudo call count ~60 → ~50 (actual non-comment count: 51)
-
-4.7.5  2026-03-20
-  Script:
-  - trim 7 function docstrings to single-line (logprintf, _prompt,
-    _cleanup_warn, _strip_log_ansi, _tee_log, run, write_file_sudo,
-    install_pkgs_best_effort)
-  - trim header NOTE: drop manual upgrade URL (covered in README)
-  - condense step 15 Quick-test from 4 lines to 2 (GPU/Audio, Display)
-  - condense step 15 Reminders from 8 lines to 4 (actionable items only)
-  - refactor step 9 eog MIME: replace 7 repetitive xdg-mime calls with
-    loop over image type array
-  README:
-  - merge t64 paragraph into Compatibility (transparent on arm64)
-  - remove orphaned arm64 .deb advice from Steam limitation
-  - condense Flatpak polkit paragraph to single line
-  - trim DOSBox paragraph (cut dosbox-staging advisory)
-  - merge winetricks into Wine paragraph
-  - remove Recommended approach section (redundant with subsections)
-  - remove Files section (obvious from repo listing)
-  CHANGELOG:
-  - collapse 4.7.1-4.7.3 into range entry
-  - collapse 3.13.0-3.22.0 into categorized range entry
-  - trim parenthetical rationales across 4.0.0-4.7.0
-
-4.7.4  2026-03-20
-  - sync step 13 title: add DOSBox-X to section comment, step_banner,
-    usage(), README step table, README Gaming section, and compatibility
-    tier (dosbox-x installed at L1600 and verified inline + step 15 but
-    absent from all title strings and README)
-  - update version badge (4.7.4)
-
-4.7.1 - 4.7.3  2026-03-20
-  - fix step 14: split run-together section comment into title + description
-  - fix step 15: move verify counter init to top of step 15 block (locality)
-  - fix step 12: gate Flatpak Mesa Zink warn() behind ! $DRY_RUN
-  - fix step 10: unset _expected/_actual after SHA-256 verify (variable leak)
-  - fix step 3: add dry-run traces for cros.list backup and glob destination
-  - fix step 11: remove stale "pip" from profile.d LOCAL_BIN comment
-  - fix step 13: add dosbox-x to inline verification
-  - merge all multi-line comments into single above-line comments; net -81 lines
-
-4.7.0  2026-03-20
+4.7.0 - 4.7.7  2026-03-20
   HIGH:
-  - fix step 13: switch RetroArch Flatpak from system to user install
-    (system-mode polkit blocked in Crostini — runtimes failed to deploy)
-  - fix step 12: add user-level Flathub remote alongside system-level;
-    system remote demoted to non-fatal (polkit may block it)
-  - fix step 15: update RetroArch verification to flatpak list --user
+  - fix RetroArch Flatpak: system → user install (polkit blocked)
+  - add user-level Flathub remote; system remote demoted to non-fatal
   MEDIUM:
-  - fix step 10: add ~/.rustup existence check to Rust guard; source
-    ~/.cargo/env if rustup present but rustc not in PATH
-  - fix step 11: verify actual inotify value after sysctl --system
-    (Termina VM may block the write)
+  - fix Rust guard: add ~/.rustup check + cargo/env source fallback
+  - verify inotify value after sysctl --system (Termina may block)
   LOW:
-  - fix step 1: gate GPU flag warning on [[ ! -e /dev/dri/renderD128 ]]
-  - fix step 3: move .pre-trixie backups from sources.list.d/ to
-    /etc/apt/ (avoids APT "Ignoring file" warnings)
-  - fix step 4: remove software-properties-common (absent in Trixie)
-  - fix step 8: replace inch-mark with "in" in .Xresources comment
-  README:
-  - update Compatibility: document backup file location change
-  - update Limitations: add inotify Crostini constraint note
+  - gate GPU warning on /dev/dri/renderD128 absence
+  - move .pre-trixie backups to /etc/apt/ (avoid APT warnings)
+  - remove software-properties-common (absent in Trixie)
+  - add bash 5.0 guard; add "--" to all 5 mv calls
+  - fix step 3 dry-run traces to match live commands
+  - fix header sudo count; sync DOSBox-X across all title strings
+  Condensation (4.7.5):
+  - trim docstrings, step 15 output, and README prose
+  - refactor step 9 eog MIME to loop; collapse old CHANGELOG ranges
+  Merge (4.7.1-4.7.3):
+  - fix step 14 comment split; move verify counter init; gate Flatpak
+    warn behind ! $DRY_RUN; unset leaked vars; add dry-run traces;
+    merge multi-line comments (net -81 lines)
 
-4.6.0  2026-03-20
-  - remove step 10 (Python), step 11 (Node.js), step 13 (VS Code) —
-    pure dev tooling with no downstream consumers
-  - remove dead references: _ms_key trap cleanup, check_tool/check_config
-    for removed tools, npm-global PATH, MS GPG key /tmp note
-  - renumber steps 12-18 to 10-15; update all bounds and cross-refs
-  README:
-  - update Steps table (15 entries); remove Python, Node.js, VS Code
-  - renumber gaming references (step 16 -> 13); update description
-
-4.5.1  2026-03-19
-  - fix step 7: route systemctl --user mask/enable through run() with
-    individual return-value checks (|| true swallowed failures)
-  - fix step 13: replace gpg --dearmor stdin redirect with positional arg
-    for consistent [EXEC] logging
-  - fix step 18: add fail branch to RetroArch Flatpak verification
-  - remove step 1i: Baguette detection block (dead code — never consumed)
-  - fix 2 redundant redirects: &>/dev/null 2>&1 -> &>/dev/null
-  - renumber step 1 sub-checks (1a-1h after 1i removal)
-
-4.5.0  2026-03-19
-  CRITICAL:
-  - fix step 7: reverse audio from PulseAudio-client to PipeWire-native;
-    add pipewire-audio; mask legacy pulseaudio; enable pipewire.socket
-    and pipewire-pulse.socket; remove PA_CLIENT/PULSE_SERVER/CROS_UID
-  - add step 15: Flatpak Mesa Zink crash warning (>=25.08 + virgl;
-    zen-browser/desktop#12276)
-  HIGH:
-  - replace step 11: native Trixie nodejs via apt (NodeSource SHA-1
-    failures under Sequoia-PGP); remove GPG constants and trap vars
-  - replace step 13: VS Code via Microsoft apt repo (DEB822, Signed-By);
-    remove code-flags.conf (Electron 38+ auto-detects Wayland)
-  MEDIUM:
-  - fix step 6: remove LIBGL_DRI3_DISABLE=0 from gpu.conf (no-op)
-  - add step 1: GPU preflight warning (ChromeOS 131+ disabled virgl)
-  - add step 9: optional Chromium install (~400 MB; guarded by ! $MINIMAL)
-  - add step 16: dosbox-x (Trixie arm64)
-  LOW:
-  - add step 1: Baguette containerless VM detection (ChromeOS 143+)
-  - add step 12: SHA-256 verification for rustup-init binary
-  - update gpu.conf comments; renumber step 1 sub-checks
-  README:
-  - add Limitations: Mesa Zink workaround, multi-container flag expiry
-  - add Browsers section, Known Issues (Firefox Bug 1957911)
-  - update Steps table and Config files written
-
-4.4.1  2026-03-19
-  - fix step 3: widen VERSION_CODENAME validation to ^[a-z][a-z0-9-]*$
-  - fix step 11: add _ns_refresh to boundary unset
-  - sync README Compatibility with widened regex; normalize Unicode ellipsis
-
-4.4.0  2026-03-19
-  - fix step 3: validate VERSION_CODENAME before sed; back up each
-    .list/.sources in sources.list.d/; split dry-run trace to match live
-  - fix step 9: detect thunar desktop file name dynamically
-  - add LICENSE (MIT), sudo caching note, run() pipefail cross-ref
-  - sync README: sources.list.d backup, codename validation, add --
-
-4.3.1  2026-03-19
-  - fix step 11: add missing shellcheck suppress on NodeSource GPG refresh
-  - fix colors: declare color constants readonly
-  - fix step 3: add dry-run trace for sources.list backup
-  - fix README: add PipeWire-pulse mask to Config files written
-
-4.3.0  2026-03-19
-  - fix step 9: remove adwaita-icon-theme-full (merged; removed in Trixie)
-  - fix step 11: unconditionally refresh NodeSource GPG keyring (Trixie
-    Sequoia rejects SHA1 sigs); guard install-path to avoid double download
-  - add step 7: mask pipewire-pulse.socket/service
-  - add step 3: warn that cros.list reverts on container restart
-  - add step 18: PipeWire mask verification check
-  - update gpu.conf and .Xresources comments
-
-4.2.0  2026-03-19
-  - fix step 3: handle deb822 .sources files during Trixie upgrade
-  - add step 3d: run apt modernize-sources (.list -> .sources; non-fatal)
-  - add step 14a: install linux-sysctl-defaults for Trixie ping perms
-  - add /tmp tmpfs note in header; renumber step 14 sub-steps
-
-4.1.0  2026-03-19
-  - add Trixie auto-upgrade in step 3: rewrite sources.list, update
-    cros.list and extras, full-upgrade; backup + rollback on failure
-  - dry-run traces all operations; post-upgrade codename verification
-  - sync step 3 title and README Compatibility section
-
-4.0.0  2026-03-19
-  - BREAKING: dual-target Bookworm (12) and Trixie (13) with canonical
-    non-transitional package names
-  - replace GPU transitionals: libegl1-mesa -> libegl1, libgles2-mesa
-    -> libgles2; detect VERSION_CODENAME for network preflight URL
-  - README: add Compatibility section with t64 explanation
-
-3.13.0 - 3.22.0  2026-03-18 - 2026-03-19
+4.0.0 - 4.6.0  2026-03-19 - 2026-03-20
+  BREAKING (4.0.0):
+  - dual-target Bookworm and Trixie with canonical package names
+  - replace GPU transitionals (libegl1-mesa → libegl1, libgles2-mesa
+    → libgles2); detect VERSION_CODENAME for network preflight
+  Major additions:
+  - add Trixie auto-upgrade in step 3 with backup/rollback (4.1.0)
+  - add deb822 .sources handling + apt modernize-sources (4.2.0)
+  - add linux-sysctl-defaults for Trixie ping permissions (4.2.0)
+  Removals (4.6.0):
+  - remove Python, Node.js, VS Code steps (pure dev tooling with no
+    downstream consumers); renumber steps 12-18 → 10-15
   Fixes:
-  - fix _strip_log_ansi: chmod 600 on tmpfile before sed writes
-  - fix step 13 VS Code download: collapse if-blocks so curl failure
-    skips install; move step 11 NodeSource unset to step boundary
-  - fix usage() OPTIONS alignment and step 2/4 vocabulary
-  - fix en-dash/Unicode normalization to ASCII (script + README)
-  - fix step 9 eog MIME: add gif, webp, svg+xml, bmp, tiff
-  - fix step 3 cross-ref: sync usage()/banner to README
-  - fix step 11 dry-run log to match live command
-  Verification:
-  - add timeout 3/5 to inline version checks and flatpak list calls
-  - add check_config for apt tuning and NodeSource repo
-  - add dry-run log at top of step 18 verification
-  Cross-reference and docs:
-  - sync step titles across banner/comment/usage/README (steps 6-8, 11-13)
-  - inline gaming guide into README; add TOFU/sysctl/dosbox-staging notes
-  - add DEBIAN_FRONTEND=noninteractive to 2 apt-get update calls
-  - add SC2329 suppression on trap-invoked functions
-  - move inline comments to above-line; replace orphaned tracker refs
+  - widen VERSION_CODENAME validation to ^[a-z][a-z0-9-]*$ (4.4.1)
+  - detect thunar desktop file name dynamically (4.4.0)
+  - add LICENSE (MIT); add sudo caching note (4.4.0)
+  Audio (4.5.0):
+  - reverse from PulseAudio-client to PipeWire-native; add pipewire-audio
+    metapackage; mask legacy PulseAudio
+  Packages (4.5.0):
+  - add Chromium (optional), dosbox-x, Flatpak Mesa Zink warning
+  - replace NodeSource with native Trixie nodejs; replace VS Code
+    with Microsoft apt repo (DEB822)
+  - fix adwaita-icon-theme-full (merged in Trixie) (4.3.0)
+  - remove LIBGL_DRI3_DISABLE=0 (no-op) (4.5.0)
+  Services (4.5.1):
+  - route systemctl mask/enable through run() with individual checks
+  - remove Baguette detection (dead code)
 
-3.8.0 - 3.12.0  2026-03-16 - 2026-03-18
+3.0.0 - 3.22.0  2026-03-15 - 2026-03-19
   Execution and safety:
   - CRITICAL: fix set -e/pipefail restore order crash in run()
-  - CRITICAL: fix PIPESTATUS race -- saved atomically into local _ps
-  - eliminate run_shell() (bash -c); eliminate date(1) from cleanup
-  - fix cleanup() recursion, signal exit codes (128+N re-raise)
-  - guard 7 pipelines against errexit; fix A&&B||C in run()
+  - CRITICAL: fix PIPESTATUS race; eliminate run_shell()/bash -c
+  - CRITICAL: fix cleanup lock deletion on --help/--version exit
+  - CRITICAL: revert broken SSH_ASKPASS; rm -rf → targeted rmdir
+  - fix cleanup recursion, signal exit codes (128+N re-raise)
   - gate locale.gen sed -i on backup; chmod 644 before mv in writers
+  BREAKING:
+  - remove git/SSH step; renumber 14-20 → 13-18
   Unattended / dry-run:
   - all sudo apt-get passes DEBIAN_FRONTEND explicitly
   - --force-confdef/--force-confold on upgrades; --noninteractive on
-    flatpak; 8 dry-run fidelity fixes; _CHECKPOINT_OVERRIDE for
-    --from-step/--verify in --dry-run; -t 300 on all 7 read prompts
-  Logging and verification:
-  - -r on 9 xargs calls; counters on 5 uncounted checks; fix 10+
-    false success logs; single-pass ANSI strip; _prompt() for audit;
-    check_tool() stderr fallback; set_checkpoint before rm in step 18
-  Packages and config:
-  - drop transitional gstreamer1.0-pulseaudio/explicit libasound2
-  - add wl-clipboard, xterm, SOMMELIER_ACCELERATORS=Super_L
-  - batch qt5; Acquire::Retries 3; Queue-Mode "access"; PATH dedup
-  - NodeSource apt update failure now dies; Node major version warn
-  Lock and tempfiles:
-  - stale lock find -delete; || die on mktemp (steps 12, 13)
-  - cleanup temp removal if/fi; GPG fingerprint split die messages
-  Cross-reference and docs:
-  - sync all banners/usage/README; Trixie migration note; NodeSource
-    maintenance-mode comment; rustup TOFU; --help/--version in README
-
-3.3.0 - 3.7.0  2026-03-15 - 2026-03-16
-  - CRITICAL: fix cleanup deleting lock on --help/--version exit
-  - CRITICAL: fix run() PIPESTATUS race (|| true reset to 0)
-  - CRITICAL: revert broken SSH_ASKPASS; 3 rm -rf -> targeted rmdir
-  - BREAKING: remove git/SSH step; renumber 14-20 -> 13-18
-  - fix set_checkpoint() atomicity, signal coverage (HUP/PIPE/QUIT),
-    --from-step/--verify conflict, logprintf() order, ANSI log leak,
-    install_pkgs_best_effort() set -e safety, 10 false success logs,
-    10 missing timeouts, source cargo/env, stale apt upgrade
-  - add batch+fallback installer, step_banner() dual-write, parallel
-    apt, verification counters, elapsed time, dpkg-deb --info, --
-  - variable leak cleanup (55 vars confirmed unset at boundaries)
-
-3.0.0 - 3.2.0  2026-03-15
+    flatpak; _CHECKPOINT_OVERRIDE for --from-step/--verify in --dry-run
+  Features:
   - add step 17: gaming (DOSBox, ScummVM, RetroArch)
-  - fix run() exit code, --dry-run arch/root checks, interactive read
-    from stdin -> /dev/tty (7 sites), prompts to stderr (19 calls)
-  - add --from-step=N, --verify, --reset, stale PID detection,
-    NodeSource GPG atomic keyring write
+  - add --from-step=N, --verify, --reset, stale PID detection
+  - add batch+fallback installer, verification counters, elapsed time
+  Logging:
+  - single-pass ANSI strip; _prompt() for audit trail; check_tool()
+    stderr fallback; timeout on version checks and flatpak list
+  Cross-reference:
+  - sync all banners/usage/README; NodeSource maintenance-mode comment
 
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
   - full rewrite: 19-step automated setup with checkpoint resume
@@ -326,7 +126,6 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - add run()/write_file()/write_file_sudo() atomic helpers,
     PID-based mkdir lock, GPU/audio/display/Vulkan verification
   - replace eval with "$@", UID 1000 with $(id -u), apt with apt-get
-  - add VM memory tuning; fix OLED rgba=none; remove pulseaudio daemon
 
 1.0.0 - 1.1.0  2026-03-08
   - initial release: Crostini bootstrap with checkpoint resume,
