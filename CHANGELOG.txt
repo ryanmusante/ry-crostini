@@ -4,6 +4,30 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.8.2  2026-03-21
+  Audit fixes (AUDIT-crostini-setup-duet5-4.8.1.txt):
+
+  Correctness:
+  - guard rustup SHA-256 verify block against mktemp failure (step 10)
+    if mktemp fails, _rustup_sha="" caused curl -o "" (undefined behavior);
+    now guarded with [[ -n "$_rustup_sha" ]] and falls through to TOFU
+
+4.8.1  2026-03-21
+  Audit fixes (AUDIT-crostini-setup-duet5-4.8.0.txt):
+
+  Correctness:
+  - update header sudo count from ~50 to ~60 (actual: 59)
+  - use canonical /usr/sbin/sysctl in crostini-sysctl.service ExecStart
+    (/sbin is a usr-merge compat symlink on Trixie; forward-compatible)
+
+  Verification:
+  - add check_tool for htop, nano, ncdu, strace, rsync to step 15
+    (previously installed in step 4 but not verified by --verify)
+
+  Documentation:
+  - add version references to gpu.conf "Do NOT set" comments
+    (GDK_BACKEND removed in 4.8.0, MESA_LOADER_DRIVER_OVERRIDE in 4.7.7)
+
 4.8.0  2026-03-21
   Gaming optimization spec (SPEC-crostini-gaming-optimization.md):
 

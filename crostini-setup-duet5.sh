@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.8.0
+# Version: 4.8.2
 # Date:    2026-03-21
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~50 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.8.0"
+readonly SCRIPT_VERSION="4.8.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -983,8 +983,8 @@ if should_run_step 6; then
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         write_file "$GPU_ENV_FILE" <<'EOF'
 # Crostini GPU acceleration environment
-# Do NOT set GDK_BACKEND — redundant on Trixie and breaks Electron apps.
-# Do NOT set MESA_LOADER_DRIVER_OVERRIDE — the driver name varies
+# Do NOT set GDK_BACKEND — removed in 4.8.0 (redundant on Trixie, breaks Electron apps).
+# Do NOT set MESA_LOADER_DRIVER_OVERRIDE — removed in 4.7.7. The driver name varies
 # across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
 # auto-detect the correct driver from /dev/dri.
 # Wayland EGL
@@ -1450,21 +1450,25 @@ if should_run_step 10; then
                 die "Rustup installer is empty"
             fi
             # Verify SHA-256 checksum (TOFU via HTTPS, no GPG since rustup 1.26.0)
-            _rustup_sha="$(mktemp /tmp/rustup-sha-XXXXXXXXXX)" || warn "Cannot create checksum tmpfile"
-            if curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 30 \
-                "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init.sha256" \
-                -o "$_rustup_sha" 2>/dev/null && [[ -s "$_rustup_sha" ]]; then
-                _expected="$(awk '{print $1}' "$_rustup_sha")"
-                _actual="$(sha256sum "$_rustup_tmp" | awk '{print $1}')"
-                if [[ "$_expected" != "$_actual" ]]; then
-                    rm -f "$_rustup_tmp" "$_rustup_sha"
-                    die "rustup-init SHA-256 mismatch: expected ${_expected}, got ${_actual}"
+            _rustup_sha="$(mktemp /tmp/rustup-sha-XXXXXXXXXX)" || { warn "Cannot create checksum tmpfile"; _rustup_sha=""; }
+            if [[ -n "$_rustup_sha" ]]; then
+                if curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 30 \
+                    "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init.sha256" \
+                    -o "$_rustup_sha" 2>/dev/null && [[ -s "$_rustup_sha" ]]; then
+                    _expected="$(awk '{print $1}' "$_rustup_sha")"
+                    _actual="$(sha256sum "$_rustup_tmp" | awk '{print $1}')"
+                    if [[ "$_expected" != "$_actual" ]]; then
+                        rm -f "$_rustup_tmp" "$_rustup_sha"
+                        die "rustup-init SHA-256 mismatch: expected ${_expected}, got ${_actual}"
+                    fi
+                    log "rustup-init SHA-256 verified: ${_actual}"
+                else
+                    warn "Cannot download rustup checksum — proceeding with TOFU"
                 fi
-                log "rustup-init SHA-256 verified: ${_actual}"
+                rm -f "$_rustup_sha"
             else
-                warn "Cannot download rustup checksum — proceeding with TOFU"
+                warn "Cannot create checksum tmpfile — proceeding with TOFU"
             fi
-            rm -f "$_rustup_sha"
             chmod +x "$_rustup_tmp"
             run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
             rm -f "$_rustup_tmp"
@@ -1533,7 +1537,7 @@ After=systemd-sysctl.service
 
 [Service]
 Type=oneshot
-ExecStart=/sbin/sysctl --system
+ExecStart=/usr/sbin/sysctl --system
 RemainAfterExit=yes
 
 [Install]
@@ -1898,6 +1902,11 @@ if should_run_step 15; then
     check_tool "bat"         bat
     check_tool "tmux"        tmux
     check_tool "jq"          jq
+    check_tool "htop"        htop
+    check_tool "nano"        nano
+    check_tool "ncdu"        ncdu
+    check_tool "strace"      strace
+    check_tool "rsync"       rsync
     check_tool "glxinfo"     glxinfo
     check_tool "glmark2"     glmark2-es2-wayland
     check_tool "vulkaninfo"  vulkaninfo
