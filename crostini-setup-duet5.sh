@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.8.2
+# Version: 4.8.4
 # Date:    2026-03-21
-# Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180)
+# Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.8.2"
+readonly SCRIPT_VERSION="4.8.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -838,7 +838,7 @@ TMPEOF
         if $DRY_RUN; then
             log "[DRY-RUN] apt -y modernize-sources"
         elif apt modernize-sources --help &>/dev/null; then
-            if run sudo apt -y modernize-sources; then
+            if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
                 log "APT sources migrated to deb822 format"
                 # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries. Remove the .list if its .sources equivalent was created.
                 if [[ -f /etc/apt/sources.list.d/cros.sources ]] && [[ -f /etc/apt/sources.list.d/cros.list ]]; then
@@ -1027,8 +1027,8 @@ if should_run_step 7; then
     # Mask legacy PulseAudio daemon if present (conflicts with PipeWire) Ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
         if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
-            if run systemctl --user mask pulseaudio.service && \
-               run systemctl --user mask pulseaudio.socket; then
+            if run systemctl --user mask --now pulseaudio.service && \
+               run systemctl --user mask --now pulseaudio.socket; then
                 log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
             else
                 warn "PulseAudio mask failed — PipeWire may conflict"
@@ -1045,7 +1045,7 @@ if should_run_step 7; then
             warn "pipewire-pulse.socket enable failed"
         fi
     else
-        log "[DRY-RUN] systemctl --user mask pulseaudio.service (if installed)"
+        log "[DRY-RUN] systemctl --user mask --now pulseaudio.service (if installed)"
         log "[DRY-RUN] systemctl --user enable --now pipewire.socket"
         log "[DRY-RUN] systemctl --user enable --now pipewire-pulse.socket"
     fi
@@ -1907,6 +1907,18 @@ if should_run_step 15; then
     check_tool "ncdu"        ncdu
     check_tool "strace"      strace
     check_tool "rsync"       rsync
+    check_tool "file"        file
+    check_tool "tree"        tree
+    check_tool "less"        less
+    check_tool "wget"        wget
+    check_tool "dig"         dig
+    check_tool "ssh"         ssh
+    check_tool "lsof"        lsof
+    check_tool "screen"      screen
+    check_tool "zip"         zip
+    check_tool "unzip"       unzip
+    check_tool "7z"          7z
+    check_tool "rename"      rename
     check_tool "glxinfo"     glxinfo
     check_tool "glmark2"     glmark2-es2-wayland
     check_tool "vulkaninfo"  vulkaninfo

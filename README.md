@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.8.2-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.8.4-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -12,7 +12,7 @@ configured desktop environment in one unattended run.
 
 | | |
 |-|-|
-| SoC | Snapdragon 7c Gen 2 (SC7180), aarch64 |
+| SoC | Snapdragon 7c Gen 2 (SC7180P), aarch64 |
 | GPU | Adreno 618 → virgl (paravirtualized) |
 | RAM / Storage | 4 GB LPDDR4x / 128 GB eMMC |
 | Display | 13.3" 1920×1080 OLED |

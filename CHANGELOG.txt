@@ -4,6 +4,26 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.8.4  2026-03-21
+  Audit fixes (AUDIT-crostini-setup-duet5-4.8.3.txt):
+
+  Correctness:
+  - fix SoC identifier SC7180 → SC7180P in header and README (Gen 2 die)
+  - add --now to systemctl --user mask pulseaudio.{service,socket} (step 7)
+    mask without --now only prevents future activation; if PulseAudio is
+    active, it continues running alongside PipeWire causing audio contention
+
+  Consistency:
+  - add DEBIAN_FRONTEND=noninteractive to sudo apt modernize-sources (step 3)
+    matches all other sudo apt-get/apt calls; prevents regressions
+
+4.8.3  2026-03-21
+  Audit fixes (AUDIT-crostini-setup-duet5-4.8.2.txt):
+
+  Verification:
+  - add 12 missing check_tool entries to step 15 for step 4 CLI packages
+    (file, tree, less, wget, dig, ssh, lsof, screen, zip, unzip, 7z, rename)
+
 4.8.2  2026-03-21
   Audit fixes (AUDIT-crostini-setup-duet5-4.8.1.txt):
 
