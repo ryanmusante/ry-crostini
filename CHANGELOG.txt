@@ -4,6 +4,19 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.9.1  2026-03-22
+
+  Correctness:
+  - route 8 flatpak override calls through run() for log trail (step 13)
+  - merge two sequential tee -a appends to SYSCTL_CONF into single pipe
+    (step 11 upgrade path); prevents partial write on crash between calls
+  - add shellcheck disable=SC2043 for intentional single-element for loop
+    (step 13 Flatpak Mesa overrides expansion point)
+
+  Verification:
+  - add Gaming quick-test line to step 15 output (glxinfo renderer,
+    MESA_NO_ERROR, pw-top, dosbox-x --version); syncs with README § Verify
+
 4.9.0  2026-03-22
   Gaming & performance optimizations (SPEC-gaming-performance-optimizations v2.0.0):
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.9.0
+# Version: 4.9.1
 # Date:    2026-03-22
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.9.0"
+readonly SCRIPT_VERSION="4.9.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -1618,9 +1618,8 @@ EOF
         log "sysctl tuning already applied"
         # Upgrade path: append vm.max_map_count if absent (§6)
         if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
-            printf '%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
-                | run sudo tee -a "$SYSCTL_CONF" > /dev/null
-            printf '%s\n' 'vm.max_map_count=262144' \
+            printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
+                'vm.max_map_count=262144' \
                 | run sudo tee -a "$SYSCTL_CONF" > /dev/null
             log "Appended vm.max_map_count to $SYSCTL_CONF"
             run sudo sysctl --system || warn "sysctl apply failed after appending vm.max_map_count"
@@ -1811,10 +1810,10 @@ if should_run_step 13; then
 
     # RetroArch Flatpak environment overrides — sandbox does not inherit host env (§5.5.1)
     if ! $DRY_RUN && timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
-        flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch
-        flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch
-        flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch
-        flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch
+        run flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch
+        run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch
+        run flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch
+        run flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch
         log "RetroArch Flatpak Mesa overrides applied"
     elif $DRY_RUN; then
         log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch (+ 3 more)"
@@ -1940,12 +1939,13 @@ SVMCFG
 
         # Apply Mesa Flatpak overrides to standalone Flatpak emulators (§5.7)
         if ! $DRY_RUN; then
+            # shellcheck disable=SC2043
             for _app_id in org.ppsspp.PPSSPP; do
                 if timeout 5 flatpak list --app --user 2>/dev/null | grep -q "$_app_id"; then
-                    flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id"
-                    flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id"
-                    flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id"
-                    flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id"
+                    run flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id"
+                    run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id"
+                    run flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id"
+                    run flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id"
                     log "$_app_id Mesa overrides applied"
                 fi
             done
@@ -2264,6 +2264,7 @@ if should_run_step 15; then
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU/Audio:   glxgears / glmark2-es2-wayland / vulkaninfo --summary / pactl info\n'
     logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
+    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox-x --version\n'
     logprintf '\n'
 
     # Reminders
