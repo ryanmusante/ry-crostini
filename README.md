@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.8.4-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.9.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -67,18 +67,21 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 10 | Rust stable aarch64 via rustup |
 | 11 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
 | 12 | Flatpak + Flathub (ARM64 app source) |
-| 13 | Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch) |
+| 13 | Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
 ## Config files written
 
-Apt download tuning, GPU env (EGL, GTK dark theme), audio env, PipeWire quantum
-override, sommelier scaling + Super key passthrough, Qt 5/6 theming, GTK 2/3/4
-dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
-fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory, sysctl
-persistence service, shell env + PATH + CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap
-(Trixie). Memory tuning attempted if /proc/sys/vm/ is writable.
+Apt download tuning, GPU env (EGL, Mesa virgl override, shader cache, GTK dark
+theme), audio env, PipeWire quantum override, PipeWire gaming quantum +
+pulse overrides (user-level KVM VM override), sommelier scaling + Super key passthrough, Qt 5/6 theming,
+GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
+fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
+vm.max\_map\_count, sysctl persistence service, shell env + PATH +
+CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), DOSBox-X config (dynrec +
+FluidSynth), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
+pixel-perfect + FluidSynth). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -122,9 +125,10 @@ virgl incompatibility; see zen-browser/desktop#12276). Step 12 pins
 mode (system-mode blocked by polkit). The `#crostini-multi-container`
 flag expires at milestone 140 (Baguette replaces it).
 
-`fs.inotify.max_user_watches` and `vm.overcommit_memory` are applied by
-`crostini-sysctl.service` on start, but the Termina VM may block writes.
-Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory`.
+`fs.inotify.max_user_watches`, `vm.overcommit_memory`, and
+`vm.max_map_count` are applied by `crostini-sysctl.service` on start,
+but the Termina VM may block writes.
+Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
 
 ## Browsers
 
@@ -140,34 +144,120 @@ Signed-By). Google Chrome ARM64 Linux expected Q2 2026
 
 ## Gaming
 
-Step 13 installs DOSBox, DOSBox-X, ScummVM, and RetroArch (Flatpak).
+Step 13 installs DOSBox-X (primary DOS), classic DOSBox (fallback), ScummVM,
+RetroArch (Flatpak), FluidSynth GM soundfont, and (unless `--minimal`) PPSSPP
+and mgba-qt. Default config files are written for DOSBox-X, RetroArch, and
+ScummVM on first install.
 
 ### Compatibility tiers
 
 | Tier | What runs | RAM | Examples |
 |------|-----------|-----|---------|
-| Excellent | ScummVM, DOSBox, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
+| Excellent | ScummVM, DOSBox-X, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
-| Fair | RetroArch PSX | 300-500 MB | PS1 catalog |
-| Marginal | RetroArch N64, box86+Wine 2D | 500 MB-2 GB | May lag or OOM |
+| Fair | RetroArch PSX, PPSSPP | 300-500 MB | PS1 catalog, lighter PSP titles |
+| Marginal | RetroArch N64, box64+Wine 2D | 500 MB-2 GB | May lag or OOM |
 | No-go | Vulkan / D3D10+ / Steam | N/A | Use cloud gaming |
 
 ### Native ARM64 (installed by step 13)
 
-**DOSBox** — classic DOS emulation. **DOSBox-X** — enhanced fork with PC-98,
-Tandy, and Windows 3.x/9x guest support (`dosbox-x` in Trixie arm64).
-**ScummVM** — 200+ native engine reimplementations. **RetroArch** — multi-system
-emulator via Flatpak (`org.libretro.RetroArch`); 8/16-bit runs great, PSX
-playable, N64 may struggle at 4 GB.
+**DOSBox-X** — primary DOS emulator with aarch64 dynrec (~40-60k effective
+cycles vs ~15-30k interpreter on classic DOSBox). Config at
+`~/.config/dosbox-x/dosbox-x.conf` with FluidSynth MIDI, pixel-perfect
+scaling, and dynamic core enabled.
+
+**DOSBox** — classic DOS emulation (interpreter-only fallback on ARM64).
+
+**ScummVM** — 200+ native engine reimplementations. Config at
+`~/.config/scummvm/scummvm.ini` with OpenGL, pixel-perfect scaling, and
+FluidSynth.
+
+**RetroArch** — multi-system emulator via Flatpak
+(`org.libretro.RetroArch`). Flatpak sandbox receives Mesa virgl overrides
+automatically. Config at
+`~/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg`.
+
+**PPSSPP** — standalone PSP emulator via Flatpak (10-15% faster than
+RetroArch PPSSPP core). Installed unless `--minimal`.
+
+**mgba-qt** — standalone GBA with debug tools. Installed unless `--minimal`.
+
+### RetroArch recommended cores
+
+| System | Recommended | Type | Notes |
+|--------|-------------|------|-------|
+| NES | FCEUmm | Core | Lightweight, accurate for 99% of titles |
+| SNES | snes9x | Core | Best performance-to-accuracy ratio on ARM64 |
+| Genesis / Mega CD / SMS / GG | Genesis Plus GX | Core | Single core covers four systems |
+| GBA | mGBA | Core | ARM64-optimized |
+| PSX | pcsx_rearmed | Core | ARM NEON dynarec, software renderer (avoids virgl overhead) |
+| N64 | mupen64plus-next | Core | GLideN64 with GLES renderer; may struggle at 4 GB |
+| PSP | PPSSPP | Standalone | 10-15% faster than RetroArch core |
+| DS | melonDS DS | Core | ARM64 builds confirmed (v1.1.8+) |
+| Dreamcast | Flycast | Core | ARM64 JIT; lighter titles at full speed |
+
+### RetroArch CRT shaders
+
+Virgl's GLES profile limits shader complexity. Tested slang shaders:
+
+| Shader | Description | Performance |
+|--------|-------------|-------------|
+| CRT-Pi | Designed for Raspberry Pi; excellent starting point | Minimal |
+| CRT-Potato | Tiled mask texture; extremely lightweight | Minimal |
+| CRT-Easymode | Good flat-display CRT simulation | Low |
+| FakeLottes | CRT-Lottes tuned for weak GPUs | Low |
+
+Avoid CRT-Royale and Mega Bezel presets entirely — they require desktop GPU power.
+
+### RetroArch run-ahead
+
+Enable per-core overrides for 8-bit and 16-bit systems only. Create a core
+override (Quick Menu → Overrides → Save Core Override) with:
+
+```
+run_ahead_enabled = "true"
+run_ahead_frames = "1"
+run_ahead_secondary_instance = "false"
+```
+
+Never enable two-instance run-ahead on this hardware (doubles RAM usage per
+core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
 ### x86 translation (advanced, optional)
 
 > **Warning:** box86+Wine overhead consumes 500 MB-1 GB before the game loads.
 
-[box86](https://ryanfortner.github.io/box86-debs/) / box64 from community
-repos (TOFU — inspect keys before adding). Wine must be x86 via box86 (not
-`apt install wine`); see [box86 Wine docs](https://github.com/ptitSeb/box86/blob/master/docs/X86WINE.md).
-WineD3D only; ceiling is D3D8/D3D9.
+**Box64 v0.4.0** (January 2026) adds dead code recycling and DynaCache.
+4 GB RAM remains the binding constraint.
+
+| Works | Does not work |
+|-------|---------------|
+| GOG Linux games via box64 (Stardew Valley, FTL, World of Goo, Don't Starve) | Steam (barely fits, requires swap, unusable performance) |
+| Simple Windows games via Wine WoW64 mode (eliminates box86/armhf multiarch) | DXVK / Vulkan titles (virgl has no Vulkan) |
+| Hangover Wine 11.0 (Jan 2026) — runs Wine natively on ARM64 | Applications requiring >2 GB memory |
+
+Build flags for memory-constrained devices:
+
+```bash
+cmake .. -DARM_DYNAREC=ON -DSAVE_MEM=1 -DBOX32=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+```
+
+Recommended `~/.box64rc`:
+
+```ini
+[default]
+BOX64_LOG=0
+BOX64_DYNAREC_CALLRET=1
+BOX64_DYNAREC_PURGE=1
+BOX64_DYNACACHE=1
+
+[wine]
+BOX64_MMAP32=1
+BOX64_DYNAREC_STRONGMEM=1
+```
+
+**FEX-Emu:** Incompatible. Requires ARMv8.4-a (FEAT\_FLAGM); SC7180P is
+ARMv8.2.
 
 ### GOG games
 
@@ -178,10 +268,19 @@ directly.
 
 ### Cloud gaming (recommended for AAA)
 
-[GeForce NOW](https://play.geforcenow.com),
-[Xbox Cloud Gaming](https://xbox.com/play),
-[Amazon Luna](https://luna.amazon.com) — run in ChromeOS browser, bypass
-all ARM64/RAM/GPU limits.
+| Priority | Client | Notes |
+|----------|--------|-------|
+| 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming, Luna) | Direct V4L2 hardware decode, no VM overhead |
+| 2 | Android Moonlight app (Play Store) | Hardware decode; best for Sunshine/GameStream hosts |
+| 3 | Chiaki-ng (PS Remote Play) | ARM64 Linux AppImage; only native Crostini streaming client |
+
+**Not recommended inside Crostini:**
+
+| Client | Issue |
+|--------|-------|
+| Moonlight Qt | No arm64 .deb/Flatpak; software decode only |
+| Parsec | No ARM64 Linux support |
+| Steam Link | No ARM64 Linux support |
 
 ## Verify
 
@@ -194,6 +293,13 @@ pavucontrol                     # audio mixer (GUI)
 xdpyinfo | grep resolution      # display
 fc-match sans-serif             # fonts
 fc-match monospace              # fonts
+
+# Gaming (4.9.0+)
+glxinfo | grep -i renderer       # should say "virgl", not "zink"
+printenv MESA_NO_ERROR           # should be 1
+pw-top                           # QUANT column should show 256
+dosbox-x --version               # DOSBox-X aarch64 dynrec
+flatpak override --user --show org.libretro.RetroArch | grep MESA_LOADER
 ```
 
 ## License

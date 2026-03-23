@@ -4,8 +4,48 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.9.0  2026-03-22
+  Gaming & performance optimizations (SPEC-gaming-performance-optimizations v2.0.0):
+
+  Mesa / GPU (step 6):
+  - add MESA_LOADER_DRIVER_OVERRIDE=virgl + GALLIUM_DRIVER=virgl to gpu.conf
+    prevents Mesa 25.x Zink regression (zen-browser/desktop#12276)
+  - add MESA_NO_ERROR=1 (~5-10% CPU savings in games/emulators)
+  - add shader cache vars: single-file mode, 512 MB cap (reduces eMMC I/O)
+  - upgrade-path: rewrite gpu.conf if MESA_LOADER_DRIVER_OVERRIDE absent
+
+  PipeWire (step 7):
+  - add user-level pipewire.conf.d/10-crostini-gaming.conf: override KVM
+    VM auto-detection that forces min-quantum=1024; set quantum 256 (5.3 ms)
+  - add user-level pipewire-pulse.conf.d/10-crostini-gaming.conf: disable
+    PulseAudio-layer VM quantum override
+
+  Sysctl (step 11):
+  - add vm.max_map_count=262144 to 99-crostini-tuning.conf (emulators/Wine/box64)
+  - change vm.vfs_cache_pressure 150→50 in 99-crostini-memory.conf (retain
+    filesystem metadata cache, reduce eMMC random reads)
+  - upgrade-path: append max_map_count if absent; sed vfs_cache_pressure 150→50
+
+  Gaming (step 13):
+  - promote DOSBox-X as primary DOS emulator (aarch64 dynrec)
+  - add fluid-soundfont-gm (General MIDI for DOSBox-X and ScummVM)
+  - write default DOSBox-X config (dynrec, FluidSynth MIDI, pixel-perfect)
+  - write default RetroArch config (glcore, pulse audio, no rewind)
+  - apply RetroArch Flatpak Mesa/virgl environment overrides
+  - write default ScummVM config (OpenGL, pixel-perfect, FluidSynth)
+  - add PPSSPP Flatpak + mgba-qt (unless --minimal)
+  - apply Mesa overrides to standalone Flatpak emulators
+
+  Verification (step 15):
+  - add check_config for PipeWire gaming, DOSBox-X, RetroArch, ScummVM,
+    FluidSynth soundfont
+  - add PPSSPP Flatpak and mgba-qt tool checks (gated on ! $MINIMAL)
+
+  Documentation:
+  - README: add RetroArch core table, CRT shader table, run-ahead guidance,
+    box64 v0.4.0 build flags and .box64rc, streaming client priority table
+
 4.8.4  2026-03-21
-  Audit fixes (AUDIT-crostini-setup-duet5-4.8.3.txt):
 
   Correctness:
   - fix SoC identifier SC7180 → SC7180P in header and README (Gen 2 die)
@@ -18,7 +58,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     matches all other sudo apt-get/apt calls; prevents regressions
 
 4.8.0 - 4.8.3  2026-03-21
-  Gaming optimization spec + three audit fix cycles.
+  Gaming optimization spec + three correctness fix cycles.
 
   OOM and memory:
   - add /tmp tmpfs 512M cap drop-in (step 3); vm.overcommit_memory=1
@@ -40,7 +80,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - add 17 missing check_tool entries to step 15
   - add checks for tmp.mount drop-in, PipeWire quantum, sysctl service
 
-  Correctness (audit):
+  Correctness:
   - guard rustup SHA-256 verify against mktemp failure (step 10)
   - update header sudo count to ~60; use /usr/sbin/sysctl in unit file
   - add version references to gpu.conf removal comments
@@ -115,7 +155,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - add --from-step=N, --verify, --reset, stale PID detection
   - add batch+fallback installer, verification counters, elapsed time
   Logging:
-  - single-pass ANSI strip; _prompt() for audit trail; check_tool()
+  - single-pass ANSI strip; _prompt() for log trail; check_tool()
     stderr fallback; timeout on version checks and flatpak list
   Cross-reference:
   - sync all banners/usage/README; NodeSource maintenance-mode comment

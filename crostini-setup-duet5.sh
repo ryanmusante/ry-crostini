@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.8.4
-# Date:    2026-03-21
+# Version: 4.9.0
+# Date:    2026-03-22
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.8.4"
+readonly SCRIPT_VERSION="4.9.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -126,7 +126,7 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _prompt: interactive prompt — stderr + log. All "Press Enter" lines route here for audit.
+# _prompt: interactive prompt — stderr + log. All "Press Enter" lines route here for log trail.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -378,7 +378,7 @@ STEPS PERFORMED:
     10  Rust stable aarch64 via rustup
     11  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
     12  Flatpak + Flathub (ARM64 app source)
-    13  Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)
+    13  Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)
     14  Container backup (opens ChromeOS backup page with --interactive)
     15  Summary and verification
 
@@ -982,18 +982,51 @@ if should_run_step 6; then
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         write_file "$GPU_ENV_FILE" <<'EOF'
-# Crostini GPU acceleration environment
-# Do NOT set GDK_BACKEND — removed in 4.8.0 (redundant on Trixie, breaks Electron apps).
-# Do NOT set MESA_LOADER_DRIVER_OVERRIDE — removed in 4.7.7. The driver name varies
-# across Crostini versions (virtio_gpu vs virtio-gpu). Let Mesa
-# auto-detect the correct driver from /dev/dri.
+# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
 # Wayland EGL
 EGL_PLATFORM=wayland
 # GTK4 dark mode
 GTK_THEME=Adwaita:dark
+
+# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
+# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
+MESA_LOADER_DRIVER_OVERRIDE=virgl
+GALLIUM_DRIVER=virgl
+
+# Disable GL error checking (~5-10% CPU savings in games/emulators)
+# Unset for debugging: env -u MESA_NO_ERROR <command>
+MESA_NO_ERROR=1
+
+# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
+MESA_SHADER_CACHE_DISABLE=false
+MESA_SHADER_CACHE_MAX_SIZE=512M
+MESA_DISK_CACHE_SINGLE_FILE=1
+EOF
+    elif ! grep -q 'MESA_LOADER_DRIVER_OVERRIDE' "$GPU_ENV_FILE"; then
+        log "Upgrading gpu.conf: adding Mesa driver override and shader cache vars"
+        write_file "$GPU_ENV_FILE" <<'EOF'
+# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
+# Wayland EGL
+EGL_PLATFORM=wayland
+# GTK4 dark mode
+GTK_THEME=Adwaita:dark
+
+# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
+# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
+MESA_LOADER_DRIVER_OVERRIDE=virgl
+GALLIUM_DRIVER=virgl
+
+# Disable GL error checking (~5-10% CPU savings in games/emulators)
+# Unset for debugging: env -u MESA_NO_ERROR <command>
+MESA_NO_ERROR=1
+
+# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
+MESA_SHADER_CACHE_DISABLE=false
+MESA_SHADER_CACHE_MAX_SIZE=512M
+MESA_DISK_CACHE_SINGLE_FILE=1
 EOF
     else
-        log "GPU env already exists — skipping"
+        log "GPU env already up to date — skipping"
     fi
 
     unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
@@ -1094,6 +1127,62 @@ QEOF
         log "PipeWire quantum override already exists"
     fi
     unset _PW_QUANTUM
+
+    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection
+    # that forces min-quantum=1024 (21.3 ms). See SPEC §5.2.
+    _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"
+    if [[ ! -f "$_PW_GAMING" ]]; then
+        run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
+        write_file "$_PW_GAMING" <<'PWEOF'
+# PipeWire core overrides for Crostini gaming — managed by crostini-setup-duet5.sh
+# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
+# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
+
+context.properties = {
+    default.clock.rate          = 48000
+    default.clock.allowed-rates = [ 48000 ]
+    default.clock.quantum       = 256
+    default.clock.min-quantum   = 256
+    default.clock.max-quantum   = 1024
+    clock.power-of-two-quantum  = true
+}
+
+context.properties.rules = [
+    {   # Explicitly override KVM VM detection that forces min-quantum=1024
+        matches = [ { cpu.vm.name = "KVM" } ]
+        actions = {
+            update-props = {
+                default.clock.min-quantum = 256
+            }
+        }
+    }
+]
+PWEOF
+    else
+        log "PipeWire gaming config already exists"
+    fi
+    unset _PW_GAMING
+
+    # PipeWire-Pulse user-level gaming override — disable pulse-layer VM quantum override
+    _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-crostini-gaming.conf"
+    if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
+        run mkdir -p "${HOME}/.config/pipewire/pipewire-pulse.conf.d" || true
+        write_file "$_PW_PULSE_GAMING" <<'PPEOF'
+# PipeWire PulseAudio layer overrides for Crostini — managed by crostini-setup-duet5.sh
+# vm.overrides={} disables the PulseAudio-layer VM quantum override independently
+# of the core graph override in pipewire.conf.d/.
+
+pulse.properties = {
+    pulse.min.req     = 256/48000
+    pulse.default.req = 256/48000
+    pulse.min.quantum = 256/48000
+    vm.overrides      = {}
+}
+PPEOF
+    else
+        log "PipeWire-Pulse gaming config already exists"
+    fi
+    unset _PW_PULSE_GAMING
 
     unset AUDIO_PKGS AUDIO_ENV_FILE SND_DEV_COUNT
     set_checkpoint 7
@@ -1501,6 +1590,8 @@ if should_run_step 11; then
 fs.inotify.max_user_watches=524288
 # Allow overcommit — prevents malloc failures in emulators on 4 GB RAM
 vm.overcommit_memory=1
+# Prevent mmap failures in emulators, Wine, and box64
+vm.max_map_count=262144
 EOF
         if run sudo sysctl --system; then
             if ! $DRY_RUN; then
@@ -1525,6 +1616,15 @@ EOF
         fi
     else
         log "sysctl tuning already applied"
+        # Upgrade path: append vm.max_map_count if absent (§6)
+        if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
+            printf '%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
+                | run sudo tee -a "$SYSCTL_CONF" > /dev/null
+            printf '%s\n' 'vm.max_map_count=262144' \
+                | run sudo tee -a "$SYSCTL_CONF" > /dev/null
+            log "Appended vm.max_map_count to $SYSCTL_CONF"
+            run sudo sysctl --system || warn "sysctl apply failed after appending vm.max_map_count"
+        fi
     fi
 
     # 11b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
@@ -1618,8 +1718,9 @@ ENVEOF
 # Memory tuning for 4 GB Duet 5 — managed by crostini-setup-duet5.sh
 # Lower swappiness: prefer keeping pages in RAM over swapping
 vm.swappiness=10
-# More aggressive page cache reclaim under memory pressure
-vm.vfs_cache_pressure=150
+# Retain filesystem metadata cache — reduces eMMC random reads
+# (150 was overly aggressive; 50 balances cache retention vs memory pressure)
+vm.vfs_cache_pressure=50
 # Lower dirty ratio thresholds — flush writes earlier on low-RAM device
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
@@ -1631,6 +1732,15 @@ MEMEOF
         fi
     else
         log "Memory tuning config already exists"
+        # Upgrade path: change vfs_cache_pressure 150→50 (§6)
+        if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
+            run sudo sed -i \
+                -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
+                -e 's/More aggressive page cache reclaim under memory pressure/Retain filesystem metadata cache — reduces eMMC random reads/' \
+                "$MEM_CONF"
+            log "Updated vfs_cache_pressure: 150 → 50"
+            run sudo sysctl --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
+        fi
     fi
 
     # 11f. Ensure XDG dirs exist
@@ -1680,12 +1790,14 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)
+# Step 13: Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, DOSBox-X, ScummVM, RetroArch)"
+    step_banner 13 "Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)"
 
-    # Native ARM packages (no translation layer needed) dosbox-staging (actively maintained fork) available via Flatpak if classic dosbox is insufficient
-    install_pkgs_best_effort dosbox dosbox-x scummvm || warn "Some gaming packages failed"
+    # Native ARM packages — DOSBox-X primary (aarch64 dynrec), classic DOSBox fallback
+    # fluid-soundfont-gm: General MIDI soundfont for DOSBox-X and ScummVM
+    install_pkgs_best_effort dosbox-x dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
+    log "DOSBox-X recommended (aarch64 dynrec). Classic DOSBox: interpreter-only fallback."
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
     if $DRY_RUN; then
@@ -1695,6 +1807,154 @@ if should_run_step 13; then
         run flatpak install --user --noninteractive -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
     else
         warn "flatpak not available — skip RetroArch (install flatpak first)"
+    fi
+
+    # RetroArch Flatpak environment overrides — sandbox does not inherit host env (§5.5.1)
+    if ! $DRY_RUN && timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
+        flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch
+        flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch
+        flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch
+        flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch
+        log "RetroArch Flatpak Mesa overrides applied"
+    elif $DRY_RUN; then
+        log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch (+ 3 more)"
+    fi
+
+    # RetroArch default config (§5.5.2)
+    _RA_CFG="${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"
+    if [[ ! -f "$_RA_CFG" ]]; then
+        run mkdir -p "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch" || true
+        write_file "$_RA_CFG" <<'RACFG'
+# RetroArch Crostini config — managed by crostini-setup-duet5.sh
+# Written once on first install; edit freely afterward.
+
+# Video: glcore works on virgl's GL 4.3 core profile and enables slang shaders.
+# Threaded video offloads GL calls (benefits virgl's serialized command stream)
+# at the cost of +1 frame input latency — acceptable for retro gaming.
+video_driver = "glcore"
+video_threaded = "true"
+video_vsync = "true"
+video_max_swapchain_images = "2"
+
+# Audio: MUST use "pulse", NOT "pipewire".
+# RetroArch's native PipeWire driver (GitHub libretro/RetroArch#17685) hard-codes
+# quantum values and ignores the latency slider. The PulseAudio driver works
+# correctly through PipeWire's compatibility layer.
+audio_driver = "pulse"
+audio_latency = "64"
+
+# Memory: disable rewind (consumes ~20 MB/min buffer on 4 GB device).
+# Run-ahead: disabled globally; enable per-core for 8/16-bit only (see README).
+rewind_enable = "false"
+run_ahead_enabled = "false"
+
+# Misc
+savestate_compression = "true"
+menu_driver = "rgui"
+RACFG
+    else
+        log "RetroArch config already exists — skipping"
+    fi
+    unset _RA_CFG
+
+    # DOSBox-X default config (§5.4.2)
+    _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
+    if [[ ! -f "$_DBX_CFG" ]]; then
+        run mkdir -p "${HOME}/.config/dosbox-x" || true
+        write_file "$_DBX_CFG" <<'DBXCFG'
+# DOSBox-X optimized config for Crostini ARM64 — managed by crostini-setup-duet5.sh
+# Edit freely; this file is only written once (skipped if already present).
+
+[sdl]
+fullscreen=false
+fullresolution=desktop
+output=openglpp
+
+[dosbox]
+machine=svga_s3
+memsize=16
+
+[cpu]
+core=dynamic
+cputype=auto
+cycles=auto
+
+[render]
+frameskip=0
+aspect=true
+doublescan=false
+scaler=none
+
+[sblaster]
+sbtype=sb16
+oplemu=default
+
+[midi]
+mpu401=intelligent
+mididevice=fluidsynth
+midiconfig=/usr/share/sounds/sf2/FluidR3_GM.sf2
+
+[mixer]
+rate=48000
+blocksize=1024
+prebuffer=25
+DBXCFG
+    else
+        log "DOSBox-X config already exists — skipping"
+    fi
+    unset _DBX_CFG
+
+    # ScummVM default config (§5.6)
+    _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
+    if [[ ! -f "$_SVM_CFG" ]]; then
+        run mkdir -p "${HOME}/.config/scummvm" || true
+        write_file "$_SVM_CFG" <<'SVMCFG'
+# ScummVM Crostini config — managed by crostini-setup-duet5.sh
+# Written once on first install; edit freely afterward.
+[scummvm]
+gfx_mode=opengl
+stretch_mode=pixel_perfect
+aspect_ratio=true
+filtering=false
+vsync=true
+music_driver=fluidsynth
+soundfont=/usr/share/sounds/sf2/FluidR3_GM.sf2
+SVMCFG
+    else
+        log "ScummVM config already exists — skipping"
+    fi
+    unset _SVM_CFG
+
+    # Standalone emulators — skip with --minimal (§5.7)
+    if ! $MINIMAL; then
+        # PPSSPP Flatpak (standalone PSP, 10-15% faster than RetroArch core)
+        if $DRY_RUN; then
+            run flatpak install --user --noninteractive -y flathub org.ppsspp.PPSSPP
+        elif command -v flatpak &>/dev/null; then
+            run flatpak install --user --noninteractive -y flathub org.ppsspp.PPSSPP \
+                || warn "PPSSPP Flatpak install failed — non-fatal"
+        fi
+
+        # mgba-qt (standalone GBA with debug tools)
+        install_pkgs_best_effort mgba-qt || warn "mgba-qt unavailable — non-fatal"
+
+        # Apply Mesa Flatpak overrides to standalone Flatpak emulators (§5.7)
+        if ! $DRY_RUN; then
+            for _app_id in org.ppsspp.PPSSPP; do
+                if timeout 5 flatpak list --app --user 2>/dev/null | grep -q "$_app_id"; then
+                    flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id"
+                    flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id"
+                    flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id"
+                    flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id"
+                    log "$_app_id Mesa overrides applied"
+                fi
+            done
+            unset _app_id
+        else
+            log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.ppsspp.PPSSPP (+ 3 more)"
+        fi
+    else
+        log "Skipping standalone emulators (--minimal mode)"
     fi
 
     # Verify (skip in dry-run — packages were not actually installed)
@@ -1727,7 +1987,7 @@ if should_run_step 13; then
         fi
     fi
 
-    log "For advanced gaming (box86/Wine/GOG): see README.md § Gaming"
+    log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
     set_checkpoint 13
     log "Step 13 complete."
@@ -1943,6 +2203,16 @@ if should_run_step 15; then
         logprintf '  %-14s %b✗%b  not found\n' "retroarch" "$RED" "$RESET"
         ((_verify_fail++)) || true
     fi
+    if ! $MINIMAL; then
+        if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.ppsspp.PPSSPP; then
+            logprintf '  %-14s %b✓%b  Flatpak (user)\n' "ppsspp" "$GREEN" "$RESET"
+            ((_verify_pass++)) || true
+        else
+            logprintf '  %-14s %b✗%b  not found\n' "ppsspp" "$RED" "$RESET"
+            ((_verify_fail++)) || true
+        fi
+        check_tool "mgba" mgba-qt
+    fi
     logprintf '\n'
 
     # Config files
@@ -1960,7 +2230,7 @@ if should_run_step 15; then
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/crostini-env.sh"                "Shell env + PATH"
-    check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify + overcommit"
+    check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify + overcommit + max_map_count"
     if [[ -f "/etc/systemd/system/crostini-sysctl.service" ]]; then
         check_config "/etc/systemd/system/crostini-sysctl.service" "Sysctl persistence service"
     fi
@@ -1970,6 +2240,12 @@ if should_run_step 15; then
     if [[ -f "/etc/pipewire/pipewire.conf.d/99-quantum.conf" ]]; then
         check_config "/etc/pipewire/pipewire.conf.d/99-quantum.conf" "PipeWire quantum override"
     fi
+    check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"        "PipeWire gaming quantum"
+    check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-crostini-gaming.conf"   "PipeWire-Pulse gaming"
+    check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                   "DOSBox-X config"
+    check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
+    check_config "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"    "RetroArch config"
+    check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else
