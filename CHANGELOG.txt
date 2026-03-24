@@ -4,6 +4,19 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.10.3  2026-03-24
+
+  Correctness:
+  - fix same-file read→write pipeline in step 11 sysctl upgrade path
+    (vm.max_map_count append): capture content into variable before
+    piping to write_file_sudo; cat failure now triggers die() instead
+    of producing an empty file
+  - fix same-file read→write pipeline in step 11 memory tuning upgrade
+    path (vfs_cache_pressure 150→50): same variable-capture pattern
+  - fix check_tool version display for unzip: skip leading "caution:"
+    noise line in stderr fallback; now shows "UnZip 6.00 ..." instead
+    of the diagnostic warning
+
 4.10.2  2026-03-24
 
   Correctness:

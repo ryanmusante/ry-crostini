@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.2
+# Version: 4.10.3
 # Date:    2026-03-24
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.2"
+readonly SCRIPT_VERSION="4.10.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -322,8 +322,15 @@ check_tool() {
         ver="$(timeout 3 "$cmd" --version 2>/dev/null | head -1)" || true
         if [[ -z "$ver" ]]; then
             # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
-            ver="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null)" || true
-            ver="${ver%%$'\n'*}"
+            local _raw
+            _raw="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null)" || true
+            ver="${_raw%%$'\n'*}"
+            # Skip leading noise — e.g. unzip interprets --version as short
+            # flags and emits "caution:" before the actual version line.
+            if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* ]]; then
+                _raw="${_raw#*$'\n'}"
+                ver="${_raw%%$'\n'*}"
+            fi
         fi
         logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
         ((_verify_pass++)) || true
@@ -1602,11 +1609,14 @@ EOF
         log "sysctl tuning already applied"
         # Upgrade path: append vm.max_map_count if absent (§6)
         if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
-            # Atomic: read existing + append → tmpfile + mv (via write_file_sudo)
-            { cat "$SYSCTL_CONF"
+            # Read existing content into variable first — avoids same-file
+            # read→write pipeline where cat failure yields an empty file.
+            _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
+            { printf '%s\n' "$_existing"
               printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
                   'vm.max_map_count=262144'
             } | write_file_sudo "$SYSCTL_CONF"
+            unset _existing
             log "Appended vm.max_map_count to $SYSCTL_CONF"
             run sudo sysctl --system || warn "sysctl apply failed after appending vm.max_map_count"
         fi
@@ -1719,10 +1729,14 @@ MEMEOF
         log "Memory tuning config already exists"
         # Upgrade path: change vfs_cache_pressure 150→50 (§6)
         if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
-            # Atomic: sed transform → tmpfile + mv (via write_file_sudo)
-            sed -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
-                -e 's/More aggressive page cache reclaim under memory pressure/Retain filesystem metadata cache — reduces eMMC random reads/' \
-                "$MEM_CONF" | write_file_sudo "$MEM_CONF"
+            # Read existing content into variable first — avoids same-file
+            # read→write pipeline where sed failure yields an empty file.
+            _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
+            printf '%s\n' "$_existing" \
+                | sed -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
+                      -e 's/More aggressive page cache reclaim under memory pressure/Retain filesystem metadata cache — reduces eMMC random reads/' \
+                | write_file_sudo "$MEM_CONF"
+            unset _existing
             log "Updated vfs_cache_pressure: 150 → 50"
             run sudo sysctl --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
         fi
