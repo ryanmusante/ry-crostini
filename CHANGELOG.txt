@@ -4,216 +4,92 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.10.2  2026-03-24
+
+  Correctness:
+  - guard 8 flatpak override calls (step 13, RetroArch + PPSSPP) with
+    || true; run() restores set -e before return "$rc", so an unguarded
+    non-zero exit kills the script before checkpoint 13 is written
+
 4.10.1  2026-03-24
 
   Correctness:
   - handle unreadable checkpoint file in get_checkpoint(): cat failure
     under set -e killed the script with no error message; now warns and
-    falls back to step 0 (re-runs from start)
+    falls back to step 0
   - replace non-atomic sudo sed -i for vfs_cache_pressure upgrade path
-    (step 11) with atomic sed | write_file_sudo pattern; consistent with
-    vm.max_map_count upgrade path added in 4.10.0
-  - update header sudo count ~65 to ~70 (7 write_file_sudo × 5 + ~35
-    direct calls)
+    (step 11) with atomic sed | write_file_sudo pattern
+  - update header sudo count ~65 to ~70
 
 4.10.0  2026-03-23
 
   Correctness:
-  - remove redundant system-level PipeWire quantum config
-    (/etc/pipewire/pipewire.conf.d/99-quantum.conf); user-level
-    10-crostini-gaming.conf is strictly more complete and wins per
-    PipeWire precedence — eliminates edit-drift risk
+  - remove redundant system-level PipeWire quantum config; user-level
+    10-crostini-gaming.conf wins per PipeWire precedence
   - replace non-atomic tee -a append to SYSCTL_CONF with atomic
-    cat + write_file_sudo pattern (step 11 vm.max_map_count upgrade path)
-  - fix step 15 fd/bat verification: check both symlink name (fd/bat) and
-    Debian original (fdfind/batcat) to avoid false negatives when step 4
-    was skipped via --from-step or symlink creation failed
-  - remove no-op audio.conf (comments-only placeholder that set nothing
-    at runtime) and its check_config entry from step 15
+    cat + write_file_sudo pattern (step 11 vm.max_map_count upgrade)
+  - fix step 15 fd/bat verification: check both symlink and Debian name
+  - remove no-op audio.conf placeholder
 
   Consistency:
   - reorder CORE_PKGS: standard utilities first, Rust CLI alternatives
-    (ripgrep, fd-find, fzf, bat) last; sync across usage help, README
-    step table, and step 15 tool verification order
-  - wrap long comment line (step 3 apt parallel, 332 chars) to multi-line
-  - update header sudo count ~60 to ~65
+    last; sync across usage help, README, and step 15
 
-4.9.1  2026-03-22
+4.9.0 - 4.9.1  2026-03-22
+  Gaming and performance optimizations (SPEC v2.0.0):
+  - Mesa: add MESA_LOADER_DRIVER_OVERRIDE=virgl, MESA_NO_ERROR=1, shader
+    cache vars to gpu.conf; upgrade-path rewrites if override absent
+  - PipeWire: user-level quantum 256 override for KVM VM auto-detection;
+    disable pulse-layer VM quantum override
+  - Sysctl: add vm.max_map_count=262144; change vfs_cache_pressure 150->50
+  - Gaming (step 13): promote DOSBox-X; add fluid-soundfont-gm; write
+    default configs for DOSBox-X, RetroArch, ScummVM; add PPSSPP + mgba-qt;
+    apply Flatpak Mesa overrides to RetroArch and standalone emulators
+  - route flatpak override calls through run(); add shellcheck SC2043 disable
+  - add Gaming quick-test line to step 15; add check_config for new files
+  - README: add RetroArch core/shader/run-ahead tables, box64 v0.4.0 guide,
+    streaming client table
 
-  Correctness:
-  - route 8 flatpak override calls through run() for log trail (step 13)
-  - merge two sequential tee -a appends to SYSCTL_CONF into single pipe
-    (step 11 upgrade path); prevents partial write on crash between calls
-  - add shellcheck disable=SC2043 for intentional single-element for loop
-    (step 13 Flatpak Mesa overrides expansion point)
-
-  Verification:
-  - add Gaming quick-test line to step 15 output (glxinfo renderer,
-    MESA_NO_ERROR, pw-top, dosbox-x --version); syncs with README § Verify
-
-4.9.0  2026-03-22
-  Gaming & performance optimizations (SPEC-gaming-performance-optimizations v2.0.0):
-
-  Mesa / GPU (step 6):
-  - add MESA_LOADER_DRIVER_OVERRIDE=virgl + GALLIUM_DRIVER=virgl to gpu.conf
-    prevents Mesa 25.x Zink regression (zen-browser/desktop#12276)
-  - add MESA_NO_ERROR=1 (~5-10% CPU savings in games/emulators)
-  - add shader cache vars: single-file mode, 512 MB cap (reduces eMMC I/O)
-  - upgrade-path: rewrite gpu.conf if MESA_LOADER_DRIVER_OVERRIDE absent
-
-  PipeWire (step 7):
-  - add user-level pipewire.conf.d/10-crostini-gaming.conf: override KVM
-    VM auto-detection that forces min-quantum=1024; set quantum 256 (5.3 ms)
-  - add user-level pipewire-pulse.conf.d/10-crostini-gaming.conf: disable
-    PulseAudio-layer VM quantum override
-
-  Sysctl (step 11):
-  - add vm.max_map_count=262144 to 99-crostini-tuning.conf (emulators/Wine/box64)
-  - change vm.vfs_cache_pressure 150→50 in 99-crostini-memory.conf (retain
-    filesystem metadata cache, reduce eMMC random reads)
-  - upgrade-path: append max_map_count if absent; sed vfs_cache_pressure 150→50
-
-  Gaming (step 13):
-  - promote DOSBox-X as primary DOS emulator (aarch64 dynrec)
-  - add fluid-soundfont-gm (General MIDI for DOSBox-X and ScummVM)
-  - write default DOSBox-X config (dynrec, FluidSynth MIDI, pixel-perfect)
-  - write default RetroArch config (glcore, pulse audio, no rewind)
-  - apply RetroArch Flatpak Mesa/virgl environment overrides
-  - write default ScummVM config (OpenGL, pixel-perfect, FluidSynth)
-  - add PPSSPP Flatpak + mgba-qt (unless --minimal)
-  - apply Mesa overrides to standalone Flatpak emulators
-
-  Verification (step 15):
-  - add check_config for PipeWire gaming, DOSBox-X, RetroArch, ScummVM,
-    FluidSynth soundfont
-  - add PPSSPP Flatpak and mgba-qt tool checks (gated on ! $MINIMAL)
-
-  Documentation:
-  - README: add RetroArch core table, CRT shader table, run-ahead guidance,
-    box64 v0.4.0 build flags and .box64rc, streaming client priority table
-
-4.8.4  2026-03-21
-
-  Correctness:
-  - fix SoC identifier SC7180 → SC7180P in header and README (Gen 2 die)
-  - add --now to systemctl --user mask pulseaudio.{service,socket} (step 7)
-    mask without --now only prevents future activation; if PulseAudio is
-    active, it continues running alongside PipeWire causing audio contention
-
-  Consistency:
-  - add DEBIAN_FRONTEND=noninteractive to sudo apt modernize-sources (step 3)
-    matches all other sudo apt-get/apt calls; prevents regressions
-
-4.8.0 - 4.8.3  2026-03-21
-  Gaming optimization spec + three correctness fix cycles.
-
-  OOM and memory:
-  - add /tmp tmpfs 512M cap drop-in (step 3); vm.overcommit_memory=1
-    (step 11); CARGO_BUILD_JOBS=2 (step 11)
-
-  GPU and display:
-  - remove GDK_BACKEND from gpu.conf (redundant on Trixie, breaks Electron)
-  - add GTK_THEME=Adwaita:dark; update .Xresources DPI comment
-
-  Audio:
-  - add PipeWire quantum=256 drop-in (step 7)
-
-  Packages and services:
+4.8.0 - 4.8.4  2026-03-21
+  OOM mitigation, GPU/audio polish, verification expansion:
+  - add /tmp tmpfs 512M cap (step 3); vm.overcommit_memory=1 (step 11);
+    CARGO_BUILD_JOBS=2 (step 11); fix SC7180 -> SC7180P
+  - remove GDK_BACKEND from gpu.conf; add GTK_THEME=Adwaita:dark
   - pin Flatpak Freedesktop Platform 24.08 (Zink crash mitigation)
-  - add qt6-gtk-platformtheme; add crostini-sysctl.service for persistence
-  - guard apt modernize-sources against duplicate cros.list/.sources
-
-  Verification:
-  - add 17 missing check_tool entries to step 15
-  - add checks for tmp.mount drop-in, PipeWire quantum, sysctl service
-
-  Correctness:
-  - guard rustup SHA-256 verify against mktemp failure (step 10)
-  - update header sudo count to ~60; use /usr/sbin/sysctl in unit file
-  - add version references to gpu.conf removal comments
+  - add qt6-gtk-platformtheme; add crostini-sysctl.service
+  - guard apt modernize-sources duplicate cros.list/.sources
+  - add --now to systemctl mask pulseaudio; guard rustup SHA-256 mktemp
+  - add 17 missing check_tool entries; add check_config for new files
 
 4.7.0 - 4.7.7  2026-03-20
-  HIGH:
-  - fix RetroArch Flatpak: system → user install (polkit blocked)
-  - add user-level Flathub remote; system remote demoted to non-fatal
-  MEDIUM:
+  - fix RetroArch Flatpak: system -> user install (polkit blocked)
   - fix Rust guard: add ~/.rustup check + cargo/env source fallback
-  - verify inotify value after sysctl --system (Termina may block)
-  LOW:
   - gate GPU warning on /dev/dri/renderD128 absence
-  - move .pre-trixie backups to /etc/apt/ (avoid APT warnings)
-  - remove software-properties-common (absent in Trixie)
-  - add bash 5.0 guard; add "--" to all 5 mv calls
-  - fix step 3 dry-run traces to match live commands
-  - fix header sudo count; sync DOSBox-X across all title strings
-  Condensation (4.7.5):
-  - trim docstrings, step 15 output, and README prose
-  - refactor step 9 eog MIME to loop; collapse old CHANGELOG ranges
-  Merge (4.7.1-4.7.3):
-  - fix step 14 comment split; move verify counter init; gate Flatpak
-    warn behind ! $DRY_RUN; unset leaked vars; add dry-run traces;
-    merge multi-line comments (net -81 lines)
+  - move .pre-trixie backups to /etc/apt/; remove software-properties-common
+  - add bash 5.0 guard; add "--" to all mv calls; trim docstrings
 
 4.0.0 - 4.6.0  2026-03-19 - 2026-03-20
-  BREAKING (4.0.0):
-  - dual-target Bookworm and Trixie with canonical package names
-  - replace GPU transitionals (libegl1-mesa → libegl1, libgles2-mesa
-    → libgles2); detect VERSION_CODENAME for network preflight
-  Major additions:
-  - add Trixie auto-upgrade in step 3 with backup/rollback (4.1.0)
-  - add deb822 .sources handling + apt modernize-sources (4.2.0)
-  - add linux-sysctl-defaults for Trixie ping permissions (4.2.0)
-  Removals (4.6.0):
-  - remove Python, Node.js, VS Code steps (pure dev tooling with no
-    downstream consumers); renumber steps 12-18 → 10-15
-  Fixes:
-  - widen VERSION_CODENAME validation to ^[a-z][a-z0-9-]*$ (4.4.1)
-  - detect thunar desktop file name dynamically (4.4.0)
-  - add LICENSE (MIT); add sudo caching note (4.4.0)
-  Audio (4.5.0):
-  - reverse from PulseAudio-client to PipeWire-native; add pipewire-audio
-    metapackage; mask legacy PulseAudio
-  Packages (4.5.0):
+  BREAKING: dual-target Bookworm/Trixie with canonical package names.
+  - Trixie auto-upgrade (step 3) with backup/rollback
+  - deb822 .sources handling + apt modernize-sources
+  - linux-sysctl-defaults for Trixie ping permissions
+  - remove Python, Node.js, VS Code steps; renumber 12-18 -> 10-15
+  - PipeWire-native audio; mask legacy PulseAudio
   - add Chromium (optional), dosbox-x, Flatpak Mesa Zink warning
-  - replace NodeSource with native Trixie nodejs; replace VS Code
-    with Microsoft apt repo (DEB822)
-  - fix adwaita-icon-theme-full (merged in Trixie) (4.3.0)
-  - remove LIBGL_DRI3_DISABLE=0 (no-op) (4.5.0)
-  Services (4.5.1):
-  - route systemctl mask/enable through run() with individual checks
-  - remove Baguette detection (dead code)
 
 3.0.0 - 3.22.0  2026-03-15 - 2026-03-19
-  Execution and safety:
+  Execution safety and unattended operation:
   - CRITICAL: fix set -e/pipefail restore order crash in run()
   - CRITICAL: fix PIPESTATUS race; eliminate run_shell()/bash -c
-  - CRITICAL: fix cleanup lock deletion on --help/--version exit
-  - CRITICAL: revert broken SSH_ASKPASS; rm -rf → targeted rmdir
-  - fix cleanup recursion, signal exit codes (128+N re-raise)
-  - gate locale.gen sed -i on backup; chmod 644 before mv in writers
-  BREAKING:
-  - remove git/SSH step; renumber 14-20 → 13-18
-  Unattended / dry-run:
+  - CRITICAL: fix cleanup lock/recursion/signal exit codes (128+N)
+  - gate locale.gen sed -i on backup; chmod 644 in writers
   - all sudo apt-get passes DEBIAN_FRONTEND explicitly
-  - --force-confdef/--force-confold on upgrades; --noninteractive on
-    flatpak; _CHECKPOINT_OVERRIDE for --from-step/--verify in --dry-run
-  Features:
-  - add step 17: gaming (DOSBox, ScummVM, RetroArch)
-  - add --from-step=N, --verify, --reset, stale PID detection
-  - add batch+fallback installer, verification counters, elapsed time
-  Logging:
-  - single-pass ANSI strip; _prompt() for log trail; check_tool()
-    stderr fallback; timeout on version checks and flatpak list
-  Cross-reference:
-  - sync all banners/usage/README; NodeSource maintenance-mode comment
+  - add gaming step, --from-step=N, --verify, --reset, stale PID
+  - single-pass ANSI strip; _prompt() log trail; verification counters
 
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
-  - full rewrite: 19-step automated setup with checkpoint resume
-  - add --dry-run, --interactive, --minimal, unattended default
-  - add run()/write_file()/write_file_sudo() atomic helpers,
-    PID-based mkdir lock, GPU/audio/display/Vulkan verification
-  - replace eval with "$@", UID 1000 with $(id -u), apt with apt-get
+  Full rewrite: 19-step automated setup with checkpoint resume,
+  --dry-run, --interactive, --minimal, atomic helpers, PID lock.
 
 1.0.0 - 1.1.0  2026-03-08
-  - initial release: Crostini bootstrap with checkpoint resume,
-    --dry-run, colored output, full logging, and GPU detection
+  Initial release.

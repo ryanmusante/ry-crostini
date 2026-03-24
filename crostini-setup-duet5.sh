@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.1
+# Version: 4.10.2
 # Date:    2026-03-24
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.1"
+readonly SCRIPT_VERSION="4.10.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -1796,10 +1796,10 @@ if should_run_step 13; then
 
     # RetroArch Flatpak environment overrides — sandbox does not inherit host env (§5.5.1)
     if ! $DRY_RUN && timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
-        run flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch
-        run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch
-        run flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch
-        run flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch
+        run flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch || true
+        run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch || true
+        run flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch || true
+        run flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch || true
         log "RetroArch Flatpak Mesa overrides applied"
     elif $DRY_RUN; then
         log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch (+ 3 more)"
@@ -1928,10 +1928,10 @@ SVMCFG
             # shellcheck disable=SC2043
             for _app_id in org.ppsspp.PPSSPP; do
                 if timeout 5 flatpak list --app --user 2>/dev/null | grep -q "$_app_id"; then
-                    run flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id"
-                    run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id"
-                    run flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id"
-                    run flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id"
+                    run flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id" || true
+                    run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id" || true
+                    run flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id" || true
+                    run flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id" || true
                     log "$_app_id Mesa overrides applied"
                 fi
             done
