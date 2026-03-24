@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.3
+# Version: 4.10.4
 # Date:    2026-03-24
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.3"
+readonly SCRIPT_VERSION="4.10.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -119,6 +119,7 @@ err() {
 die()  { err "$*"; exit 1; }
 
 # logprintf: printf to both stdout and log file. MUST be defined before step_banner.
+# SAFETY: callers must use literal (single-quoted) format strings — never pass variables as $1.
 logprintf() {
     # shellcheck disable=SC2059
     printf "$@"
@@ -127,6 +128,7 @@ logprintf() {
 }
 
 # _prompt: interactive prompt — stderr + log. All "Press Enter" lines route here for log trail.
+# SAFETY: callers must use literal (single-quoted) format strings — never pass variables as $1.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -314,6 +316,8 @@ open_chromeos_url() {
     fi
 }
 
+# check_tool: verify a CLI tool exists and print its version.
+# Modifies globals: _verify_pass, _verify_fail (must be initialized by caller)
 check_tool() {
     local name="$1" cmd="$2"
     if command -v "$cmd" &>/dev/null; then
@@ -340,6 +344,8 @@ check_tool() {
     fi
 }
 
+# check_config: verify a config file exists and is non-empty.
+# Modifies globals: _verify_pass, _verify_fail, _verify_warn (must be initialized by caller)
 check_config() {
     local path="$1" desc="$2"
     if [[ -s "$path" ]]; then
@@ -2144,7 +2150,7 @@ if should_run_step 15; then
         else
             logprintf '  Shared dirs:   none — share via Files app → right-click → Share with Linux\n'
         fi
-        unset _shared_arr SHARED_N
+        unset _shared_arr SHARED_N d
     fi
     logprintf '\n'
 

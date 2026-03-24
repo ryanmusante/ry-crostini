@@ -4,6 +4,15 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.10.4  2026-03-24
+
+  Documentation:
+  - add SAFETY comment to logprintf() and _prompt(): callers must use
+    literal (single-quoted) format strings to prevent format-string
+    injection via SC2059-disabled printf "$@"
+  - add global-contract comments to check_tool() and check_config():
+    document _verify_pass/_verify_fail/_verify_warn modification
+
 4.10.3  2026-03-24
 
   Correctness:
