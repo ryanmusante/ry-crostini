@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.0
-# Date:    2026-03-23
+# Version: 4.10.1
+# Date:    2026-03-24
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.0"
+readonly SCRIPT_VERSION="4.10.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -172,7 +172,7 @@ get_checkpoint() {
     fi
     if [[ -f "$STEP_FILE" ]]; then
         local val
-        val="$(cat "$STEP_FILE")"
+        val="$(cat "$STEP_FILE" 2>/dev/null)" || { warn "Cannot read checkpoint file ${STEP_FILE}. Use --reset to clear."; echo 0; return 0; }
         if [[ "$val" =~ ^[0-9]+$ ]]; then
             echo "$val"
         else
@@ -1719,10 +1719,10 @@ MEMEOF
         log "Memory tuning config already exists"
         # Upgrade path: change vfs_cache_pressure 150→50 (§6)
         if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
-            run sudo sed -i \
-                -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
+            # Atomic: sed transform → tmpfile + mv (via write_file_sudo)
+            sed -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
                 -e 's/More aggressive page cache reclaim under memory pressure/Retain filesystem metadata cache — reduces eMMC random reads/' \
-                "$MEM_CONF"
+                "$MEM_CONF" | write_file_sudo "$MEM_CONF"
             log "Updated vfs_cache_pressure: 150 → 50"
             run sudo sysctl --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
         fi
