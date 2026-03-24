@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.9.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-4.10.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -58,7 +58,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
 | 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
 | 3 | Upgrade to Trixie and full system update |
-| 4 | Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl, htop, wl-clipboard, ...) |
+| 4 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
 | 5 | Build essentials and development headers |
 | 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
 | 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol) |
@@ -74,8 +74,8 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 ## Config files written
 
 Apt download tuning, GPU env (EGL, Mesa virgl override, shader cache, GTK dark
-theme), audio env, PipeWire quantum override, PipeWire gaming quantum +
-pulse overrides (user-level KVM VM override), sommelier scaling + Super key passthrough, Qt 5/6 theming,
+theme), PipeWire gaming quantum + pulse overrides (user-level KVM VM override),
+sommelier scaling + Super key passthrough, Qt 5/6 theming,
 GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
 fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
 vm.max\_map\_count, sysctl persistence service, shell env + PATH +

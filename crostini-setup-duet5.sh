@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.9.1
-# Date:    2026-03-22
+# Version: 4.10.0
+# Date:    2026-03-23
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.9.1"
+readonly SCRIPT_VERSION="4.10.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -226,7 +226,11 @@ run() {
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    # Restore caller's shell options — never force-enable what wasn't set. Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old `false && set -o pipefail` returned 1, which killed the script under the just-restored set -e.  Using if/then avoids the non-zero exit code from a false && short-circuit entirely.
+    # Restore caller's shell options — never force-enable what wasn't set.
+    # Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail
+    # was off, the old `false && set -o pipefail` returned 1, which killed
+    # the script under the just-restored set -e.  Using if/then avoids the
+    # non-zero exit code from a false && short-circuit entirely.
     if $_prev_pf; then set -o pipefail; fi
     if $_prev_e; then set -e; fi
     if [[ "$_tee_rc" -ne 0 ]]; then
@@ -367,8 +371,8 @@ STEPS PERFORMED:
      2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
         --interactive opens ChromeOS settings pages for each toggle)
      3  Upgrade to Trixie and full system update
-     4  Core CLI utilities (ripgrep, fd, fzf, bat, tmux, jq, curl,
-        htop, wl-clipboard, ...)
+     4  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
+        ripgrep, fd, fzf, bat, ...)
      5  Build essentials and development headers
      6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
      7  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)
@@ -709,7 +713,11 @@ fi
 if should_run_step 3; then
     step_banner 3 "Upgrade to Trixie and full system update"
 
-    # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
+    # Enable HTTP pipelining — sends multiple requests per TCP connection.
+    # Queue-Mode "access" allows parallel connections across URIs.
+    # Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint.
+    # NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default)
+    # benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -877,14 +885,14 @@ if should_run_step 4; then
         # System monitoring
         htop ncdu lsof strace
 
-        # Search and filtering
-        ripgrep fd-find fzf bat
-
         # Misc
         tmux screen man-db bash-completion locales
 
         # Wayland clipboard (wl-copy / wl-paste for terminal ↔ GUI integration)
         wl-clipboard
+
+        # Rust CLI alternatives — enhanced replacements for grep/find/cat
+        ripgrep fd-find fzf bat
     )
 
     install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
@@ -1104,30 +1112,6 @@ if should_run_step 7; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
-    # Audio environment
-    AUDIO_ENV_FILE="${HOME}/.config/environment.d/audio.conf"
-    if [[ ! -f "$AUDIO_ENV_FILE" ]]; then
-        write_file "$AUDIO_ENV_FILE" <<'EOF'
-# Crostini audio environment
-# PipeWire provides PulseAudio socket natively via pipewire-pulse
-EOF
-    else
-        log "Audio env already exists — skipping"
-    fi
-
-    # PipeWire quantum override — reduce buffer for lower audio latency
-    _PW_QUANTUM="/etc/pipewire/pipewire.conf.d/99-quantum.conf"
-    if [[ ! -f "$_PW_QUANTUM" ]]; then
-        write_file_sudo "$_PW_QUANTUM" <<'QEOF'
-context.properties = {
-    default.clock.quantum = 256
-}
-QEOF
-    else
-        log "PipeWire quantum override already exists"
-    fi
-    unset _PW_QUANTUM
-
     # PipeWire user-level gaming overrides — counteract KVM VM auto-detection
     # that forces min-quantum=1024 (21.3 ms). See SPEC §5.2.
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"
@@ -1184,7 +1168,7 @@ PPEOF
     fi
     unset _PW_PULSE_GAMING
 
-    unset AUDIO_PKGS AUDIO_ENV_FILE SND_DEV_COUNT
+    unset AUDIO_PKGS SND_DEV_COUNT
     set_checkpoint 7
     log "Step 7 complete."
 fi
@@ -1618,9 +1602,11 @@ EOF
         log "sysctl tuning already applied"
         # Upgrade path: append vm.max_map_count if absent (§6)
         if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
-            printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
-                'vm.max_map_count=262144' \
-                | run sudo tee -a "$SYSCTL_CONF" > /dev/null
+            # Atomic: read existing + append → tmpfile + mv (via write_file_sudo)
+            { cat "$SYSCTL_CONF"
+              printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
+                  'vm.max_map_count=262144'
+            } | write_file_sudo "$SYSCTL_CONF"
             log "Appended vm.max_map_count to $SYSCTL_CONF"
             run sudo sysctl --system || warn "sysctl apply failed after appending vm.max_map_count"
         fi
@@ -2148,37 +2134,38 @@ if should_run_step 15; then
     fi
     logprintf '\n'
 
-    # Installed tools
+    # Installed tools — standard utilities first, Rust CLI alternatives last
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
-    check_tool "rustc"       rustc
-    check_tool "cargo"       cargo
     check_tool "vim"         vim
-    check_tool "curl"        curl
-    check_tool "wl-clipboard" wl-copy
-    check_tool "ripgrep"     rg
-    check_tool "fd"          fd
-    check_tool "fzf"         fzf
-    check_tool "bat"         bat
-    check_tool "tmux"        tmux
-    check_tool "jq"          jq
-    check_tool "htop"        htop
     check_tool "nano"        nano
+    check_tool "curl"        curl
+    check_tool "wget"        wget
+    check_tool "less"        less
+    check_tool "jq"          jq
+    check_tool "tmux"        tmux
+    check_tool "screen"      screen
+    check_tool "htop"        htop
     check_tool "ncdu"        ncdu
     check_tool "strace"      strace
+    check_tool "lsof"        lsof
     check_tool "rsync"       rsync
     check_tool "file"        file
     check_tool "tree"        tree
-    check_tool "less"        less
-    check_tool "wget"        wget
     check_tool "dig"         dig
     check_tool "ssh"         ssh
-    check_tool "lsof"        lsof
-    check_tool "screen"      screen
     check_tool "zip"         zip
     check_tool "unzip"       unzip
     check_tool "7z"          7z
     check_tool "rename"      rename
+    check_tool "wl-clipboard" wl-copy
+    check_tool "rustc"       rustc
+    check_tool "cargo"       cargo
+    # Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
+    check_tool "fzf"         fzf
+    check_tool "ripgrep"     rg
+    if command -v fd &>/dev/null; then check_tool "fd" fd; else check_tool "fd" fdfind; fi
+    if command -v bat &>/dev/null; then check_tool "bat" bat; else check_tool "bat" batcat; fi
     check_tool "glxinfo"     glxinfo
     check_tool "glmark2"     glmark2-es2-wayland
     check_tool "vulkaninfo"  vulkaninfo
@@ -2220,7 +2207,6 @@ if should_run_step 15; then
 
     check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
-    check_config "${HOME}/.config/environment.d/audio.conf"      "Audio env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
     check_config "${HOME}/.config/gtk-3.0/settings.ini"          "GTK 3 theme + fonts"
@@ -2236,9 +2222,6 @@ if should_run_step 15; then
     fi
     if [[ -f "/etc/systemd/system/tmp.mount.d/override.conf" ]]; then
         check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
-    fi
-    if [[ -f "/etc/pipewire/pipewire.conf.d/99-quantum.conf" ]]; then
-        check_config "/etc/pipewire/pipewire.conf.d/99-quantum.conf" "PipeWire quantum override"
     fi
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-crostini-gaming.conf"   "PipeWire-Pulse gaming"

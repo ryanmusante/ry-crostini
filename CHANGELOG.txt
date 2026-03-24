@@ -4,6 +4,28 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.10.0  2026-03-23
+
+  Correctness:
+  - remove redundant system-level PipeWire quantum config
+    (/etc/pipewire/pipewire.conf.d/99-quantum.conf); user-level
+    10-crostini-gaming.conf is strictly more complete and wins per
+    PipeWire precedence — eliminates edit-drift risk
+  - replace non-atomic tee -a append to SYSCTL_CONF with atomic
+    cat + write_file_sudo pattern (step 11 vm.max_map_count upgrade path)
+  - fix step 15 fd/bat verification: check both symlink name (fd/bat) and
+    Debian original (fdfind/batcat) to avoid false negatives when step 4
+    was skipped via --from-step or symlink creation failed
+  - remove no-op audio.conf (comments-only placeholder that set nothing
+    at runtime) and its check_config entry from step 15
+
+  Consistency:
+  - reorder CORE_PKGS: standard utilities first, Rust CLI alternatives
+    (ripgrep, fd-find, fzf, bat) last; sync across usage help, README
+    step table, and step 15 tool verification order
+  - wrap long comment line (step 3 apt parallel, 332 chars) to multi-line
+  - update header sudo count ~60 to ~65
+
 4.9.1  2026-03-22
 
   Correctness:
