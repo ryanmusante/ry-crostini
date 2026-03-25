@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.1.1
+# Version: 5.1.6
 # Date:    2026-03-24
-# Changes: fix check_tool() version-flag overrides for lsof/dig/7z/glxinfo/xterm/gnome-disks/dosbox;
-#          flag blank/error version output as WARN instead of silent pass
+# Changes: sync step 13 description across all four locations; fix 8 future-dated changelog entries (2026-03-25 → 2026-03-24)
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -19,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.1.1"
+readonly SCRIPT_VERSION="5.1.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -121,8 +120,7 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
-# logprintf: printf to both stdout and log file. MUST be defined before step_banner.
-# SAFETY: callers must use literal (single-quoted) format strings — never pass variables as $1.
+# logprintf: printf to stdout and log. MUST be defined before step_banner. Callers MUST use literal format strings — never pass variables as $1.
 logprintf() {
     # shellcheck disable=SC2059
     printf "$@"
@@ -130,8 +128,7 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _prompt: interactive prompt — stderr + log. All "Press Enter" lines route here for log trail.
-# SAFETY: callers must use literal (single-quoted) format strings — never pass variables as $1.
+# _prompt: interactive prompt to stderr + log. All "Press Enter" lines route here. Callers MUST use literal format strings — never pass variables as $1.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -231,11 +228,7 @@ run() {
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    # Restore caller's shell options — never force-enable what wasn't set.
-    # Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail
-    # was off, the old `false && set -o pipefail` returned 1, which killed
-    # the script under the just-restored set -e.  Using if/then avoids the
-    # non-zero exit code from a false && short-circuit entirely.
+    # Restore caller's shell options — never force-enable what wasn't set. Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old `false && set -o pipefail` returned 1, which killed the script under the just-restored set -e.  Using if/then avoids the non-zero exit code from a false && short-circuit entirely.
     if $_prev_pf; then set -o pipefail; fi
     if $_prev_e; then set -e; fi
     if [[ "$_tee_rc" -ne 0 ]]; then
@@ -319,11 +312,7 @@ open_chromeos_url() {
     fi
 }
 
-# check_tool: verify a CLI tool exists and print its version.
-# Modifies globals: _verify_pass, _verify_fail, _verify_warn (must be initialized by caller)
-#
-# Per-tool version flag overrides — tools that reject --version or produce no output with it.
-# Format: [cmd]="flag"  — empty string means: skip version probe, report installed only.
+# check_tool: verify a CLI tool exists and print its version. Modifies globals: _verify_pass, _verify_fail, _verify_warn. Per-tool version flag overrides — [cmd]="flag"; empty string = skip version probe, report installed only.
 declare -gA _TOOL_VER_FLAG=(
     [lsof]="-v"
     [dig]="-v"
@@ -355,8 +344,7 @@ check_tool() {
                 # shellcheck disable=SC2086
                 _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
-                # Skip leading noise — e.g. unzip interprets --version as short
-                # flags and emits "caution:" before the actual version line.
+                # Skip leading noise — e.g. unzip interprets --version as short flags and emits "caution:" before the actual version line.
                 if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* ]]; then
                     _raw="${_raw#*$'\n'}"
                     ver="${_raw%%$'\n'*}"
@@ -389,8 +377,7 @@ check_tool() {
     fi
 }
 
-# check_config: verify a config file exists and is non-empty.
-# Modifies globals: _verify_pass, _verify_fail, _verify_warn (must be initialized by caller)
+# check_config: verify a config file exists and is non-empty. Modifies globals: _verify_pass, _verify_fail, _verify_warn.
 check_config() {
     local path="$1" desc="$2"
     if [[ -s "$path" ]]; then
@@ -448,7 +435,7 @@ STEPS PERFORMED:
     12  Flatpak + Flathub (ARM64 app source, Freedesktop Platform
         24.08 pinned)
     13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
-        soundfont)
+        soundfont, box64 [Trixie only])
     14  Container backup (opens ChromeOS backup page with --interactive)
     15  Summary and verification
 
@@ -810,11 +797,7 @@ fi
 if should_run_step 3; then
     step_banner 3 "System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)"
 
-    # Enable HTTP pipelining — sends multiple requests per TCP connection.
-    # Queue-Mode "access" allows parallel connections across URIs.
-    # Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint.
-    # NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default)
-    # benefit from Queue-Mode parallelism but not HTTP pipelining.
+    # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -892,10 +875,7 @@ EOF
     unset _cur_codename
 
     # 3b. Update and upgrade
-    # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS
-    # manages cros-guest-tools/sommelier via the Termina VM; upgrading them
-    # to Trixie versions can break the container lifecycle contract (garcon,
-    # vshd, maitred), causing the container to crash on next boot.
+    # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS manages cros-guest-tools/sommelier via the Termina VM; upgrading them to Trixie versions can break the container lifecycle contract (garcon, vshd, maitred), causing the container to crash on next boot.
     if $UPGRADE_TRIXIE; then
         _CROS_HOLD_PKGS=()
         for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
@@ -923,11 +903,7 @@ EOF
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
         if $UPGRADE_TRIXIE; then
-            # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete
-            # old directory '/lib/...': Directory not empty". These are harmless artifacts
-            # of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles
-            # the conversion correctly; the warnings indicate leftover empty dirs that dpkg
-            # cannot remove because other packages still reference them temporarily.
+            # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete old directory '/lib/...': Directory not empty". These are harmless artifacts of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles the conversion correctly; the warnings indicate leftover empty dirs that dpkg cannot remove because other packages still reference them temporarily.
             log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
             run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
                 -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
@@ -947,9 +923,7 @@ EOF
     fi
     if $UPGRADE_TRIXIE; then unset _CROS_HOLD_PKGS; fi
 
-    # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages,
-    # which can include Crostini integration configs that other packages depend on
-    # at next boot. Plain autoremove is safer — conffiles remain for inspection.
+    # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages, which can include Crostini integration configs that other packages depend on at next boot. Plain autoremove is safer — conffiles remain for inspection.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     # 3c. Verify upgrade landed on Trixie (only when --trixie was requested)
@@ -985,14 +959,15 @@ TMPEOF
     fi
     unset _TMP_DROPIN
 
-    # 3e. Migrate APT sources to deb822 format (Trixie recommendation) apt modernize-sources converts .list → .sources with Signed-By. Non-fatal: old format is supported until at least 2029.
-    if command -v apt &>/dev/null; then
+    # 3e. Migrate APT sources to deb822 format — Trixie only. modernize-sources ships in apt 2.9.26+ (Trixie); Bookworm has apt 2.6.x which lacks the subcommand. Old .list format supported until 2029.
+    _mod_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ "$_mod_codename" == "trixie" ]]; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt -y modernize-sources"
-        elif apt modernize-sources --help &>/dev/null; then
+        elif apt --help 2>/dev/null | grep -q 'modernize-sources'; then
             if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
                 log "APT sources migrated to deb822 format"
-                # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries. Remove the .list if its .sources equivalent was created.
+                # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries.
                 if [[ -f /etc/apt/sources.list.d/cros.sources ]] && [[ -f /etc/apt/sources.list.d/cros.list ]]; then
                     if run sudo mv -- /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-modernize; then
                         log "Removed duplicate cros.list (modernize-sources created cros.sources)"
@@ -1004,9 +979,12 @@ TMPEOF
                 warn "apt modernize-sources failed — old format still works"
             fi
         else
-            log "apt modernize-sources not available (pre-Trixie apt) — skipping"
+            warn "apt modernize-sources not found on Trixie — apt may need upgrading"
         fi
+    else
+        log "Skipping apt modernize-sources (Trixie-only, running ${_mod_codename:-unknown})"
     fi
+    unset _mod_codename
 
     set_checkpoint 3
     log "Step 3 complete."
@@ -1215,8 +1193,7 @@ if should_run_step 7; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
-    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection
-    # that forces min-quantum=1024 (21.3 ms). See SPEC §5.2.
+    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection that forces min-quantum=1024 (21.3 ms). See SPEC §5.2.
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
@@ -1382,8 +1359,7 @@ EOF
         install_pkgs_best_effort qt5-style-plugins || \
         warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
 
-    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme
-    # WARNING: qt5ct conflicts with QT_QPA_PLATFORMTHEME=gtk3 (set in qt.conf above)
+    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme WARNING: qt5ct conflicts with QT_QPA_PLATFORMTHEME=gtk3 (set in qt.conf above)
     install_pkgs_best_effort qt6-gtk-platformtheme || \
         warn "qt6-gtk-platformtheme not available — Qt6 apps may not follow dark theme"
 
@@ -1647,9 +1623,15 @@ fi
 if should_run_step 11; then
     step_banner 11 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
 
-    # 11a. Install linux-sysctl-defaults (Trixie requirement for ping permissions) In Trixie, /etc/sysctl.conf is no longer honored by systemd-sysctl. This package provides /usr/lib/sysctl.d/50-default.conf which sets net.ipv4.ping_group_range for unprivileged ping access.
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
-        || warn "linux-sysctl-defaults unavailable (expected on Bookworm — Trixie-only package)"
+    # 11a. Install linux-sysctl-defaults (Trixie only — provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
+    _sysctl_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ "$_sysctl_codename" == "trixie" ]]; then
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
+            || warn "linux-sysctl-defaults unavailable on Trixie — ping permissions may require manual sysctl"
+    else
+        log "Skipping linux-sysctl-defaults (Trixie-only package, running ${_sysctl_codename:-unknown})"
+    fi
+    unset _sysctl_codename
 
     # 11b. Increase inotify watchers (file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
@@ -1688,8 +1670,7 @@ EOF
         log "sysctl tuning already applied"
         # Upgrade path: append vm.max_map_count if absent (§6)
         if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
-            # Read existing content into variable first — avoids same-file
-            # read→write pipeline where cat failure yields an empty file.
+            # Read existing content into variable first — avoids same-file read→write pipeline where cat failure yields an empty file.
             _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
             { printf '%s\n' "$_existing"
               printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
@@ -1702,11 +1683,7 @@ EOF
     fi
 
     # 11b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
-    # @@WHY: -e flag suppresses "Invalid argument" / "Read-only file system" errors from
-    # container-unsupported keys (e.g. net.ipv4.ping_group_range from linux-sysctl-defaults,
-    # kernel.unprivileged_userns_clone from bubblewrap). Without -e, sysctl --system returns
-    # non-zero and systemd logs the service as failed, even though writable keys (like
-    # fs.inotify.max_user_watches) were applied successfully.
+    # @@WHY: -e suppresses "Invalid argument"/"Read-only file system" errors from container-unsupported keys (ping_group_range, unprivileged_userns_clone). Without -e, sysctl --system fails even when writable keys (fs.inotify.max_user_watches) applied successfully.
     _SYSCTL_SVC="/etc/systemd/system/crostini-sysctl.service"
     if [[ ! -f "$_SYSCTL_SVC" ]]; then
         write_file_sudo "$_SYSCTL_SVC" <<'SVCEOF'
@@ -1804,8 +1781,7 @@ ENVEOF
     fi
 
     # 11e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
-    # NOTE: sysctl -e --system ignores individual read-only/unsupported keys.
-    # Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
+    # NOTE: sysctl -e --system ignores read-only/unsupported keys. Verify: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
@@ -1831,8 +1807,7 @@ MEMEOF
         log "Memory tuning config already exists"
         # Upgrade path: change vfs_cache_pressure 150→50 (§6)
         if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
-            # Read existing content into variable first — avoids same-file
-            # read→write pipeline where sed failure yields an empty file.
+            # Read existing content into variable first — avoids same-file read→write pipeline where sed failure yields an empty file.
             _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
             printf '%s\n' "$_existing" \
                 | sed -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
@@ -1842,8 +1817,7 @@ MEMEOF
             log "Updated vfs_cache_pressure: 150 → 50"
             run sudo sysctl -e --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
         fi
-        # Upgrade path: change swappiness 10→60 (§4.10.5 — OOM fix)
-        # @@WHY: $ anchor prevents matching vm.swappiness=100 → vm.swappiness=600
+        # Upgrade path: change swappiness 10→60 (§4.10.5 — OOM fix) @@WHY: $ anchor prevents matching vm.swappiness=100 → vm.swappiness=600
         if grep -q 'vm\.swappiness=10$' "$MEM_CONF"; then
             _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
             printf '%s\n' "$_existing" \
@@ -1855,8 +1829,7 @@ MEMEOF
         fi
     fi
 
-    # Upgrade path: change overcommit_memory 1→0 in tuning conf (§4.10.5 — OOM fix)
-    # @@WHY: $ anchor prevents matching vm.overcommit_memory=10 (mode 2 = strict)
+    # Upgrade path: change overcommit_memory 1→0 in tuning conf (§4.10.5 — OOM fix) @@WHY: $ anchor prevents matching vm.overcommit_memory=10 (mode 2 = strict)
     if [[ -f "$SYSCTL_CONF" ]] && grep -q 'vm\.overcommit_memory=1$' "$SYSCTL_CONF"; then
         _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
         printf '%s\n' "$_existing" \
@@ -1914,12 +1887,11 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont)
+# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only])
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont)"
+    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only])"
 
-    # Native ARM packages — classic DOSBox (interpreter-only on ARM64)
-    # fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM
+    # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM
     install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
@@ -2026,11 +1998,55 @@ SVMCFG
 
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
+    # box64: x86_64 userspace emulator with DynaRec — Trixie official repos only (not in Bookworm)
+    # NOTE: binfmt-misc automatic exec requires a privileged LXC container; standard Crostini is
+    # unprivileged. Use box64 explicitly: box64 ./program
+    _box64_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ "$_box64_codename" == "trixie" ]]; then
+        if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
+            log "box64 installed ✓"
+        else
+            warn "box64 install failed — may not be available yet in this Trixie snapshot"
+        fi
+    else
+        log "Skipping box64 (Trixie-only package, running ${_box64_codename:-unknown}) — build from source for Bookworm: https://github.com/ptitSeb/box64"
+    fi
+    unset _box64_codename
+
+    # Write ~/.box64rc with SC7180P-tuned defaults
+    _BOX64_RC="${HOME}/.box64rc"
+    if [[ ! -f "$_BOX64_RC" ]]; then
+        write_file "$_BOX64_RC" <<'RCEOF'
+# box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by crostini-setup-duet5.sh
+# Written once on first install; edit freely afterward.
+# Reference: https://github.com/ptitSeb/box64/blob/main/docs/USAGE.md
+
+[default]
+# Suppress verbose output
+BOX64_LOG=0
+# CALL/RET optimisation — safe speedup on SC7180P
+BOX64_DYNAREC_CALLRET=1
+# Purge stale dynarec blocks — reclaims RAM on 4 GB device
+BOX64_DYNAREC_PURGE=1
+# DynaCache — dead code recycling, reduces recompile overhead (v0.3.8+)
+BOX64_DYNACACHE=1
+
+[wine]
+# 32-bit address space for Wine WoW64 mode
+BOX64_MMAP32=1
+# Strong memory model — required for Wine correctness on ARM64
+BOX64_DYNAREC_STRONGMEM=1
+RCEOF
+        log "Wrote ${_BOX64_RC}"
+    else
+        log "~/.box64rc already exists — skipping"
+    fi
+    unset _BOX64_RC
+
     set_checkpoint 13
     log "Step 13 complete."
 fi
-# Step 14: Container backup (--interactive)
-# Opens ChromeOS backup page when run with --interactive.
+# Step 14: Container backup (--interactive) Opens ChromeOS backup page when run with --interactive.
 if should_run_step 14; then
     step_banner 14 "Container backup (--interactive)"
 
@@ -2253,6 +2269,7 @@ if should_run_step 15; then
     # Step 13: gaming
     check_tool "dosbox"      dosbox
     check_tool "scummvm"     scummvm
+    check_tool "box64"       box64
     if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
@@ -2302,8 +2319,7 @@ if should_run_step 15; then
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/crostini-env.sh"                "Shell env + PATH"
     check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify + overcommit + max_map_count"
-    # @@WHY: check_config only tests file existence. For the sysctl service, verify
-    # it is actually enabled and check the one sysctl that IS writable in Crostini.
+    # @@WHY: check_config only tests file existence. For the sysctl service, verify it is actually enabled and check the one sysctl that IS writable in Crostini.
     if [[ -f "/etc/systemd/system/crostini-sysctl.service" ]]; then
         if systemctl is-enabled --quiet crostini-sysctl.service 2>/dev/null; then
             logprintf '  %b✓%b  %-44s enabled\n' "$GREEN" "$RESET" "Sysctl persistence service"
@@ -2334,6 +2350,7 @@ if should_run_step 15; then
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
     check_config "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
+    check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else

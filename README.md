@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-5.1.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.1.6-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -68,7 +68,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 10 | Rust stable aarch64 via rustup |
 | 11 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
 | 12 | Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned) |
-| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont) |
+| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only]) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
@@ -81,7 +81,7 @@ GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120
 fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
 vm.max\_map\_count, sysctl persistence service, shell env + PATH +
 CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
-pixel-perfect + FluidSynth). Memory tuning attempted if /proc/sys/vm/ is writable.
+pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -135,8 +135,8 @@ Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_coun
 
 ## Gaming
 
-Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), and FluidSynth GM
-soundfont. Default config files are written for RetroArch and ScummVM on
+Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), FluidSynth GM
+soundfont, and box64 (Trixie only — x86_64 userspace emulator with ARM64 DynaRec). Default config files are written for RetroArch, ScummVM, and box64 on
 first install.
 
 ### Compatibility tiers
@@ -203,41 +203,20 @@ run_ahead_secondary_instance = "false"
 Never enable two-instance run-ahead on this hardware (doubles RAM usage per
 core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
-### x86 translation (advanced, optional)
+### x86 translation (box64, installed by step 13 on Trixie)
 
-> **Warning:** box86+Wine overhead consumes 500 MB-1 GB before the game loads.
+> **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game loads. Not recommended for RAM-intensive titles.
 
-**Box64 v0.4.0** (January 2026) adds dead code recycling and DynaCache.
-4 GB RAM remains the binding constraint.
+**box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 13 on all releases.
 
-| Works | Does not work |
-|-------|---------------|
-| GOG Linux games via box64 (Stardew Valley, FTL, World of Goo, Don't Starve) | Steam (barely fits, requires swap, unusable performance) |
-| Simple Windows games via Wine WoW64 mode (eliminates box86/armhf multiarch) | DXVK / Vulkan titles (virgl has no Vulkan) |
-| Hangover Wine 11.0 (Jan 2026) — runs Wine natively on ARM64 | Applications requiring >2 GB memory |
+**On Bookworm**, box64 is not in the official repos. Two alternatives:
 
-Build flags for memory-constrained devices:
+| Tool | Install | Performance | Notes |
+|------|---------|-------------|-------|
+| `qemu-user-static` | `apt install qemu-user-static` | Slow — full emulation, no JIT | Works on Bookworm; use `qemu-x86_64-static ./program`; binfmt-misc auto-registration blocked in unprivileged Crostini |
+| box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 5 installs both |
 
-```bash
-cmake .. -DARM_DYNAREC=ON -DSAVE_MEM=1 -DBOX32=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
-```
-
-Recommended `~/.box64rc`:
-
-```ini
-[default]
-BOX64_LOG=0
-BOX64_DYNAREC_CALLRET=1
-BOX64_DYNAREC_PURGE=1
-BOX64_DYNACACHE=1
-
-[wine]
-BOX64_MMAP32=1
-BOX64_DYNAREC_STRONGMEM=1
-```
-
-**FEX-Emu:** Incompatible. Requires ARMv8.4-a (FEAT\_FLAGM); SC7180P is
-ARMv8.2.
+**FEX-Emu:** requires a mandatory x86-64 RootFS image and is not in Debian repos — setup complexity not warranted for 4 GB Crostini.
 
 ### GOG games
 

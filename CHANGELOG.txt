@@ -4,6 +4,64 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.1.6  2026-03-24
+
+  Documentation:
+  - sync step 13 description across all four locations (comment, banner,
+    --help, README): add missing [Trixie only] qualifier to comment and
+    step_banner (--help and README already had it)
+  - fix 8 future-dated changelog entries: versions 4.10.6 through 5.1.0
+    were dated 2026-03-25 (one day ahead); corrected to 2026-03-24
+
+5.1.5  2026-03-24
+
+  Documentation:
+  - README: remove .box64rc configuration ini block and cmake build flags
+    from x86 translation section (config written by script; flags not needed)
+  - README: add qemu-user-static as Bookworm x86 alternative
+    (apt install, in Bookworm official repos; no JIT; binfmt-misc blocked
+    in unprivileged Crostini; use qemu-x86_64-static ./program explicitly)
+  - README: fix FEX-Emu note — incompatible not because of FEAT_FLAGM
+    (SC7180P is ARMv8.2, FEX requires ARMv8.0+) but because FEX requires
+    a mandatory x86-64 RootFS image and is not packaged in Debian repos
+
+5.1.4  2026-03-24
+
+  Features:
+  - add box64 install to step 13 (Trixie only — official Debian package
+    box64 0.3.0+dfsg-1; not in Bookworm; logs INFO skip with source URL)
+  - write ~/.box64rc on first install with SC7180P-tuned DynaRec defaults:
+    BOX64_DYNAREC_CALLRET=1, BOX64_DYNAREC_PURGE=1, BOX64_DYNACACHE=1,
+    and Wine section with BOX64_MMAP32=1 + BOX64_DYNAREC_STRONGMEM=1
+  - NOTE: binfmt-misc automatic x86_64 exec requires privileged LXC container;
+    standard Crostini is unprivileged — use box64 explicitly: box64 ./program
+  - add check_tool "box64" to step 15 verification
+  - add check_config ~/.box64rc to step 15 verification
+  - update step 13 banner, --help, README steps table, Gaming section,
+    Config files written, and x86 translation section
+
+5.1.3  2026-03-24
+
+  Correctness:
+  - gate linux-sysctl-defaults install on Trixie codename; on Bookworm the
+    package does not exist and the unconditional attempt produced a false WARN
+    on every run; now logs INFO skip on non-Trixie
+  - gate apt modernize-sources on Trixie codename; modernize-sources ships in
+    apt 2.9.26 (Trixie); running it on Bookworm (apt 2.6.x) always fails;
+    retain help-text guard as secondary check in case apt is upgraded in place;
+    now logs INFO skip on non-Trixie; warn only if subcommand missing on Trixie
+
+5.1.2  2026-03-24
+
+  Correctness:
+  - fix apt modernize-sources guard: `apt modernize-sources --help` exits 0
+    on Bookworm's apt 2.6.x (returns generic help, not subcommand-specific),
+    causing the guard to pass and the command to run, producing
+    E: Invalid operation modernize-sources; replaced with
+    `apt --help | grep -q modernize-sources` which is reliable across versions
+  - modernize-sources was introduced in apt 2.9.26 (2025-02-03); Bookworm
+    ships apt 2.6.x; the subcommand is Trixie-only as documented
+
 5.1.1  2026-03-24
 
   Verification:
@@ -17,13 +75,16 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     would false-pass with ERROR: [Loader Message] output on no-Vulkan systems
   - detect error strings masquerading as version output: illegal option,
     Invalid option, Unknown option, bad command line, unrecognized option,
-    invalid option, ERROR:/Error:/error: prefix, usage:/Usage: prefix;
+    invalid option, ERROR:/error: prefix, usage:/Usage: prefix;
     emit ⚠ version unverified (installed) and increment _verify_warn
     instead of silently marking pass
-  - check_tool() now modifies _verify_warn in addition to _verify_pass/_verify_fail;
-    update globals comment accordingly
+  - check_tool() now modifies _verify_warn in addition to _verify_pass/_verify_fail
 
-5.1.0  2026-03-25
+  Style:
+  - collapse all multi-line comment blocks to single lines (36 lines removed)
+  - heredoc content, file header, and shellcheck directives unchanged
+
+5.1.0  2026-03-24
 
   Removed:
   - remove PPSSPP: Flatpak install, Mesa override application (4 env
@@ -62,7 +123,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     were missing detail that --help/README already had (4.10.7
     regression from later changes)
 
-5.0.0  2026-03-25
+5.0.0  2026-03-24
 
   Breaking:
   - Trixie upgrade is no longer automatic; step 3 now runs apt update +
@@ -75,7 +136,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - apt tuning, /tmp tmpfs cap, and deb822 migration remain ungated
     (runtime-detected)
 
-4.12.0  2026-03-25
+4.12.0  2026-03-24
 
   Removed:
   - remove Firefox ESR: package install, default browser
@@ -94,7 +155,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - step 9 description now: Thunar, Evince, Eye of GNOME, file-roller,
     xterm, fonts, MIME defaults
 
-4.11.0  2026-03-25
+4.11.0  2026-03-24
 
   Removed:
   - remove DOSBox-X: package install, default config file write
@@ -105,13 +166,13 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - step 13 description now: DOSBox, ScummVM, RetroArch, PPSSPP,
     mgba-qt, FluidSynth soundfont
 
-4.10.9  2026-03-25
+4.10.9  2026-03-24
 
   Verification:
   - add check_tool for gnome-calculator (step 9 GUI app was unverified
     in step 15)
 
-4.10.8  2026-03-25
+4.10.8  2026-03-24
 
   Verification:
   - add check_tool calls for gcc, g++, make, cmake, pkg-config (step 5
@@ -127,7 +188,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     together
   - add docstring comment to _gpu_conf_content()
 
-4.10.7  2026-03-25
+4.10.7  2026-03-24
 
   Documentation:
   - sync step descriptions across all four locations (comment, banner,
@@ -144,7 +205,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - step 12: add Freedesktop Platform 24.08 pinned to description
   - step 13: add PPSSPP, mgba-qt, FluidSynth soundfont to description
 
-4.10.6  2026-03-25
+4.10.6  2026-03-24
 
   Correctness:
   - validate _os_codename with regex in step 1 before curl URL
