@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.6
+# Version: 5.0.0
 # Date:    2026-03-25
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
-# Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
+# Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.6"
+readonly SCRIPT_VERSION="5.1.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -38,6 +38,7 @@ fi
 DRY_RUN=false
 UNATTENDED=true
 MINIMAL=false
+UPGRADE_TRIXIE=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
@@ -371,6 +372,7 @@ USAGE:
 OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
+    --trixie       Upgrade Bookworm to Trixie (default: stay on Bookworm)
     --from-step=N  Start (or restart) from step N (1-15; N=15 is same as --verify)
     --verify       Run only step 15 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
@@ -380,22 +382,29 @@ OPTIONS:
     --             Stop processing options (remaining args ignored)
 
 STEPS PERFORMED:
-     1  Preflight checks (arch, Crostini, disk, network, root, sommelier)
+     1  Preflight checks (arch, bash ≥5.0, Crostini, Debian version,
+        disk, GPU, network, root, sommelier)
      2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
         --interactive opens ChromeOS settings pages for each toggle)
-     3  Upgrade to Trixie and full system update
+     3  System update (apt tuning; --trixie upgrades Bookworm to Trixie
+        with cros pkg hold, deb822 migration, /tmp tmpfs cap)
      4  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
         ripgrep, fd, fzf, bat, ...)
      5  Build essentials and development headers
-     6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
-     7  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)
-     8  Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt,
-        Xft DPI 120, fontconfig, cursor)
-     9  GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
+     6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
+     7  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
+        PipeWire gaming tuning)
+     8  Display scaling and HiDPI (sommelier, Super key passthrough,
+        GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
+     9  GUI applications (Thunar, Evince, Eye of GNOME, file-roller,
+        xterm, fonts, MIME defaults)
     10  Rust stable aarch64 via rustup
-    11  Container resource tuning (sysctl, locale, env, XDG, paths, memory)
-    12  Flatpak + Flathub (ARM64 app source)
-    13  Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)
+    11  Container resource tuning (sysctl, sysctl persistence service,
+        locale, env, XDG, paths, memory)
+    12  Flatpak + Flathub (ARM64 app source, Freedesktop Platform
+        24.08 pinned)
+    13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
+        soundfont)
     14  Container backup (opens ChromeOS backup page with --interactive)
     15  Summary and verification
 
@@ -437,6 +446,7 @@ for arg in "$@"; do
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 14; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
+        --trixie)  UPGRADE_TRIXIE=true ;;
         --help)    rm -f "$LOG_FILE" 2>/dev/null; usage ;;
         --version) rm -f "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
         --reset)
@@ -498,9 +508,35 @@ unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
 # Set noninteractive for any direct (non-sudo) dpkg/apt invocations. NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
 export DEBIAN_FRONTEND=noninteractive
-# Step 1: Preflight checks
+
+# _gpu_conf_content: emit gpu.conf heredoc. Called by step 6 (fresh-write and upgrade-path).
+_gpu_conf_content() {
+    cat <<'EOF'
+# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
+# Wayland EGL
+EGL_PLATFORM=wayland
+# GTK4 dark mode
+GTK_THEME=Adwaita:dark
+
+# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
+# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
+MESA_LOADER_DRIVER_OVERRIDE=virgl
+GALLIUM_DRIVER=virgl
+
+# Disable GL error checking (~5-10% CPU savings in games/emulators)
+# Unset for debugging: env -u MESA_NO_ERROR <command>
+MESA_NO_ERROR=1
+
+# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
+MESA_SHADER_CACHE_DISABLE=false
+MESA_SHADER_CACHE_MAX_SIZE=512M
+MESA_DISK_CACHE_SINGLE_FILE=1
+EOF
+}
+
+# Step 1: Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier)
 if should_run_step 1; then
-    step_banner 1 "Preflight checks"
+    step_banner 1 "Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier)"
 
     # 1a. Architecture
     CURRENT_ARCH="$(uname -m)"
@@ -591,9 +627,9 @@ if should_run_step 1; then
     set_checkpoint 1
     log "Step 1 complete."
 fi
-# Step 2: ChromeOS integration (GPU, mic, USB, folders, ports, disk)
+# Step 2: ChromeOS integration (GPU, mic, USB, folders, ports, disk; --interactive)
 if should_run_step 2; then
-    step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports, disk)"
+    step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports, disk; --interactive)"
 
     # 2a. GPU acceleration
     if [[ -e /dev/dri/renderD128 ]]; then
@@ -726,9 +762,9 @@ if should_run_step 2; then
     set_checkpoint 2
     log "Step 2 complete."
 fi
-# Step 3: Upgrade to Trixie and full system update
+# Step 3: System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)
 if should_run_step 3; then
-    step_banner 3 "Upgrade to Trixie and full system update"
+    step_banner 3 "System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection.
     # Queue-Mode "access" allows parallel connections across URIs.
@@ -750,126 +786,130 @@ EOF
     fi
     unset APT_PARALLEL
 
-    # 3a. Upgrade to Trixie if still on Bookworm (or any pre-Trixie release)
+    # 3a. Upgrade to Trixie if --trixie flag is set and still on Bookworm (or any pre-Trixie release)
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
-        die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting upgrade"
+        die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
-    if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
-        log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
-        if $DRY_RUN; then
-            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
-            log "[DRY-RUN] cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie (if exists)"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get update"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y"
+    if $UPGRADE_TRIXIE; then
+        if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
+            log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
+            if $DRY_RUN; then
+                log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
+                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
+                log "[DRY-RUN] cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie (if exists)"
+                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
+                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
+            else
+                # Back up sources before rewriting
+                if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+                    die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+                fi
+                # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
+                if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+                    warn "sources.list rewrite failed — restoring backup"
+                    run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
+                        || die "Cannot restore sources.list backup — manual fix required"
+                    die "Trixie upgrade aborted"
+                fi
+                log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
+                # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
+                if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+                    run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
+                    if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+                        log "Rewrote cros.list: ${_cur_codename} → trixie"
+                        warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
+                        warn "Debian repos in sources.list are permanent — only cros-packages affected"
+                    else
+                        warn "cros.list rewrite failed — continuing (non-fatal)"
+                    fi
+                fi
+                # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
+                for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                    [[ -f "$_sfile" ]] || continue
+                    if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
+                        _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
+                        run sudo cp -- "$_sfile" "$_sfile_bak" \
+                            || { warn "Cannot back up ${_sfile} — skipping"; continue; }
+                        run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
+                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                    fi
+                done
+                unset _sfile _sfile_bak
+            fi
+        elif [[ "$_cur_codename" == "trixie" ]]; then
+            log "Already running Trixie — no upgrade needed"
         else
-            # Back up sources before rewriting
-            if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
-                die "Cannot back up /etc/apt/sources.list — aborting upgrade"
-            fi
-            # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
-            if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
-                warn "sources.list rewrite failed — restoring backup"
-                run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
-                    || die "Cannot restore sources.list backup — manual fix required"
-                die "Trixie upgrade aborted"
-            fi
-            log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
-            # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
-            if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
-                if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
-                    log "Rewrote cros.list: ${_cur_codename} → trixie"
-                    warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
-                    warn "Debian repos in sources.list are permanent — only cros-packages affected"
-                else
-                    warn "cros.list rewrite failed — continuing (non-fatal)"
-                fi
-            fi
-            # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
-            for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-                [[ -f "$_sfile" ]] || continue
-                if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
-                    _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
-                    run sudo cp -- "$_sfile" "$_sfile_bak" \
-                        || { warn "Cannot back up ${_sfile} — skipping"; continue; }
-                    run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
-                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
-                fi
-            done
-            unset _sfile _sfile_bak
+            warn "Cannot determine current release codename — skipping Trixie upgrade"
         fi
-    elif [[ "$_cur_codename" == "trixie" ]]; then
-        log "Already running Trixie — no upgrade needed"
     else
-        warn "Cannot determine current release codename — skipping Trixie upgrade"
+        log "Staying on ${_cur_codename:-current release} (use --trixie to upgrade to Debian 13)"
     fi
     unset _cur_codename
 
-    # 3b. Update, upgrade, full-upgrade (also serves as Trixie dist-upgrade)
+    # 3b. Update and upgrade
     # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS
     # manages cros-guest-tools/sommelier via the Termina VM; upgrading them
     # to Trixie versions can break the container lifecycle contract (garcon,
     # vshd, maitred), causing the container to crash on next boot.
-    _CROS_HOLD_PKGS=()
-    for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
-                 cros-sftp cros-sommelier cros-sommelier-config \
-                 cros-wayland cros-pulse-config cros-apt-config; do
-        if dpkg -s "$_cpkg" &>/dev/null; then
-            _CROS_HOLD_PKGS+=("$_cpkg")
+    if $UPGRADE_TRIXIE; then
+        _CROS_HOLD_PKGS=()
+        for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
+                     cros-sftp cros-sommelier cros-sommelier-config \
+                     cros-wayland cros-pulse-config cros-apt-config; do
+            if dpkg -s "$_cpkg" &>/dev/null; then
+                _CROS_HOLD_PKGS+=("$_cpkg")
+            fi
+        done
+        if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
+            else
+                run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
+                    || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
+                log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
+            fi
         fi
-    done
-    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
-        else
-            run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
-                || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
-            log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
-        fi
+        unset _cpkg
     fi
-    unset _cpkg
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: accept package maintainer defaults for new conffiles, keep existing modified conffiles. Without these, dpkg can prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive (which sudo strips via env_reset unless sudoers has env_keep).
-        # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete
-        # old directory '/lib/...': Directory not empty". These are harmless artifacts
-        # of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles
-        # the conversion correctly; the warnings indicate leftover empty dirs that dpkg
-        # cannot remove because other packages still reference them temporarily.
-        log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
         run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
-            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            || warn "apt-get full-upgrade had issues"
+        if $UPGRADE_TRIXIE; then
+            # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete
+            # old directory '/lib/...': Directory not empty". These are harmless artifacts
+            # of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles
+            # the conversion correctly; the warnings indicate leftover empty dirs that dpkg
+            # cannot remove because other packages still reference them temporarily.
+            log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
+            run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
+                -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+                || warn "apt-get full-upgrade had issues"
+        fi
     else
-        warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
+        warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
     # Unhold Crostini packages — restore normal apt behavior for future updates
-    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+    if $UPGRADE_TRIXIE && [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt-mark unhold ${_CROS_HOLD_PKGS[*]}"
         else
             run sudo apt-mark unhold "${_CROS_HOLD_PKGS[@]}" || warn "apt-mark unhold failed"
         fi
     fi
-    unset _CROS_HOLD_PKGS
+    if $UPGRADE_TRIXIE; then unset _CROS_HOLD_PKGS; fi
 
     # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages,
     # which can include Crostini integration configs that other packages depend on
     # at next boot. Plain autoremove is safer — conffiles remain for inspection.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
-    # 3c. Verify upgrade landed on Trixie
-    if ! $DRY_RUN; then
+    # 3c. Verify upgrade landed on Trixie (only when --trixie was requested)
+    if $UPGRADE_TRIXIE && ! $DRY_RUN; then
         _post_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
         if [[ "$_post_codename" == "trixie" ]]; then
             log "Trixie upgrade verified: $(. /etc/os-release && printf '%s' "${PRETTY_NAME:-Debian 13}")"
@@ -927,9 +967,9 @@ TMPEOF
     set_checkpoint 3
     log "Step 3 complete."
 fi
-# Step 4: Core CLI utilities
+# Step 4: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
 if should_run_step 4; then
-    step_banner 4 "Core CLI utilities"
+    step_banner 4 "Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)"
 
     CORE_PKGS=(
         # Navigation and file management
@@ -995,33 +1035,10 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
-_gpu_conf_content() {
-    cat <<'EOF'
-# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
-# Wayland EGL
-EGL_PLATFORM=wayland
-# GTK4 dark mode
-GTK_THEME=Adwaita:dark
 
-# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
-# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
-MESA_LOADER_DRIVER_OVERRIDE=virgl
-GALLIUM_DRIVER=virgl
-
-# Disable GL error checking (~5-10% CPU savings in games/emulators)
-# Unset for debugging: env -u MESA_NO_ERROR <command>
-MESA_NO_ERROR=1
-
-# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
-MESA_SHADER_CACHE_DISABLE=false
-MESA_SHADER_CACHE_MAX_SIZE=512M
-MESA_DISK_CACHE_SINGLE_FILE=1
-EOF
-}
-
-# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
+# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
 if should_run_step 6; then
-    step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)"
+    step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
     # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64) libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
     GPU_STABLE_PKGS=(
@@ -1045,8 +1062,6 @@ if should_run_step 6; then
         mesa-vulkan-drivers
         libgl1
         vulkan-tools
-        glmark2-wayland
-        glmark2-es2-wayland
     )
 
     # Per-package fallback for volatile names — GPU package names change between versions
@@ -1085,9 +1100,9 @@ if should_run_step 6; then
     set_checkpoint 6
     log "Step 6 complete."
 fi
-# Step 7: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)
+# Step 7: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)
 if should_run_step 7; then
-    step_banner 7 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol)"
+    step_banner 7 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)"
 
     AUDIO_PKGS=(
         # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by alsa-utils and libasound2-plugins; no explicit listing needed.
@@ -1216,9 +1231,9 @@ PPEOF
     set_checkpoint 7
     log "Step 7 complete."
 fi
-# Step 8: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor)
+# Step 8: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
 if should_run_step 8; then
-    step_banner 8 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor)"
+    step_banner 8 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)"
 
     # 13.3in FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
@@ -1414,14 +1429,11 @@ EOF
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)
+# Step 9: GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults)
 if should_run_step 9; then
-    step_banner 9 "GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults)"
+    step_banner 9 "GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults)"
 
     GUI_PKGS=(
-        # Browser
-        firefox-esr
-
         # File management: thunar (lightweight), archive plugin, thumbnail service
         thunar
         thunar-archive-plugin
@@ -1431,9 +1443,7 @@ if should_run_step 9; then
         evince
         eog
 
-        # Utilities: calculator, screenshot tool, archive manager
-        gnome-calculator
-        gnome-screenshot
+        # Utilities: archive manager
         file-roller
         xdg-utils
 
@@ -1465,21 +1475,6 @@ if should_run_step 9; then
             || warn "gnome-disk-utility install failed"
     else
         log "Skipping gnome-disk-utility (--minimal mode)"
-    fi
-
-    # Set Firefox ESR as default browser
-    if command -v firefox-esr &>/dev/null || $DRY_RUN; then
-        if run sudo update-alternatives --set x-www-browser /usr/bin/firefox-esr; then
-            $DRY_RUN || log "Firefox ESR set as default browser"
-        else
-            warn "update-alternatives for Firefox ESR failed"
-        fi
-    fi
-
-    # Native Chromium (optional — heavy, ~400 MB)
-    if ! $MINIMAL; then
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y chromium \
-            || warn "chromium install failed (non-fatal)"
     fi
 
     # Set default file manager Desktop file was renamed in Thunar 4.20 (Xfce reverse-DNS convention)
@@ -1604,9 +1599,9 @@ if should_run_step 10; then
     set_checkpoint 10
     log "Step 10 complete."
 fi
-# Step 11: Container resource tuning (sysctl, locale, env, XDG, paths, memory)
+# Step 11: Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)
 if should_run_step 11; then
-    step_banner 11 "Container resource tuning (sysctl, locale, env, XDG, paths, memory)"
+    step_banner 11 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
 
     # 11a. Install linux-sysctl-defaults (Trixie requirement for ping permissions) In Trixie, /etc/sysctl.conf is no longer honored by systemd-sysctl. This package provides /usr/lib/sysctl.d/50-default.conf which sets net.ipv4.ping_group_range for unprivileged ping access.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
@@ -1843,9 +1838,9 @@ MEMEOF
     set_checkpoint 11
     log "Step 11 complete."
 fi
-# Step 12: Flatpak + Flathub (ARM64 app source)
+# Step 12: Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned)
 if should_run_step 12; then
-    step_banner 12 "Flatpak + Flathub (ARM64 app source)"
+    step_banner 12 "Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned)"
 
     run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak || warn "flatpak install failed"
     if $DRY_RUN; then
@@ -1875,14 +1870,13 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)
+# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont)
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch)"
+    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont)"
 
-    # Native ARM packages — DOSBox-X primary (aarch64 dynrec), classic DOSBox fallback
-    # fluid-soundfont-gm: General MIDI soundfont for DOSBox-X and ScummVM
-    install_pkgs_best_effort dosbox-x dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
-    log "DOSBox-X recommended (aarch64 dynrec). Classic DOSBox: interpreter-only fallback."
+    # Native ARM packages — classic DOSBox (interpreter-only on ARM64)
+    # fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM
+    install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
     if $DRY_RUN; then
@@ -1942,53 +1936,6 @@ RACFG
     fi
     unset _RA_CFG
 
-    # DOSBox-X default config (§5.4.2)
-    _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
-    if [[ ! -f "$_DBX_CFG" ]]; then
-        run mkdir -p "${HOME}/.config/dosbox-x" || true
-        write_file "$_DBX_CFG" <<'DBXCFG'
-# DOSBox-X optimized config for Crostini ARM64 — managed by crostini-setup-duet5.sh
-# Edit freely; this file is only written once (skipped if already present).
-
-[sdl]
-fullscreen=false
-fullresolution=desktop
-output=openglpp
-
-[dosbox]
-machine=svga_s3
-memsize=16
-
-[cpu]
-core=dynamic
-cputype=auto
-cycles=auto
-
-[render]
-frameskip=0
-aspect=true
-doublescan=false
-scaler=none
-
-[sblaster]
-sbtype=sb16
-oplemu=default
-
-[midi]
-mpu401=intelligent
-mididevice=fluidsynth
-midiconfig=/usr/share/sounds/sf2/FluidR3_GM.sf2
-
-[mixer]
-rate=48000
-blocksize=1024
-prebuffer=25
-DBXCFG
-    else
-        log "DOSBox-X config already exists — skipping"
-    fi
-    unset _DBX_CFG
-
     # ScummVM default config (§5.6)
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
     if [[ ! -f "$_SVM_CFG" ]]; then
@@ -2010,39 +1957,6 @@ SVMCFG
     fi
     unset _SVM_CFG
 
-    # Standalone emulators — skip with --minimal (§5.7)
-    if ! $MINIMAL; then
-        # PPSSPP Flatpak (standalone PSP, 10-15% faster than RetroArch core)
-        if $DRY_RUN; then
-            run flatpak install --user --noninteractive -y flathub org.ppsspp.PPSSPP
-        elif command -v flatpak &>/dev/null; then
-            run flatpak install --user --noninteractive -y flathub org.ppsspp.PPSSPP \
-                || warn "PPSSPP Flatpak install failed — non-fatal"
-        fi
-
-        # mgba-qt (standalone GBA with debug tools)
-        install_pkgs_best_effort mgba-qt || warn "mgba-qt unavailable — non-fatal"
-
-        # Apply Mesa Flatpak overrides to standalone Flatpak emulators (§5.7)
-        if ! $DRY_RUN; then
-            # shellcheck disable=SC2043
-            for _app_id in org.ppsspp.PPSSPP; do
-                if timeout 5 flatpak list --app --user 2>/dev/null | grep -q "$_app_id"; then
-                    run flatpak override --user --env=GALLIUM_DRIVER=virgl "$_app_id" || true
-                    run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl "$_app_id" || true
-                    run flatpak override --user --env=MESA_NO_ERROR=1 "$_app_id" || true
-                    run flatpak override --user --env=EGL_PLATFORM=wayland "$_app_id" || true
-                    log "$_app_id Mesa overrides applied"
-                fi
-            done
-            unset _app_id
-        else
-            log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.ppsspp.PPSSPP (+ 3 more)"
-        fi
-    else
-        log "Skipping standalone emulators (--minimal mode)"
-    fi
-
     # Verify (skip in dry-run — packages were not actually installed)
     if ! $DRY_RUN; then
         if command -v dosbox &>/dev/null; then
@@ -2051,13 +1965,6 @@ SVMCFG
             unset _dosbox_ver
         else
             warn "dosbox not found"
-        fi
-        if command -v dosbox-x &>/dev/null; then
-            _dosboxx_ver="$(timeout 3 dosbox-x --version 2>/dev/null | head -1 || true)"
-            log "dosbox-x: ${_dosboxx_ver:-installed} ✓"
-            unset _dosboxx_ver
-        else
-            warn "dosbox-x not found"
         fi
         if command -v scummvm &>/dev/null; then
             _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
@@ -2078,10 +1985,10 @@ SVMCFG
     set_checkpoint 13
     log "Step 13 complete."
 fi
-# Step 14: Container backup
+# Step 14: Container backup (--interactive)
 # Opens ChromeOS backup page when run with --interactive.
 if should_run_step 14; then
-    step_banner 14 "Container backup"
+    step_banner 14 "Container backup (--interactive)"
 
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening ChromeOS backup page to snapshot this fresh setup..."
@@ -2234,9 +2141,10 @@ if should_run_step 15; then
     fi
     logprintf '\n'
 
-    # Installed tools — standard utilities first, Rust CLI alternatives last
+    # Installed tools — ordered by installation step (4→5→6→7→9→10→12→13)
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
+    # Step 4: core CLI utilities
     check_tool "vim"         vim
     check_tool "nano"        nano
     check_tool "curl"        curl
@@ -2259,46 +2167,64 @@ if should_run_step 15; then
     check_tool "7z"          7z
     check_tool "rename"      rename
     check_tool "wl-clipboard" wl-copy
-    check_tool "rustc"       rustc
-    check_tool "cargo"       cargo
-    # Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
+    # Step 4: Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
     check_tool "fzf"         fzf
     check_tool "ripgrep"     rg
     if command -v fd &>/dev/null; then check_tool "fd" fd; else check_tool "fd" fdfind; fi
     if command -v bat &>/dev/null; then check_tool "bat" bat; else check_tool "bat" batcat; fi
+    # Step 5: build essentials
+    check_tool "gcc"         gcc
+    check_tool "g++"         g++
+    check_tool "make"        make
+    check_tool "cmake"       cmake
+    check_tool "pkg-config"  pkg-config
+    # Step 6: GPU + graphics
     check_tool "glxinfo"     glxinfo
-    check_tool "glmark2"     glmark2-es2-wayland
     check_tool "vulkaninfo"  vulkaninfo
+    # Step 7: audio
     check_tool "pactl"       pactl
     check_tool "pavucontrol" pavucontrol
-    check_tool "flatpak"     flatpak
-    check_tool "dosbox"      dosbox
-    check_tool "dosbox-x"    dosbox-x
-    check_tool "scummvm"     scummvm
-    check_tool "firefox-esr" firefox-esr
-    if ! $MINIMAL; then check_tool "chromium" chromium; fi
+    # Step 9: GUI applications
     check_tool "thunar"      thunar
     check_tool "evince"      evince
     check_tool "eog"         eog
     check_tool "file-roller" file-roller
-    check_tool "gnome-screenshot" gnome-screenshot
     check_tool "xterm"       xterm
+    if ! $MINIMAL; then
+        check_tool "gnome-disks" gnome-disks
+    fi
+    # Step 10: Rust
+    check_tool "rustc"       rustc
+    check_tool "cargo"       cargo
+    # Step 12: Flatpak
+    check_tool "flatpak"     flatpak
+    # Step 12: Freedesktop Platform runtime pin
+    if timeout 5 flatpak list --runtime --user 2>/dev/null | grep -q 'org\.freedesktop\.Platform.*24\.08'; then
+        logprintf '  %-14s %b✓%b  Flatpak runtime (user)\n' "fd-platform" "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %-14s %b⚠%b  24.08 not found — apps may use Zink (crash risk)\n' "fd-platform" "$YELLOW" "$RESET"
+        ((_verify_warn++)) || true
+    fi
+    # Step 13: gaming
+    check_tool "dosbox"      dosbox
+    check_tool "scummvm"     scummvm
     if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
+        # Verify Mesa overrides (step 13 applies 4 env vars)
+        _ra_overrides="$(flatpak override --user --show org.libretro.RetroArch 2>/dev/null)" || true
+        if printf '%s\n' "$_ra_overrides" | grep -q 'MESA_LOADER_DRIVER_OVERRIDE=virgl'; then
+            logprintf '  %-14s %b✓%b  Mesa virgl override active\n' "" "$GREEN" "$RESET"
+            ((_verify_pass++)) || true
+        else
+            logprintf '  %-14s %b⚠%b  Mesa virgl override missing\n' "" "$YELLOW" "$RESET"
+            ((_verify_warn++)) || true
+        fi
+        unset _ra_overrides
     else
         logprintf '  %-14s %b✗%b  not found\n' "retroarch" "$RED" "$RESET"
         ((_verify_fail++)) || true
-    fi
-    if ! $MINIMAL; then
-        if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.ppsspp.PPSSPP; then
-            logprintf '  %-14s %b✓%b  Flatpak (user)\n' "ppsspp" "$GREEN" "$RESET"
-            ((_verify_pass++)) || true
-        else
-            logprintf '  %-14s %b✗%b  not found\n' "ppsspp" "$RED" "$RESET"
-            ((_verify_fail++)) || true
-        fi
-        check_tool "mgba" mgba-qt
     fi
     logprintf '\n'
 
@@ -2309,6 +2235,21 @@ if should_run_step 15; then
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
+    # Step 8: Qt GTK platform themes (at least one should be present)
+    if dpkg -s qt5-gtk-platformtheme &>/dev/null || dpkg -s qt5-style-plugins &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt5 GTK platform theme"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "Qt5 GTK platform theme not found"
+        ((_verify_warn++)) || true
+    fi
+    if dpkg -s qt6-gtk-platformtheme &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt6 GTK platform theme"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "Qt6 GTK platform theme not found"
+        ((_verify_warn++)) || true
+    fi
     check_config "${HOME}/.config/gtk-3.0/settings.ini"          "GTK 3 theme + fonts"
     check_config "${HOME}/.config/gtk-4.0/settings.ini"          "GTK 4 theme + fonts"
     check_config "${HOME}/.gtkrc-2.0"                            "GTK 2 theme (legacy)"
@@ -2346,7 +2287,6 @@ if should_run_step 15; then
     fi
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-crostini-gaming.conf"   "PipeWire-Pulse gaming"
-    check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                   "DOSBox-X config"
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
     check_config "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
@@ -2366,9 +2306,9 @@ if should_run_step 15; then
     fi
     logprintf '\n'
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
-    logprintf '  GPU/Audio:   glxgears / glmark2-es2-wayland / vulkaninfo --summary / pactl info\n'
+    logprintf '  GPU/Audio:   glxgears / vulkaninfo --summary / pactl info\n'
     logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
-    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox-x --version\n'
+    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox --version\n'
     logprintf '\n'
 
     # Reminders

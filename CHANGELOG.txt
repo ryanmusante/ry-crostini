@@ -4,6 +4,127 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.1.0  2026-03-25
+
+  Removed:
+  - remove PPSSPP: Flatpak install, Mesa override application (4 env
+    vars), --minimal guard, step 15 check_tool + override verification,
+    step 13/--help/comment descriptions, README steps table, Gaming
+    section (standalone paragraph, compatibility tier), recommended
+    cores table (standalone→core with manual install note)
+  - remove mgba-qt: package install, --minimal guard, step 15
+    check_tool, step 13/--help/comment descriptions, README steps
+    table, Gaming section (standalone paragraph)
+  - step 13 description now: DOSBox, ScummVM, RetroArch, FluidSynth
+    soundfont
+
+  Verification:
+  - add gnome-disks check_tool (step 9 installs gnome-disk-utility
+    under ! $MINIMAL but step 15 never verified it)
+  - add PPSSPP Mesa virgl override verification (step 13 applied 4 env
+    vars but step 15 only checked app existence, not overrides; parity
+    with RetroArch override check) — then removed with PPSSPP above
+  - reorder step 15 check_tool calls to match installation order
+    (4→5→6→7→9→10→12→13); previously step 9 GUI apps were wedged
+    between step 13 gaming tools and step 5 build essentials included
+    step 10 Rust binaries
+
+  Correctness:
+  - fix bad substitution in step 3 cros package unhold guard:
+    ${#_CROS_HOLD_PKGS[@]:-0} is invalid bash (cannot use :- with
+    array length operator); crashed --trixie runs; removed :-0 default
+    (array is always initialized when $UPGRADE_TRIXIE is true)
+
+  Documentation:
+  - add --trixie and -- to header Usage line (line 7); all other
+    locations (--help, README, arg parsing) already had both
+  - sync step descriptions across all four locations (comment, banner,
+    --help, README table) for steps 1, 2, 3, 4, 14; comment/banner
+    were missing detail that --help/README already had (4.10.7
+    regression from later changes)
+
+5.0.0  2026-03-25
+
+  Breaking:
+  - Trixie upgrade is no longer automatic; step 3 now runs apt update +
+    apt upgrade on the current release (Bookworm) by default
+  - add --trixie flag to opt in to Bookworm→Trixie upgrade; gates
+    sources.list rewrite, cros pkg hold/unhold, apt full-upgrade,
+    and post-upgrade verification behind the flag
+  - step 3 description now: System update (apt tuning; --trixie
+    upgrades Bookworm to Trixie)
+  - apt tuning, /tmp tmpfs cap, and deb822 migration remain ungated
+    (runtime-detected)
+
+4.12.0  2026-03-25
+
+  Removed:
+  - remove Firefox ESR: package install, default browser
+    update-alternatives, step 15 check_tool, step descriptions
+  - remove Chromium: package install, --minimal guard, step 15
+    check_tool, step descriptions
+  - remove gnome-calculator: package install, step 15 check_tool,
+    step descriptions
+  - remove gnome-screenshot: package install, step 15 check_tool,
+    step descriptions
+  - remove glmark2-wayland and glmark2-es2-wayland: package install,
+    step 15 check_tool, step 6 descriptions, quick-test commands
+  - remove README Browsers section (Brave/Chrome ARM64 references)
+  - remove README Known Issues Firefox ESR bullet
+  - step 6 description now: Mesa, Virgl, Wayland, X11, Vulkan
+  - step 9 description now: Thunar, Evince, Eye of GNOME, file-roller,
+    xterm, fonts, MIME defaults
+
+4.11.0  2026-03-25
+
+  Removed:
+  - remove DOSBox-X: package install, default config file write
+    (~/.config/dosbox-x/dosbox-x.conf), step 13 inline verification,
+    step 15 check_tool and check_config, --help/banner/comment
+    descriptions, README steps table, compatibility tiers, Native ARM64
+    section, Config files written section, and Verify section
+  - step 13 description now: DOSBox, ScummVM, RetroArch, PPSSPP,
+    mgba-qt, FluidSynth soundfont
+
+4.10.9  2026-03-25
+
+  Verification:
+  - add check_tool for gnome-calculator (step 9 GUI app was unverified
+    in step 15)
+
+4.10.8  2026-03-25
+
+  Verification:
+  - add check_tool calls for gcc, g++, make, cmake, pkg-config (step 5
+    dev toolchain was unverified in step 15)
+  - add RetroArch Flatpak Mesa virgl override verification; previously
+    only checked app existence, not env var overrides
+  - add Freedesktop Platform 24.08 runtime pin verification (step 12)
+  - add Qt5 and Qt6 GTK platform theme package verification (step 8)
+
+  Maintainability:
+  - move _gpu_conf_content() from between steps 5 and 6 to utility
+    function section (before step 1); all helper functions now grouped
+    together
+  - add docstring comment to _gpu_conf_content()
+
+4.10.7  2026-03-25
+
+  Documentation:
+  - sync step descriptions across all four locations (comment, banner,
+    --help, README table); previously several steps omitted components
+    actually installed by the script
+  - step 1: add bash >=5.0, Debian version, GPU to description
+  - step 3: add apt tuning, cros pkg hold, deb822 migration, /tmp
+    tmpfs cap to description
+  - step 7: add PipeWire gaming tuning to description
+  - step 8: Qt -> Qt platform themes in description
+  - step 9: add Eye of GNOME, gnome-calculator, file-roller to
+    description
+  - step 11: add sysctl persistence service to description
+  - step 12: add Freedesktop Platform 24.08 pinned to description
+  - step 13: add PPSSPP, mgba-qt, FluidSynth soundfont to description
+
 4.10.6  2026-03-25
 
   Correctness:

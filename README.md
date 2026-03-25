@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-4.10.6-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.1.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -21,8 +21,9 @@ configured desktop environment in one unattended run.
 ## Usage
 
 ```bash
-bash crostini-setup-duet5.sh                              # unattended (default)
+bash crostini-setup-duet5.sh                              # unattended (default, stays on Bookworm)
 bash crostini-setup-duet5.sh --interactive                # prompt for toggles
+bash crostini-setup-duet5.sh --trixie                     # upgrade Bookworm to Trixie (Debian 13)
 bash crostini-setup-duet5.sh --dry-run                    # preview, zero side effects
 bash crostini-setup-duet5.sh --minimal                    # skip heavy optional packages
 bash crostini-setup-duet5.sh --from-step=6                # resume from a specific step
@@ -55,19 +56,19 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 
 | # | Step |
 |---|------|
-| 1 | Preflight checks (arch, Crostini, disk, network, root, sommelier) |
+| 1 | Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier) |
 | 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
-| 3 | Upgrade to Trixie and full system update |
+| 3 | System update (apt tuning; `--trixie` upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap) |
 | 4 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
 | 5 | Build essentials and development headers |
-| 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2) |
-| 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol) |
-| 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt, Xft DPI 120, fontconfig, cursor) |
-| 9 | GUI applications (Firefox ESR, Chromium, Thunar, Evince, xterm, fonts, screenshots, MIME defaults) |
+| 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
+| 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning) |
+| 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
+| 9 | GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults) |
 | 10 | Rust stable aarch64 via rustup |
-| 11 | Container resource tuning (sysctl, locale, env, XDG, paths, memory) |
-| 12 | Flatpak + Flathub (ARM64 app source) |
-| 13 | Gaming packages (DOSBox-X, DOSBox, ScummVM, RetroArch) |
+| 11 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
+| 12 | Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned) |
+| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
@@ -79,23 +80,25 @@ sommelier scaling + Super key passthrough, Qt 5/6 theming,
 GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
 fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
 vm.max\_map\_count, sysctl persistence service, shell env + PATH +
-CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), DOSBox-X config (dynrec +
-FluidSynth), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
+CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
 pixel-perfect + FluidSynth). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
-Step 3 upgrades Bookworm containers to Trixie by rewriting
-`/etc/apt/sources.list` and running `apt full-upgrade`. Backups are saved
-with a `.pre-trixie` suffix under `/etc/apt/`. `VERSION_CODENAME` is
-validated before any rewrite. Already-Trixie containers get a normal
-update/upgrade. Package arrays use canonical names that resolve on both
-releases (t64 transition is transparent on arm64).
+Step 3 runs `apt update && apt upgrade` on the current release (Bookworm
+by default). With `--trixie`, step 3 upgrades to Debian 13 (Trixie) by
+rewriting `/etc/apt/sources.list` and running `apt full-upgrade`. Backups
+are saved with a `.pre-trixie` suffix under `/etc/apt/`.
+`VERSION_CODENAME` is validated before any rewrite. Already-Trixie
+containers get a normal update/upgrade. Package arrays use canonical
+names that resolve on both releases (t64 transition is transparent on
+arm64).
 
-The Crostini-managed `cros.list` is also updated but may reset on container
-restart (expected ChromeOS behavior). After `apt modernize-sources`, any
-duplicate `cros.list` is removed if a `.sources` equivalent was created.
-Trixie mounts `/tmp` as tmpfs; step 3 caps it at 512 MB to prevent OOM.
+The Crostini-managed `cros.list` is also updated (with `--trixie`) but
+may reset on container restart (expected ChromeOS behavior). After
+`apt modernize-sources`, any duplicate `cros.list` is removed if a
+`.sources` equivalent was created. Trixie mounts `/tmp` as tmpfs;
+step 3 caps it at 512 MB to prevent OOM.
 
 ## Features
 
@@ -130,43 +133,25 @@ flag expires at milestone 140 (Baguette replaces it).
 but the Termina VM may block writes.
 Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
 
-## Browsers
-
-[Brave](https://brave.com/linux/) offers native arm64 packages (DEB822 +
-Signed-By). Google Chrome ARM64 Linux expected Q2 2026
-(https://blog.chromium.org/2026/03/bringing-chrome-to-arm64-linux-devices.html).
-
-## Known Issues
-
-- **Firefox ESR Wayland glitches** (Bug 1957911, Crostini-specific):
-  popups may render at zero size; hamburger menu can trigger broken-pipe
-  crashes on Nightly. ESR is more stable than mainline in Crostini.
-
 ## Gaming
 
-Step 13 installs DOSBox-X (primary DOS), classic DOSBox (fallback), ScummVM,
-RetroArch (Flatpak), FluidSynth GM soundfont, and (unless `--minimal`) PPSSPP
-and mgba-qt. Default config files are written for DOSBox-X, RetroArch, and
-ScummVM on first install.
+Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), and FluidSynth GM
+soundfont. Default config files are written for RetroArch and ScummVM on
+first install.
 
 ### Compatibility tiers
 
 | Tier | What runs | RAM | Examples |
 |------|-----------|-----|---------|
-| Excellent | ScummVM, DOSBox-X, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
+| Excellent | ScummVM, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
-| Fair | RetroArch PSX, PPSSPP | 300-500 MB | PS1 catalog, lighter PSP titles |
+| Fair | RetroArch PSX/PSP | 300-500 MB | PS1 catalog, lighter PSP titles |
 | Marginal | RetroArch N64, box64+Wine 2D | 500 MB-2 GB | May lag or OOM |
 | No-go | Vulkan / D3D10+ / Steam | N/A | Use cloud gaming |
 
 ### Native ARM64 (installed by step 13)
 
-**DOSBox-X** — primary DOS emulator with aarch64 dynrec (~40-60k effective
-cycles vs ~15-30k interpreter on classic DOSBox). Config at
-`~/.config/dosbox-x/dosbox-x.conf` with FluidSynth MIDI, pixel-perfect
-scaling, and dynamic core enabled.
-
-**DOSBox** — classic DOS emulation (interpreter-only fallback on ARM64).
+**DOSBox** — classic DOS emulation (interpreter-only on ARM64).
 
 **ScummVM** — 200+ native engine reimplementations. Config at
 `~/.config/scummvm/scummvm.ini` with OpenGL, pixel-perfect scaling, and
@@ -176,11 +161,6 @@ FluidSynth.
 (`org.libretro.RetroArch`). Flatpak sandbox receives Mesa virgl overrides
 automatically. Config at
 `~/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg`.
-
-**PPSSPP** — standalone PSP emulator via Flatpak (10-15% faster than
-RetroArch PPSSPP core). Installed unless `--minimal`.
-
-**mgba-qt** — standalone GBA with debug tools. Installed unless `--minimal`.
 
 ### RetroArch recommended cores
 
@@ -192,7 +172,7 @@ RetroArch PPSSPP core). Installed unless `--minimal`.
 | GBA | mGBA | Core | ARM64-optimized |
 | PSX | pcsx_rearmed | Core | ARM NEON dynarec, software renderer (avoids virgl overhead) |
 | N64 | mupen64plus-next | Core | GLideN64 with GLES renderer; may struggle at 4 GB |
-| PSP | PPSSPP | Standalone | 10-15% faster than RetroArch core |
+| PSP | PPSSPP | Core | Install via RetroArch Online Updater; or `flatpak install --user flathub org.ppsspp.PPSSPP` for standalone |
 | DS | melonDS DS | Core | ARM64 builds confirmed (v1.1.8+) |
 | Dreamcast | Flycast | Core | ARM64 JIT; lighter titles at full speed |
 
@@ -286,7 +266,6 @@ directly.
 
 ```bash
 glxgears                        # GPU
-glmark2-es2-wayland             # GPU benchmark
 vulkaninfo --summary            # Vulkan
 pactl info                      # audio
 pavucontrol                     # audio mixer (GUI)
@@ -298,7 +277,6 @@ fc-match monospace              # fonts
 glxinfo | grep -i renderer       # should say "virgl", not "zink"
 printenv MESA_NO_ERROR           # should be 1
 pw-top                           # QUANT column should show 256
-dosbox-x --version               # DOSBox-X aarch64 dynrec
 flatpak override --user --show org.libretro.RetroArch | grep MESA_LOADER
 ```
 
