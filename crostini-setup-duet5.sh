@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.2.0
-# Date:    2026-03-24
-# Changes: add qemu-user-static + run-x86 wrapper to step 13; gate on --minimal; add step 15 verification
+# Version: 5.2.1
+# Date:    2026-03-25
+# Changes: fix step 15 false failures: gate box64 verify on Trixie, qemu on !minimal; add virgl/zink validation; update sudo count
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~60 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.2.0"
+readonly SCRIPT_VERSION="5.2.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -2216,6 +2216,13 @@ if should_run_step 15; then
             [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
             [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
             [[ -n "$GL_VERSION" ]]  && logprintf '  GL version:    %s\n' "$GL_VERSION"
+            if [[ "$GL_RENDERER" == *virgl* ]]; then
+                logprintf '  Mesa driver:   %b✓%b virgl\n' "$GREEN" "$RESET"
+                ((_verify_pass++)) || true
+            elif [[ "$GL_RENDERER" == *zink* || "$GL_RENDERER" == *Zink* ]]; then
+                logprintf '  Mesa driver:   %b⚠%b Zink detected — virgl override not active\n' "$YELLOW" "$RESET"
+                ((_verify_warn++)) || true
+            fi
         fi
         if command -v vulkaninfo &>/dev/null; then
             _vk_out="$(vulkaninfo --summary 2>/dev/null || true)"
@@ -2369,15 +2376,23 @@ if should_run_step 15; then
     # Step 13: gaming
     check_tool "dosbox"      dosbox
     check_tool "scummvm"     scummvm
-    check_tool "box64"       box64
-    # Step 13: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
-    if command -v qemu-x86_64-static &>/dev/null; then
-        check_tool "qemu-x86_64" qemu-x86_64-static
-    elif command -v qemu-x86_64 &>/dev/null; then
-        check_tool "qemu-x86_64" qemu-x86_64
+    _box64_v_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    if [[ "$_box64_v_codename" == "trixie" ]]; then
+        check_tool "box64" box64
     else
-        logprintf '  %-14s %b✗%b  not found\n' "qemu-x86_64" "$RED" "$RESET"
-        ((_verify_fail++)) || true
+        logprintf '  %-14s %b—%b  Trixie only (skipped)\n' "box64" "$YELLOW" "$RESET"
+    fi
+    unset _box64_v_codename
+    # Step 13: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
+    if ! $MINIMAL; then
+        if command -v qemu-x86_64-static &>/dev/null; then
+            check_tool "qemu-x86_64" qemu-x86_64-static
+        elif command -v qemu-x86_64 &>/dev/null; then
+            check_tool "qemu-x86_64" qemu-x86_64
+        else
+            logprintf '  %-14s %b✗%b  not found\n' "qemu-x86_64" "$RED" "$RESET"
+            ((_verify_fail++)) || true
+        fi
     fi
     check_tool "run-x86" run-x86
     if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then

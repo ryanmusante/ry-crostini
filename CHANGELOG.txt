@@ -4,6 +4,23 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.2.1  2026-03-25
+
+  Verification:
+  - fix step 15 false failure: gate box64 check_tool on Trixie codename;
+    on Bookworm, box64 is not installed (Trixie-only package) but
+    check_tool ran unconditionally, incrementing _verify_fail
+  - fix step 15 false failure: gate qemu-x86_64 check_tool on
+    ! $MINIMAL; with --minimal, qemu-user-static is intentionally
+    skipped but verification still reported it as failed
+  - add virgl vs Zink validation after GL renderer display; the Mesa
+    override strategy (gpu.conf, flatpak overrides, Freedesktop Platform
+    24.08 pin) exists to prevent Zink, but verification never checked
+    the active renderer — now emits pass for virgl, warn for Zink
+
+  Correctness:
+  - update header sudo count ~60 to ~65 (actual: 66)
+
 5.2.0  2026-03-24
 
   Features:
