@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.3.1
+# Version: 5.3.2
 # Date:    2026-03-25
-# Changes: fix --from-step octal, cleanup_warn duplicate, ANSI strip gaps, config perms, log rotation
+# Changes: fix unbound $ver crash in check_tool, move success banner after verification, add tmux/ssh version flags, fix lsof label-line skip
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.3.1"
+readonly SCRIPT_VERSION="5.3.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -407,6 +407,8 @@ declare -gA _TOOL_VER_FLAG=(
     [lsof]="-v"
     [dig]="-v"
     [7z]="i"
+    [tmux]="-V"
+    [ssh]="-V"
     [glxinfo]=""
     [xterm]="-v"
     [gnome-disks]=""
@@ -416,7 +418,7 @@ declare -gA _TOOL_VER_FLAG=(
 check_tool() {
     local name="$1" cmd="$2"
     if command -v "$cmd" &>/dev/null; then
-        local ver flag
+        local ver="" flag
         # Resolve version flag: per-tool override if present, else --version
         if [[ -v _TOOL_VER_FLAG[$cmd] ]]; then
             flag="${_TOOL_VER_FLAG[$cmd]}"
@@ -435,7 +437,9 @@ check_tool() {
                 _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
                 # Skip leading noise — e.g. unzip interprets --version as short flags and emits "caution:" before the actual version line.
-                if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* ]]; then
+                # Also skip header-only lines like "lsof version information:" (label with no actual version data).
+                if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* || \
+                      ( "$ver" == *[Vv]ersion* && "$ver" == *: && ! "$ver" =~ [0-9] ) ]]; then
                     _raw="${_raw#*$'\n'}"
                     ver="${_raw%%$'\n'*}"
                 fi
@@ -2284,7 +2288,7 @@ if should_run_step 15; then
         log "[DRY-RUN] Verification runs live (all checks are read-only)"
     fi
 
-    logprintf '\n%bCROSTINI SETUP COMPLETE%b\n\n' "$GREEN" "$RESET"
+    logprintf '\n%bVerification results:%b\n\n' "$BOLD" "$RESET"
 
     # System
     logprintf '%bSystem:%b\n' "$BOLD" "$RESET"
@@ -2616,6 +2620,13 @@ if should_run_step 15; then
     [[ "$_verify_warn" -gt 0 ]] && logprintf '  %b%s warnings%b' "$YELLOW" "$_verify_warn" "$RESET"
     [[ "$_verify_fail" -gt 0 ]] && logprintf '  %b%s failed%b' "$RED" "$_verify_fail" "$RESET"
     logprintf '\n'
+
+    # Print result banner — only claim success after verification passes
+    if [[ "$_verify_fail" -eq 0 ]]; then
+        logprintf '\n%bCROSTINI SETUP COMPLETE%b\n' "$GREEN" "$RESET"
+    else
+        logprintf '\n%bCROSTINI SETUP FINISHED WITH %s FAILURE(S)%b\n' "$RED" "$_verify_fail" "$RESET"
+    fi
 
     # Mark step 15 complete before removing the checkpoint file. This ensures a crash between here and rm -f still shows step 15 done.
     set_checkpoint 15

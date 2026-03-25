@@ -4,6 +4,24 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.3.2  2026-03-25
+
+  Correctness:
+  - fix unbound variable $ver under set -u in check_tool() when
+    _TOOL_VER_FLAG entry is empty string (glxinfo, gnome-disks, dosbox,
+    vulkaninfo); `local ver` declared without default skipped the
+    assignment block, then `[[ -z "$ver" ]]` crashed
+  - move "CROSTINI SETUP COMPLETE" banner from before verification to
+    after verification totals; gate on _verify_fail — prints failure
+    count if any checks failed instead of unconditional success
+  - add [tmux]="-V" to _TOOL_VER_FLAG: tmux uses -V, not --version;
+    --version error was caught by bad-output filter → "version unverified"
+  - add [ssh]="-V" to _TOOL_VER_FLAG: ssh -V writes to stderr; default
+    --version triggered "unknown option" error caught by bad-output filter
+  - extend noise-skip pattern in check_tool stderr fallback to skip
+    header-only label lines (e.g. "lsof version information:") that
+    contain no digits; advances to next stderr line for revision string
+
 5.3.1  2026-03-25
 
   Correctness:
