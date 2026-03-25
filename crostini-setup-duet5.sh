@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.0.0
-# Date:    2026-03-25
+# Version: 5.1.1
+# Date:    2026-03-24
+# Changes: fix check_tool() version-flag overrides for lsof/dig/7z/glxinfo/xterm/gnome-disks/dosbox;
+#          flag blank/error version output as WARN instead of silent pass
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -17,7 +19,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.1.0"
+readonly SCRIPT_VERSION="5.1.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -318,27 +320,69 @@ open_chromeos_url() {
 }
 
 # check_tool: verify a CLI tool exists and print its version.
-# Modifies globals: _verify_pass, _verify_fail (must be initialized by caller)
+# Modifies globals: _verify_pass, _verify_fail, _verify_warn (must be initialized by caller)
+#
+# Per-tool version flag overrides — tools that reject --version or produce no output with it.
+# Format: [cmd]="flag"  — empty string means: skip version probe, report installed only.
+declare -gA _TOOL_VER_FLAG=(
+    [lsof]="-v"
+    [dig]="-v"
+    [7z]="i"
+    [glxinfo]=""
+    [xterm]="-v"
+    [gnome-disks]=""
+    [dosbox]=""
+    [vulkaninfo]=""
+)
 check_tool() {
     local name="$1" cmd="$2"
     if command -v "$cmd" &>/dev/null; then
-        local ver
-        # Some tools (java, scummvm) output version to stderr; try stdout first
-        ver="$(timeout 3 "$cmd" --version 2>/dev/null | head -1)" || true
-        if [[ -z "$ver" ]]; then
-            # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
-            local _raw
-            _raw="$(timeout 3 "$cmd" --version 2>&1 1>/dev/null)" || true
-            ver="${_raw%%$'\n'*}"
-            # Skip leading noise — e.g. unzip interprets --version as short
-            # flags and emits "caution:" before the actual version line.
-            if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* ]]; then
-                _raw="${_raw#*$'\n'}"
+        local ver flag
+        # Resolve version flag: per-tool override if present, else --version
+        if [[ -v _TOOL_VER_FLAG[$cmd] ]]; then
+            flag="${_TOOL_VER_FLAG[$cmd]}"
+        else
+            flag="--version"
+        fi
+
+        if [[ -n "$flag" ]]; then
+            # Some tools (java, scummvm) output version to stderr; try stdout first
+            # shellcheck disable=SC2086
+            ver="$(timeout 3 "$cmd" $flag 2>/dev/null | head -1)" || true
+            if [[ -z "$ver" ]]; then
+                # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
+                local _raw
+                # shellcheck disable=SC2086
+                _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
+                # Skip leading noise — e.g. unzip interprets --version as short
+                # flags and emits "caution:" before the actual version line.
+                if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* ]]; then
+                    _raw="${_raw#*$'\n'}"
+                    ver="${_raw%%$'\n'*}"
+                fi
             fi
         fi
-        logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
-        ((_verify_pass++)) || true
+
+        # Detect error output masquerading as a version string
+        local _bad=0
+        if [[ -z "$ver" ]]; then
+            _bad=1
+        elif [[ "$ver" == *"illegal option"* || "$ver" == *"Invalid option"* || \
+                "$ver" == *"Unknown option"* || "$ver" == *"bad command line"* || \
+                "$ver" == *"unrecognized option"* || "$ver" == *"invalid option"* || \
+                "$ver" == ERROR:* || "$ver" == error:* || \
+                "$ver" == "usage:"* || "$ver" == Usage:* ]]; then
+            _bad=1
+        fi
+
+        if (( _bad )); then
+            logprintf '  %-14s %b⚠%b  version unverified (installed)\n' "$name" "$YELLOW" "$RESET"
+            ((_verify_warn++)) || true
+        else
+            logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
+            ((_verify_pass++)) || true
+        fi
     else
         logprintf '  %-14s %b✗%b  not found\n' "$name" "$RED" "$RESET"
         ((_verify_fail++)) || true
