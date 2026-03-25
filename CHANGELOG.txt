@@ -4,6 +4,30 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.2.0  2026-03-24
+
+  Features:
+  - install qemu-user-static in step 13 for x86/x86_64 emulation on
+    both Bookworm (qemu-user-static) and Trixie (qemu-user);
+    complements box64 (Trixie-only DynaRec JIT) with TCG dynamic binary
+    translation and adds i386 support
+  - binfmt registration packages (binfmt-support, qemu-user-binfmt)
+    deliberately omitted — postinst fails with EPERM in unprivileged
+    Crostini, leaving failed systemd units
+  - write ~/.local/bin/run-x86 convenience wrapper: auto-detects ELF arch,
+    prefers box64 for x86_64 when available, falls back to qemu-user-static;
+    handles both x86_64 and i386 binaries
+  - gate qemu-user-static install on ! --minimal (~150 MB disk)
+  - add qemu-x86_64-static and run-x86 to step 15 verification
+  - NOTE: binfmt-misc transparent exec remains blocked in unprivileged
+    Crostini; use run-x86 or invoke emulator explicitly
+
+  Documentation:
+  - README: update step 13 description, config files written, x86 translation
+    table; add privileged container section for transparent binfmt execution
+  - update step 13 description across all four locations (comment, banner,
+    --help, README)
+
 5.1.6  2026-03-24
 
   Documentation:

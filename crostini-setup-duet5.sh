@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.1.6
+# Version: 5.2.0
 # Date:    2026-03-24
-# Changes: sync step 13 description across all four locations; fix 8 future-dated changelog entries (2026-03-25 → 2026-03-24)
+# Changes: add qemu-user-static + run-x86 wrapper to step 13; gate on --minimal; add step 15 verification
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.1.6"
+readonly SCRIPT_VERSION="5.2.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -435,7 +435,7 @@ STEPS PERFORMED:
     12  Flatpak + Flathub (ARM64 app source, Freedesktop Platform
         24.08 pinned)
     13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
-        soundfont, box64 [Trixie only])
+        soundfont, box64 [Trixie only], qemu-user-static)
     14  Container backup (opens ChromeOS backup page with --interactive)
     15  Summary and verification
 
@@ -1887,9 +1887,9 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only])
+# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static)
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only])"
+    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static)"
 
     # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM
     install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
@@ -2013,6 +2013,27 @@ SVMCFG
     fi
     unset _box64_codename
 
+    # qemu-user-static: x86/x86_64 emulation via TCG dynamic binary translation
+    # Fills gap on Bookworm (no box64 package) and adds i386 support on both.
+    # NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini —
+    # must invoke explicitly: qemu-x86_64-static ./program
+    # NOTE: Do NOT install binfmt-support (Bookworm) or qemu-user-binfmt (Trixie).
+    # Their postinst triggers systemd-binfmt / binfmt-support.service which fails
+    # with EPERM in unprivileged containers, leaving a failed unit in systemctl.
+    if ! $MINIMAL; then
+        _qemu_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+        if [[ "$_qemu_codename" == "trixie" ]]; then
+            # Trixie: qemu-user provides dynamically-linked binaries (qemu-x86_64 etc.)
+            install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
+        else
+            # Bookworm: qemu-user-static provides statically-linked binaries
+            install_pkgs_best_effort qemu-user-static || warn "qemu-user-static install failed"
+        fi
+        unset _qemu_codename
+    else
+        log "Skipping qemu-user-static (--minimal)"
+    fi
+
     # Write ~/.box64rc with SC7180P-tuned defaults
     _BOX64_RC="${HOME}/.box64rc"
     if [[ ! -f "$_BOX64_RC" ]]; then
@@ -2042,6 +2063,85 @@ RCEOF
         log "~/.box64rc already exists — skipping"
     fi
     unset _BOX64_RC
+
+    # run-x86: convenience wrapper — auto-detects ELF arch, prefers box64 for x86_64
+    _RUN_X86="${HOME}/.local/bin/run-x86"
+    if [[ ! -f "$_RUN_X86" ]]; then
+        run mkdir -p "${HOME}/.local/bin" || true
+        write_file "$_RUN_X86" <<'WRAPPER'
+#!/usr/bin/env bash
+# run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini
+# Prefers box64 (DynaRec JIT) when available; falls back to qemu-user-static (TCG).
+# Usage: run-x86 ./program [args...]
+# Managed by crostini-setup-duet5.sh — edit freely.
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    printf 'Usage: run-x86 <program> [args...]\n' >&2
+    exit 2
+fi
+
+prog="$1"
+
+# Detect ELF architecture via raw header bytes (od)
+# ELF header: bytes 0-3=magic, byte 4=class, bytes 18-19=e_machine (LE)
+# String offsets: magic[0:8]=7f454c46, magic[8:2]=class, magic[36:4]=machine
+# Verified against QEMU binfmt magic values:
+#   x86_64: class=02, machine=3e00
+#   i386:   class=01, machine=0300
+_detect_arch() {
+    local magic
+    magic="$(od -A n -t x1 -N 20 "$1" 2>/dev/null | tr -d ' \n')" || return 1
+    [[ "${magic:0:8}" == "7f454c46" ]] || return 1
+    local class="${magic:8:2}"
+    local machine="${magic:36:4}"
+    if [[ "$class" == "02" && "$machine" == "3e00" ]]; then
+        echo "x86_64"; return 0
+    elif [[ "$class" == "01" && "$machine" == "0300" ]]; then
+        echo "i386"; return 0
+    fi
+    return 1
+}
+
+arch="$(_detect_arch "$prog" 2>/dev/null)" || arch=""
+
+case "$arch" in
+    x86_64)
+        if command -v box64 &>/dev/null; then
+            exec box64 "$@"
+        elif command -v qemu-x86_64-static &>/dev/null; then
+            exec qemu-x86_64-static "$@"
+        elif command -v qemu-x86_64 &>/dev/null; then
+            exec qemu-x86_64 "$@"
+        fi
+        ;;
+    i386)
+        if command -v qemu-i386-static &>/dev/null; then
+            exec qemu-i386-static "$@"
+        elif command -v qemu-i386 &>/dev/null; then
+            exec qemu-i386 "$@"
+        fi
+        ;;
+    "")
+        if command -v box64 &>/dev/null; then
+            exec box64 "$@"
+        elif command -v qemu-x86_64-static &>/dev/null; then
+            exec qemu-x86_64-static "$@"
+        fi
+        ;;
+esac
+
+printf 'run-x86: no suitable emulator found for %s (arch=%s)\n' "$prog" "${arch:-unknown}" >&2
+printf 'Install: sudo apt install qemu-user-static  (or qemu-user on Trixie)\n' >&2
+exit 1
+WRAPPER
+        chmod +x "$_RUN_X86"
+        log "Wrote ${_RUN_X86}"
+    else
+        log "run-x86 wrapper already exists — skipping"
+    fi
+    unset _RUN_X86
 
     set_checkpoint 13
     log "Step 13 complete."
@@ -2270,6 +2370,16 @@ if should_run_step 15; then
     check_tool "dosbox"      dosbox
     check_tool "scummvm"     scummvm
     check_tool "box64"       box64
+    # Step 13: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
+    if command -v qemu-x86_64-static &>/dev/null; then
+        check_tool "qemu-x86_64" qemu-x86_64-static
+    elif command -v qemu-x86_64 &>/dev/null; then
+        check_tool "qemu-x86_64" qemu-x86_64
+    else
+        logprintf '  %-14s %b✗%b  not found\n' "qemu-x86_64" "$RED" "$RESET"
+        ((_verify_fail++)) || true
+    fi
+    check_tool "run-x86" run-x86
     if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
@@ -2351,6 +2461,7 @@ if should_run_step 15; then
     check_config "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
+    check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else

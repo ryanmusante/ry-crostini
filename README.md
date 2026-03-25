@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-5.1.6-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.2.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -68,7 +68,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 10 | Rust stable aarch64 via rustup |
 | 11 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
 | 12 | Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned) |
-| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only]) |
+| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
@@ -81,7 +81,9 @@ GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120
 fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
 vm.max\_map\_count, sysctl persistence service, shell env + PATH +
 CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
-pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning). Memory tuning attempted if /proc/sys/vm/ is writable.
+pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
+run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
+x86/x86\_64 binaries). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -136,7 +138,9 @@ Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_coun
 ## Gaming
 
 Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), FluidSynth GM
-soundfont, and box64 (Trixie only — x86_64 userspace emulator with ARM64 DynaRec). Default config files are written for RetroArch, ScummVM, and box64 on
+soundfont, box64 (Trixie only — x86_64 DynaRec JIT), and qemu-user-static
+(TCG emulation for x86/x86\_64 + i386; skipped with `--minimal`). Default
+config files are written for RetroArch, ScummVM, box64, and run-x86 on
 first install.
 
 ### Compatibility tiers
@@ -203,20 +207,52 @@ run_ahead_secondary_instance = "false"
 Never enable two-instance run-ahead on this hardware (doubles RAM usage per
 core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
-### x86 translation (box64, installed by step 13 on Trixie)
+### x86 translation (step 13)
 
 > **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game loads. Not recommended for RAM-intensive titles.
 
 **box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 13 on all releases.
 
-**On Bookworm**, box64 is not in the official repos. Two alternatives:
+**qemu-user-static** is installed automatically on both releases (skipped
+with `--minimal`). Slower than box64 but provides i386 support and works
+on Bookworm where box64 is not packaged.
 
 | Tool | Install | Performance | Notes |
 |------|---------|-------------|-------|
-| `qemu-user-static` | `apt install qemu-user-static` | Slow — full emulation, no JIT | Works on Bookworm; use `qemu-x86_64-static ./program`; binfmt-misc auto-registration blocked in unprivileged Crostini |
+| box64 | Step 13 (Trixie only) | Fast — ARM64 DynaRec | x86\_64 only; not in Bookworm repos |
+| `qemu-user-static` | Step 13 (both releases) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program` or `qemu-x86_64-static ./program`; also provides i386 via `qemu-i386-static`; binfmt transparent exec blocked in unprivileged Crostini |
 | box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 5 installs both |
 
+`run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
+and dispatches to box64 (preferred) or qemu as appropriate.
+
 **FEX-Emu:** requires a mandatory x86-64 RootFS image and is not in Debian repos — setup complexity not warranted for 4 GB Crostini.
+
+### Transparent execution (privileged container)
+
+Standard Crostini containers are unprivileged and cannot register
+binfmt\_misc interpreters. To get transparent `./x86_program` execution,
+create a privileged container:
+
+1. Open crosh: `ctrl+alt+t` → type `shell`
+2. Create privileged container:
+   ```
+   vmc container termina x86 --privileged true
+   ```
+3. Inside the new container, install binfmt support:
+   ```bash
+   # Bookworm
+   sudo apt install qemu-user-static binfmt-support
+   sudo systemctl restart binfmt-support
+
+   # Trixie
+   sudo apt install qemu-user qemu-user-binfmt
+   sudo systemctl restart systemd-binfmt
+   ```
+4. Verify: `ls /proc/sys/fs/binfmt_misc/qemu-*`
+
+> **Warning:** Privileged containers have reduced security isolation.
+> The default `penguin` container remains unprivileged and unaffected.
 
 ### GOG games
 
@@ -257,6 +293,10 @@ glxinfo | grep -i renderer       # should say "virgl", not "zink"
 printenv MESA_NO_ERROR           # should be 1
 pw-top                           # QUANT column should show 256
 flatpak override --user --show org.libretro.RetroArch | grep MESA_LOADER
+
+# x86 emulation (5.2.0+)
+run-x86 --help                   # wrapper available
+qemu-x86_64-static --version     # Bookworm (or qemu-x86_64 on Trixie)
 ```
 
 ## License
