@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 4.10.4
-# Date:    2026-03-24
+# Version: 4.10.6
+# Date:    2026-03-25
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="4.10.4"
+readonly SCRIPT_VERSION="4.10.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -450,7 +450,7 @@ for arg in "$@"; do
                 rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove lock dir ${LOCK_FILE} — remove manually"
                 unset _rpid
             fi
-            rm -f "$STEP_FILE"; rm -f "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
+            rm -f -- "$STEP_FILE"; rm -f -- "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
             ;;
         --)        break ;;
         --from-step)
@@ -531,6 +531,10 @@ if should_run_step 1; then
     if [[ -f /etc/os-release ]]; then
         _os_pretty="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
         _os_codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-bookworm}")"
+        if [[ ! "$_os_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            warn "VERSION_CODENAME '${_os_codename}' looks suspicious — defaulting to bookworm"
+            _os_codename="bookworm"
+        fi
         log "Container OS: ${_os_pretty} (${_os_codename}) ✓"
         unset _os_pretty
     else
@@ -762,7 +766,7 @@ EOF
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get update"
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
             log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
-            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y"
+            log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y"
         else
             # Back up sources before rewriting
             if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
@@ -808,8 +812,37 @@ EOF
     unset _cur_codename
 
     # 3b. Update, upgrade, full-upgrade (also serves as Trixie dist-upgrade)
+    # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS
+    # manages cros-guest-tools/sommelier via the Termina VM; upgrading them
+    # to Trixie versions can break the container lifecycle contract (garcon,
+    # vshd, maitred), causing the container to crash on next boot.
+    _CROS_HOLD_PKGS=()
+    for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
+                 cros-sftp cros-sommelier cros-sommelier-config \
+                 cros-wayland cros-pulse-config cros-apt-config; do
+        if dpkg -s "$_cpkg" &>/dev/null; then
+            _CROS_HOLD_PKGS+=("$_cpkg")
+        fi
+    done
+    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
+        else
+            run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
+                || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
+            log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
+        fi
+    fi
+    unset _cpkg
+
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: accept package maintainer defaults for new conffiles, keep existing modified conffiles. Without these, dpkg can prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive (which sudo strips via env_reset unless sudoers has env_keep).
+        # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete
+        # old directory '/lib/...': Directory not empty". These are harmless artifacts
+        # of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles
+        # the conversion correctly; the warnings indicate leftover empty dirs that dpkg
+        # cannot remove because other packages still reference them temporarily.
+        log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
         run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
@@ -819,7 +852,21 @@ EOF
     else
         warn "apt update failed — skipping upgrade/full-upgrade (stale package indices)"
     fi
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y || warn "apt autoremove had issues"
+
+    # Unhold Crostini packages — restore normal apt behavior for future updates
+    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] apt-mark unhold ${_CROS_HOLD_PKGS[*]}"
+        else
+            run sudo apt-mark unhold "${_CROS_HOLD_PKGS[@]}" || warn "apt-mark unhold failed"
+        fi
+    fi
+    unset _CROS_HOLD_PKGS
+
+    # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages,
+    # which can include Crostini integration configs that other packages depend on
+    # at next boot. Plain autoremove is safer — conffiles remain for inspection.
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     # 3c. Verify upgrade landed on Trixie
     if ! $DRY_RUN; then
@@ -948,6 +995,30 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
+_gpu_conf_content() {
+    cat <<'EOF'
+# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
+# Wayland EGL
+EGL_PLATFORM=wayland
+# GTK4 dark mode
+GTK_THEME=Adwaita:dark
+
+# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
+# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
+MESA_LOADER_DRIVER_OVERRIDE=virgl
+GALLIUM_DRIVER=virgl
+
+# Disable GL error checking (~5-10% CPU savings in games/emulators)
+# Unset for debugging: env -u MESA_NO_ERROR <command>
+MESA_NO_ERROR=1
+
+# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
+MESA_SHADER_CACHE_DISABLE=false
+MESA_SHADER_CACHE_MAX_SIZE=512M
+MESA_DISK_CACHE_SINGLE_FILE=1
+EOF
+}
+
 # Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)
 if should_run_step 6; then
     step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan, glmark2)"
@@ -1002,50 +1073,10 @@ if should_run_step 6; then
     # GPU environment variables
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
-        write_file "$GPU_ENV_FILE" <<'EOF'
-# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
-# Wayland EGL
-EGL_PLATFORM=wayland
-# GTK4 dark mode
-GTK_THEME=Adwaita:dark
-
-# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
-# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
-MESA_LOADER_DRIVER_OVERRIDE=virgl
-GALLIUM_DRIVER=virgl
-
-# Disable GL error checking (~5-10% CPU savings in games/emulators)
-# Unset for debugging: env -u MESA_NO_ERROR <command>
-MESA_NO_ERROR=1
-
-# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
-MESA_SHADER_CACHE_DISABLE=false
-MESA_SHADER_CACHE_MAX_SIZE=512M
-MESA_DISK_CACHE_SINGLE_FILE=1
-EOF
+        _gpu_conf_content | write_file "$GPU_ENV_FILE"
     elif ! grep -q 'MESA_LOADER_DRIVER_OVERRIDE' "$GPU_ENV_FILE"; then
         log "Upgrading gpu.conf: adding Mesa driver override and shader cache vars"
-        write_file "$GPU_ENV_FILE" <<'EOF'
-# Crostini GPU acceleration environment — managed by crostini-setup-duet5.sh
-# Wayland EGL
-EGL_PLATFORM=wayland
-# GTK4 dark mode
-GTK_THEME=Adwaita:dark
-
-# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
-# Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
-MESA_LOADER_DRIVER_OVERRIDE=virgl
-GALLIUM_DRIVER=virgl
-
-# Disable GL error checking (~5-10% CPU savings in games/emulators)
-# Unset for debugging: env -u MESA_NO_ERROR <command>
-MESA_NO_ERROR=1
-
-# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
-MESA_SHADER_CACHE_DISABLE=false
-MESA_SHADER_CACHE_MAX_SIZE=512M
-MESA_DISK_CACHE_SINGLE_FILE=1
-EOF
+        _gpu_conf_content | write_file "$GPU_ENV_FILE"
     else
         log "GPU env already up to date — skipping"
     fi
@@ -1361,7 +1392,7 @@ FCEOF
         log "Fontconfig already exists — skipping"
     fi
     if command -v fc-cache &>/dev/null; then
-        if run fc-cache -f; then
+        if run timeout 60 fc-cache -f; then
             $DRY_RUN || log "Font cache rebuilt"
         else
             warn "fc-cache failed — font cache not rebuilt"
@@ -1555,7 +1586,7 @@ if should_run_step 10; then
             else
                 warn "Cannot create checksum tmpfile — proceeding with TOFU"
             fi
-            chmod +x "$_rustup_tmp"
+            chmod +x "$_rustup_tmp" || { rm -f "$_rustup_tmp"; die "Cannot make rustup-init executable (noexec mount?)"; }
             run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
             rm -f "$_rustup_tmp"
             unset _rustup_tmp _rustup_sha _expected _actual
@@ -1585,12 +1616,15 @@ if should_run_step 11; then
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
-# Allow overcommit — prevents malloc failures in emulators on 4 GB RAM
-vm.overcommit_memory=1
+# Heuristic overcommit (default) — kernel rejects clearly impossible allocations.
+# @@WHY: overcommit_memory=1 (always overcommit) on 4 GB RAM with no swap leads to
+# OOM-killer killing container lifecycle daemons (garcon, sommelier) → crash on boot.
+# Mode 0 still allows reasonable overcommit while rejecting pathological allocations.
+vm.overcommit_memory=0
 # Prevent mmap failures in emulators, Wine, and box64
 vm.max_map_count=262144
 EOF
-        if run sudo sysctl --system; then
+        if run sudo sysctl -e --system; then
             if ! $DRY_RUN; then
                 _inotify_val="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
                 if [[ "$_inotify_val" == "524288" ]]; then
@@ -1601,8 +1635,8 @@ EOF
                 fi
                 unset _inotify_val
                 _overcommit_val="$(sysctl -n vm.overcommit_memory 2>/dev/null)" || true
-                if [[ "$_overcommit_val" == "1" ]]; then
-                    log "vm.overcommit_memory applied (1) ✓"
+                if [[ "$_overcommit_val" == "0" ]]; then
+                    log "vm.overcommit_memory applied (0 — heuristic) ✓"
                 else
                     warn "vm.overcommit_memory is ${_overcommit_val:-unknown} (may be read-only in this container)"
                 fi
@@ -1624,11 +1658,16 @@ EOF
             } | write_file_sudo "$SYSCTL_CONF"
             unset _existing
             log "Appended vm.max_map_count to $SYSCTL_CONF"
-            run sudo sysctl --system || warn "sysctl apply failed after appending vm.max_map_count"
+            run sudo sysctl -e --system || warn "sysctl apply failed after appending vm.max_map_count"
         fi
     fi
 
     # 11b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
+    # @@WHY: -e flag suppresses "Invalid argument" / "Read-only file system" errors from
+    # container-unsupported keys (e.g. net.ipv4.ping_group_range from linux-sysctl-defaults,
+    # kernel.unprivileged_userns_clone from bubblewrap). Without -e, sysctl --system returns
+    # non-zero and systemd logs the service as failed, even though writable keys (like
+    # fs.inotify.max_user_watches) were applied successfully.
     _SYSCTL_SVC="/etc/systemd/system/crostini-sysctl.service"
     if [[ ! -f "$_SYSCTL_SVC" ]]; then
         write_file_sudo "$_SYSCTL_SVC" <<'SVCEOF'
@@ -1638,7 +1677,7 @@ After=systemd-sysctl.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/sysctl --system
+ExecStart=/usr/sbin/sysctl -e --system
 RemainAfterExit=yes
 
 [Install]
@@ -1649,6 +1688,20 @@ SVCEOF
         run sudo systemctl enable crostini-sysctl.service || warn "crostini-sysctl.service enable failed"
     else
         log "crostini-sysctl.service already exists"
+        # Upgrade path: add -e flag if missing (§4.10.5 — suppresses container-unsupported key errors)
+        if grep -q 'ExecStart=/usr/sbin/sysctl --system' "$_SYSCTL_SVC" 2>/dev/null; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] update crostini-sysctl.service: sysctl --system → sysctl -e --system"
+            else
+                _existing="$(cat "$_SYSCTL_SVC")" || die "Cannot read $_SYSCTL_SVC for upgrade"
+                printf '%s\n' "$_existing" \
+                    | sed 's|ExecStart=/usr/sbin/sysctl --system|ExecStart=/usr/sbin/sysctl -e --system|' \
+                    | write_file_sudo "$_SYSCTL_SVC"
+                unset _existing
+                run sudo systemctl daemon-reload || warn "daemon-reload failed after sysctl service update"
+                log "Updated crostini-sysctl.service: added -e flag (suppress container-unsupported key errors)"
+            fi
+        fi
     fi
     unset _SYSCTL_SVC
 
@@ -1657,7 +1710,7 @@ SVCEOF
         # @@WHY: Gate sed on successful backup — if cp fails (disk full), proceeding to sed -i risks corrupting locale.gen with no rollback.
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
-                if run sudo locale-gen; then
+                if run timeout 120 sudo locale-gen; then
                     if ! $DRY_RUN; then
                         run sudo rm -f /etc/locale.gen.bak || true
                         log "en_US.UTF-8 locale generated"
@@ -1711,14 +1764,18 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 11e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying NOTE: sysctl --system may silently skip individual read-only keys (it only fails on parse errors).  Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
+    # 11e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
+    # NOTE: sysctl -e --system ignores individual read-only/unsupported keys.
+    # Verify with: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
         if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
             write_file_sudo "$MEM_CONF" <<'MEMEOF'
 # Memory tuning for 4 GB Duet 5 — managed by crostini-setup-duet5.sh
-# Lower swappiness: prefer keeping pages in RAM over swapping
-vm.swappiness=10
+# Keep kernel default swappiness — on 4 GB with no dedicated swap partition,
+# aggressive anti-swap (swappiness=10) starves page reclaim and triggers OOM.
+# @@WHY: The kernel's default (60) balances file cache vs anonymous pages.
+vm.swappiness=60
 # Retain filesystem metadata cache — reduces eMMC random reads
 # (150 was overly aggressive; 50 balances cache retention vs memory pressure)
 vm.vfs_cache_pressure=50
@@ -1726,7 +1783,7 @@ vm.vfs_cache_pressure=50
 vm.dirty_ratio=10
 vm.dirty_background_ratio=5
 MEMEOF
-            run sudo sysctl --system || warn "memory sysctl apply failed"
+            run sudo sysctl -e --system || warn "memory sysctl apply failed"
         else
             warn "vm.swappiness is read-only in this container (expected in Crostini)"
             warn "Memory tuning requires host-level (termina VM) access — skipping"
@@ -1744,8 +1801,31 @@ MEMEOF
                 | write_file_sudo "$MEM_CONF"
             unset _existing
             log "Updated vfs_cache_pressure: 150 → 50"
-            run sudo sysctl --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
+            run sudo sysctl -e --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
         fi
+        # Upgrade path: change swappiness 10→60 (§4.10.5 — OOM fix)
+        # @@WHY: $ anchor prevents matching vm.swappiness=100 → vm.swappiness=600
+        if grep -q 'vm\.swappiness=10$' "$MEM_CONF"; then
+            _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
+            printf '%s\n' "$_existing" \
+                | sed 's/vm\.swappiness=10$/vm.swappiness=60/' \
+                | write_file_sudo "$MEM_CONF"
+            unset _existing
+            log "Updated vm.swappiness: 10 → 60 (OOM mitigation)"
+            run sudo sysctl -e --system || warn "memory sysctl apply failed after swappiness update"
+        fi
+    fi
+
+    # Upgrade path: change overcommit_memory 1→0 in tuning conf (§4.10.5 — OOM fix)
+    # @@WHY: $ anchor prevents matching vm.overcommit_memory=10 (mode 2 = strict)
+    if [[ -f "$SYSCTL_CONF" ]] && grep -q 'vm\.overcommit_memory=1$' "$SYSCTL_CONF"; then
+        _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
+        printf '%s\n' "$_existing" \
+            | sed 's/vm\.overcommit_memory=1$/vm.overcommit_memory=0/' \
+            | write_file_sudo "$SYSCTL_CONF"
+        unset _existing
+        log "Updated vm.overcommit_memory: 1 → 0 (OOM mitigation)"
+        run sudo sysctl -e --system || warn "sysctl apply failed after overcommit_memory update"
     fi
 
     # 11f. Ensure XDG dirs exist
@@ -2237,8 +2317,29 @@ if should_run_step 15; then
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/crostini-env.sh"                "Shell env + PATH"
     check_config "/etc/sysctl.d/99-crostini-tuning.conf"         "inotify + overcommit + max_map_count"
+    # @@WHY: check_config only tests file existence. For the sysctl service, verify
+    # it is actually enabled and check the one sysctl that IS writable in Crostini.
     if [[ -f "/etc/systemd/system/crostini-sysctl.service" ]]; then
-        check_config "/etc/systemd/system/crostini-sysctl.service" "Sysctl persistence service"
+        if systemctl is-enabled --quiet crostini-sysctl.service 2>/dev/null; then
+            logprintf '  %b✓%b  %-44s enabled\n' "$GREEN" "$RESET" "Sysctl persistence service"
+            ((_verify_pass++)) || true
+        else
+            logprintf '  %b⚠%b  %-44s not enabled\n' "$YELLOW" "$RESET" "Sysctl persistence service"
+            ((_verify_warn++)) || true
+        fi
+        # Runtime check: fs.inotify is writable in Crostini; vm.* is read-only
+        _inotify_live="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
+        if [[ "$_inotify_live" == "524288" ]]; then
+            logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "inotify.max_user_watches (runtime)" "$_inotify_live"
+            ((_verify_pass++)) || true
+        elif [[ -n "$_inotify_live" ]]; then
+            logprintf '  %b⚠%b  %-44s %s (expected 524288)\n' "$YELLOW" "$RESET" "inotify.max_user_watches (runtime)" "$_inotify_live"
+            ((_verify_warn++)) || true
+        else
+            logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "inotify.max_user_watches (runtime)" "unreadable"
+            ((_verify_warn++)) || true
+        fi
+        unset _inotify_live
     fi
     if [[ -f "/etc/systemd/system/tmp.mount.d/override.conf" ]]; then
         check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"

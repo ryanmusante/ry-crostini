@@ -4,6 +4,41 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+4.10.6  2026-03-25
+
+  Correctness:
+  - validate _os_codename with regex in step 1 before curl URL
+    interpolation (L563); previously validated only in step 3 (L751);
+    malformed VERSION_CODENAME now falls back to "bookworm" with warning
+  - add error guard to chmod +x on rustup-init binary; failure now
+    reports "Cannot make rustup-init executable (noexec mount?)" instead
+    of misleading "Rustup installer failed" from run()
+  - add timeout 120 to locale-gen (can hang on broken dpkg state)
+  - add timeout 60 to fc-cache -f (can take 30+ seconds on first run)
+  - add -- to rm -f in --reset handler; consistent with L155, L198,
+    L262, L279, L485
+
+  Maintainability:
+  - deduplicate gpu.conf heredoc: extract _gpu_conf_content() function
+    called by both fresh-write and upgrade-path blocks; eliminates
+    19-line duplication between L1049-1067 and L1072-1090
+
+4.10.5  2026-03-24
+
+  Correctness:
+  - change vm.swappiness from 10 to 60 in 99-crostini-memory.conf;
+    aggressive anti-swap on 4 GB with no dedicated swap starves page
+    reclaim and triggers OOM-killer on container lifecycle daemons
+  - change vm.overcommit_memory from 1 to 0 in 99-crostini-tuning.conf;
+    mode 1 (always overcommit) on 4 GB RAM with no swap leads to OOM-
+    killer killing garcon/sommelier on container boot
+  - add -e flag to crostini-sysctl.service ExecStart; suppresses
+    "Invalid argument" / "Read-only file system" errors from container-
+    unsupported keys (net.ipv4.ping_group_range, kernel.unprivileged_
+    userns_clone) that caused systemd to log the service as failed
+  - add upgrade paths for all three changes with $ anchors to prevent
+    matching unrelated values (e.g. vm.swappiness=100)
+
 4.10.4  2026-03-24
 
   Documentation:
