@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.2.1
+# Version: 5.3.1
 # Date:    2026-03-25
-# Changes: fix step 15 false failures: gate box64 verify on Trixie, qemu on !minimal; add virgl/zink validation; update sudo count
+# Changes: fix --from-step octal, cleanup_warn duplicate, ANSI strip gaps, config perms, log rotation
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~66 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.2.1"
+readonly SCRIPT_VERSION="5.3.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -55,9 +55,11 @@ _handle_signal() { _received_signal="$1"; exit 1; }
 cleanup() {
     local rc=$?
     # Prevent recursive cleanup from nested signals
-    trap - EXIT INT TERM HUP PIPE QUIT
+    trap - EXIT INT TERM HUP PIPE QUIT WINCH
     # Disable set -e inside cleanup to guarantee full execution
     set +e
+    # Restore terminal scroll region before any output
+    _progress_cleanup
     # Strip ANSI escape codes from the log file in a single pass. This replaces the previous per-line sed approach (via process substitution) which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
     # Remove temp files
@@ -70,9 +72,7 @@ cleanup() {
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ "$rc" -ne 0 ]]; then
-        # @@WHY: $SECONDS is a bash builtin — no subprocess, cannot hang. date(1) can hang on broken pipe / frozen cgroup; inside cleanup all traps are cleared, so a hang here is uninterruptible.
-        local _elapsed="${SECONDS:-unknown}"
-        _cleanup_warn "Script exited with code $rc after ${_elapsed}s. Re-run to resume from checkpoint."
+        _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
     fi
     # Re-raise caught signal for correct 128+N exit code to parent
     if [[ -n "${_received_signal:-}" ]]; then
@@ -80,12 +80,16 @@ cleanup() {
     fi
     exit "$rc"
 }
+# Progress bar state — initialized before traps to prevent unbound-variable exit under set -u on early signal
+_PROGRESS_ENABLED=false
+_PROGRESS_STEP=0
 trap cleanup EXIT
 trap '_handle_signal INT' INT
 trap '_handle_signal TERM' TERM
 trap '_handle_signal HUP' HUP
 trap '_handle_signal PIPE' PIPE
 trap '_handle_signal QUIT' QUIT
+trap '_progress_resize' WINCH
 
 # Colors
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -98,6 +102,74 @@ else
     RED='' GREEN='' YELLOW='' BOLD='' RESET=''
 fi
 readonly RED GREEN YELLOW BOLD RESET
+
+# Progress bar — pinned to bottom of terminal via scroll region
+readonly _PROGRESS_TOTAL=15
+
+# _progress_init: reserve bottom terminal line, draw initial bar. Called once after lock+checkpoint.
+# shellcheck disable=SC2317
+_progress_init() {
+    [[ -t 1 ]] || return 0
+    local rows
+    rows="$(tput lines 2>/dev/null)" || return 0
+    [[ "$rows" -ge 5 ]] || return 0
+    _PROGRESS_ENABLED=true
+    # Scroll region: rows 1..(N-1); bottom line reserved for progress bar. DECSTBM resets cursor to origin on xterm/VTE per VT100 spec; omit explicit [1;1H to avoid forced jump on non-standard terminals.
+    printf '\033[1;%dr' "$((rows - 1))"
+    local ckpt
+    ckpt="$(get_checkpoint)"
+    _progress_draw "$ckpt"
+}
+
+# _progress_draw: render progress bar on the reserved bottom line. Writes to stdout only (not LOG_FILE).
+# shellcheck disable=SC2317
+_progress_draw() {
+    $_PROGRESS_ENABLED || return 0
+    local step="${1:-$_PROGRESS_STEP}"
+    _PROGRESS_STEP="$step"
+    local rows cols pct filled empty bar_w label bar_f bar_e
+    rows="$(tput lines 2>/dev/null)" || return 0
+    cols="$(tput cols 2>/dev/null)" || cols=80
+    pct=$((step * 100 / _PROGRESS_TOTAL))
+    label="Step ${step}/${_PROGRESS_TOTAL} (${pct}%)"
+    bar_w=$((cols - ${#label} - 5))
+    (( bar_w < 10 )) && bar_w=10
+    filled=$((bar_w * step / _PROGRESS_TOTAL))
+    empty=$((bar_w - filled))
+    printf -v bar_f '%*s' "$filled" ''
+    printf -v bar_e '%*s' "$empty" ''
+    # Save cursor → draw on last row → restore cursor
+    printf '\0337\033[%d;1H\033[2K' "$rows"
+    if [[ -n "$GREEN" ]]; then
+        printf ' %b[%b%b%s%b%s%b]%b %s' \
+            "$BOLD" "$RESET" "$GREEN" "${bar_f// /█}" "$RESET" \
+            "${bar_e// /░}" "$BOLD" "$RESET" "$label"
+    else
+        printf ' [%s%s] %s' "${bar_f// /#}" "${bar_e// /-}" "$label"
+    fi
+    printf '\0338'
+}
+
+# _progress_resize: SIGWINCH handler — update scroll region after terminal resize.
+# shellcheck disable=SC2317
+_progress_resize() {
+    $_PROGRESS_ENABLED || return
+    local rows
+    rows="$(tput lines 2>/dev/null)" || return
+    printf '\033[1;%dr' "$((rows - 1))"
+    _progress_draw
+}
+
+# _progress_cleanup: restore full scroll region. Called from cleanup trap.
+# shellcheck disable=SC2317
+_progress_cleanup() {
+    $_PROGRESS_ENABLED || return 0
+    _PROGRESS_ENABLED=false
+    local rows
+    rows="$(tput lines 2>/dev/null)" || rows=24
+    # Save cursor → reset scroll region → clear bar line → restore cursor. DECSC/DECRC keeps cursor at normal output position so cleanup messages appear inline, not at the bottom.
+    printf '\0337\033[r\033[%d;1H\033[2K\0338' "$rows"
+}
 
 # Logging
 log() {
@@ -151,7 +223,7 @@ _strip_log_ansi() {
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
     chmod 600 "$_tmp" 2>/dev/null || true
-    if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
+    if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07\x1b]*\x07//g' -e 's/\x1b\][^\x1b]*\x1b\\//g' -e 's/\x1b[0-9A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
         rm -f "$_tmp"
@@ -187,6 +259,7 @@ get_checkpoint() {
 }
 
 set_checkpoint() {
+    _progress_draw "$1"
     if $DRY_RUN; then
         log "[DRY-RUN] set checkpoint $1"
         return 0
@@ -257,6 +330,23 @@ write_file() {
     chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
     mv -- "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
+}
+
+# write_file_private: atomic write stdin to path, mode 600. For user-only configs that don't need world-readable.
+write_file_private() {
+    local dest="$1"
+    if $DRY_RUN; then
+        log "[DRY-RUN] write $dest"
+        cat > /dev/null
+        return 0
+    fi
+    mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
+    local tmp
+    tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
+    cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
+    chmod 600 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
+    mv -- "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
+    log "Wrote $dest (mode 600)"
 }
 
 # write_file_sudo: atomic write via sudo, respects dry-run. Output mode 644.
@@ -416,7 +506,7 @@ STEPS PERFORMED:
      1  Preflight checks (arch, bash ≥5.0, Crostini, Debian version,
         disk, GPU, network, root, sommelier)
      2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
-        --interactive opens ChromeOS settings pages for each toggle)
+        --interactive)
      3  System update (apt tuning; --trixie upgrades Bookworm to Trixie
         with cros pkg hold, deb822 migration, /tmp tmpfs cap)
      4  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
@@ -436,7 +526,7 @@ STEPS PERFORMED:
         24.08 pinned)
     13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
         soundfont, box64 [Trixie only], qemu-user-static)
-    14  Container backup (opens ChromeOS backup page with --interactive)
+    14  Container backup (--interactive)
     15  Summary and verification
 
 CHECKPOINT:
@@ -446,6 +536,7 @@ CHECKPOINT:
 
 LOG:
     Full output is written to ~/crostini-setup-YYYYMMDD-HHMMSS.log
+    Logs older than 7 days are removed automatically on each run.
 EOF
     exit 0
 }
@@ -460,12 +551,12 @@ for arg in "$@"; do
                 die "Cannot specify --from-step more than once, or combine with --verify"
             fi
             _from="${arg#*=}"
-            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$_from" -lt 1 ]] || [[ "$_from" -gt 15 ]]; then
+            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$((10#$_from))" -lt 1 ]] || [[ "$((10#$_from))" -gt 15 ]]; then
                 die "--from-step requires a number 1-15 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
-            _DEFERRED_CHECKPOINT="$((_from - 1))"
-            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to step $((_from - 1)); will resume from step ${_from}."
+            _DEFERRED_CHECKPOINT="$((10#$_from - 1))"
+            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to step $((10#$_from - 1)); will resume from step $((10#$_from))."
             unset _from
             ;;
         --verify)
@@ -539,6 +630,12 @@ unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
 # Set noninteractive for any direct (non-sudo) dpkg/apt invocations. NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
 export DEBIAN_FRONTEND=noninteractive
+
+# Initialize progress bar (requires terminal, checkpoint, and color globals)
+_progress_init
+
+# Rotate old log files — keep last 7 days
+find "$HOME" -maxdepth 1 -name 'crostini-setup-*.log' -mtime +7 -delete 2>/dev/null || true
 
 # _gpu_conf_content: emit gpu.conf heredoc. Called by step 6 (fresh-write and upgrade-path).
 _gpu_conf_content() {
@@ -1919,7 +2016,7 @@ if should_run_step 13; then
     _RA_CFG="${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"
     if [[ ! -f "$_RA_CFG" ]]; then
         run mkdir -p "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch" || true
-        write_file "$_RA_CFG" <<'RACFG'
+        write_file_private "$_RA_CFG" <<'RACFG'
 # RetroArch Crostini config — managed by crostini-setup-duet5.sh
 # Written once on first install; edit freely afterward.
 
@@ -1956,7 +2053,7 @@ RACFG
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
     if [[ ! -f "$_SVM_CFG" ]]; then
         run mkdir -p "${HOME}/.config/scummvm" || true
-        write_file "$_SVM_CFG" <<'SVMCFG'
+        write_file_private "$_SVM_CFG" <<'SVMCFG'
 # ScummVM Crostini config — managed by crostini-setup-duet5.sh
 # Written once on first install; edit freely afterward.
 [scummvm]
@@ -2037,7 +2134,7 @@ SVMCFG
     # Write ~/.box64rc with SC7180P-tuned defaults
     _BOX64_RC="${HOME}/.box64rc"
     if [[ ! -f "$_BOX64_RC" ]]; then
-        write_file "$_BOX64_RC" <<'RCEOF'
+        write_file_private "$_BOX64_RC" <<'RCEOF'
 # box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by crostini-setup-duet5.sh
 # Written once on first install; edit freely afterward.
 # Reference: https://github.com/ptitSeb/box64/blob/main/docs/USAGE.md
@@ -2060,7 +2157,7 @@ BOX64_DYNAREC_STRONGMEM=1
 RCEOF
         log "Wrote ${_BOX64_RC}"
     else
-        log "~/.box64rc already exists — skipping"
+        log "\$HOME/.box64rc already exists — skipping"
     fi
     unset _BOX64_RC
 
@@ -2077,6 +2174,11 @@ RCEOF
 
 set -euo pipefail
 
+case "${1:-}" in
+    --help)    printf 'Usage: run-x86 <program> [args...]\nAuto-detects ELF arch; prefers box64 (x86_64), falls back to qemu.\n'; exit 0 ;;
+    --version) printf 'run-x86 from crostini-setup-duet5.sh\n'; exit 0 ;;
+esac
+
 if [[ $# -lt 1 ]]; then
     printf 'Usage: run-x86 <program> [args...]\n' >&2
     exit 2
@@ -2092,7 +2194,7 @@ prog="$1"
 #   i386:   class=01, machine=0300
 _detect_arch() {
     local magic
-    magic="$(od -A n -t x1 -N 20 "$1" 2>/dev/null | tr -d ' \n')" || return 1
+    magic="$(od -A n -t x1 -N 20 -- "$1" 2>/dev/null | tr -d ' \n')" || return 1
     [[ "${magic:0:8}" == "7f454c46" ]] || return 1
     local class="${magic:8:2}"
     local machine="${magic:36:4}"
@@ -2136,7 +2238,7 @@ printf 'run-x86: no suitable emulator found for %s (arch=%s)\n' "$prog" "${arch:
 printf 'Install: sudo apt install qemu-user-static  (or qemu-user on Trixie)\n' >&2
 exit 1
 WRAPPER
-        chmod +x "$_RUN_X86"
+        if ! $DRY_RUN; then chmod +x "$_RUN_X86"; fi
         log "Wrote ${_RUN_X86}"
     else
         log "run-x86 wrapper already exists — skipping"
@@ -2146,7 +2248,7 @@ WRAPPER
     set_checkpoint 13
     log "Step 13 complete."
 fi
-# Step 14: Container backup (--interactive) Opens ChromeOS backup page when run with --interactive.
+# Step 14: Container backup (--interactive)
 if should_run_step 14; then
     step_banner 14 "Container backup (--interactive)"
 

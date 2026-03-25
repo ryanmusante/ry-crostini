@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-5.2.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.3.1-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -113,7 +113,8 @@ step 3 caps it at 512 MB to prevent OOM.
 - **Atomic writes** — tmpfile + mv for all config files
 - **No eval, no bash -c** — `run()` passes `"$@"` directly
 - **Colored output** — respects `NO_COLOR`
-- **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600)
+- **Progress bar** — bottom-pinned step counter with percentage; resize-aware
+- **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
 
 ## Limitations
 
@@ -138,10 +139,10 @@ Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_coun
 ## Gaming
 
 Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), FluidSynth GM
-soundfont, box64 (Trixie only — x86_64 DynaRec JIT), and qemu-user-static
-(TCG emulation for x86/x86\_64 + i386; skipped with `--minimal`). Default
-config files are written for RetroArch, ScummVM, box64, and run-x86 on
-first install.
+soundfont, box64 (Trixie only — x86\_64 DynaRec JIT), and qemu-user-static
+(Bookworm) or qemu-user (Trixie) for TCG x86/x86\_64 + i386 emulation
+(skipped with `--minimal`). Default config files are written for RetroArch,
+ScummVM, box64, and run-x86 on first install.
 
 ### Compatibility tiers
 
@@ -213,14 +214,14 @@ core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
 **box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 13 on all releases.
 
-**qemu-user-static** is installed automatically on both releases (skipped
-with `--minimal`). Slower than box64 but provides i386 support and works
-on Bookworm where box64 is not packaged.
+**qemu-user-static** (Bookworm) / **qemu-user** (Trixie) is installed
+automatically (skipped with `--minimal`). Slower than box64 but provides
+i386 support and works on Bookworm where box64 is not packaged.
 
 | Tool | Install | Performance | Notes |
 |------|---------|-------------|-------|
 | box64 | Step 13 (Trixie only) | Fast — ARM64 DynaRec | x86\_64 only; not in Bookworm repos |
-| `qemu-user-static` | Step 13 (both releases) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program` or `qemu-x86_64-static ./program`; also provides i386 via `qemu-i386-static`; binfmt transparent exec blocked in unprivileged Crostini |
+| qemu-user(-static) | Step 13 (Bookworm: qemu-user-static; Trixie: qemu-user) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; Bookworm: `qemu-x86_64-static`, Trixie: `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
 | box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 5 installs both |
 
 `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
