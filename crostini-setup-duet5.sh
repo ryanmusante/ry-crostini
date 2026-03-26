@@ -2,7 +2,7 @@
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 # Version: 5.3.2
 # Date:    2026-03-25
-# Changes: fix unbound $ver crash in check_tool, move success banner after verification, add tmux/ssh version flags, fix lsof label-line skip
+# Changes: fix unbound $ver crash (FIX-10), move success banner after verification + exit non-zero on failure (FIX-15), add tmux/ssh version flags (FIX-11/13), fix lsof label-line skip (FIX-14)
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -2276,6 +2276,7 @@ if should_run_step 14; then
     log "Step 14 complete."
 fi
 # Step 15: Summary and verification
+_had_failures=0
 if should_run_step 15; then
     step_banner 15 "Summary and verification"
 
@@ -2622,21 +2623,25 @@ if should_run_step 15; then
     logprintf '\n'
 
     # Print result banner — only claim success after verification passes
-    if [[ "$_verify_fail" -eq 0 ]]; then
+    _had_failures="$_verify_fail"
+    if [[ "$_had_failures" -eq 0 ]]; then
         logprintf '\n%bCROSTINI SETUP COMPLETE%b\n' "$GREEN" "$RESET"
     else
-        logprintf '\n%bCROSTINI SETUP FINISHED WITH %s FAILURE(S)%b\n' "$RED" "$_verify_fail" "$RESET"
+        logprintf '\n%bCROSTINI SETUP FINISHED WITH %s FAILURE(S)%b\n' "$RED" "$_had_failures" "$RESET"
     fi
 
-    # Mark step 15 complete before removing the checkpoint file. This ensures a crash between here and rm -f still shows step 15 done.
-    set_checkpoint 15
-
-    # Clean up checkpoint — all steps finished, no resume needed
-    if $DRY_RUN; then
-        log "[DRY-RUN] would remove checkpoint file"
+    if [[ "$_had_failures" -eq 0 ]]; then
+        # All checks passed — mark step 15 complete and remove checkpoint
+        set_checkpoint 15
+        if $DRY_RUN; then
+            log "[DRY-RUN] would remove checkpoint file"
+        else
+            rm -f "$STEP_FILE"
+            log "Checkpoint file removed. Setup fully complete."
+        fi
     else
-        rm -f "$STEP_FILE"
-        log "Checkpoint file removed. Setup fully complete."
+        # Verification failed — keep checkpoint at 14 so re-run repeats step 15 only
+        log "Verification failures detected. Fix issues, then re-run or use --verify to re-check."
     fi
 
     # Clean up step 15 variables
@@ -2657,4 +2662,7 @@ if should_run_step 15; then
     log "Step 15 complete."
 fi
 
+if [[ "$_had_failures" -gt 0 ]]; then
+    exit 1
+fi
 exit 0

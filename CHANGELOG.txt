@@ -14,6 +14,12 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - move "CROSTINI SETUP COMPLETE" banner from before verification to
     after verification totals; gate on _verify_fail — prints failure
     count if any checks failed instead of unconditional success
+  - exit non-zero (exit 1) when verification has failures; previously
+    exit 0 was unconditional, making verification result invisible to
+    callers and CI
+  - on verification failure, keep checkpoint at step 14 (not 15) and
+    preserve checkpoint file; re-run repeats only step 15 (verification)
+    instead of restarting all steps from scratch
   - add [tmux]="-V" to _TOOL_VER_FLAG: tmux uses -V, not --version;
     --version error was caught by bad-output filter → "version unverified"
   - add [ssh]="-V" to _TOOL_VER_FLAG: ssh -V writes to stderr; default

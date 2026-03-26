@@ -105,7 +105,8 @@ step 3 caps it at 512 MB to prevent OOM.
 ## Features
 
 - **Unattended by default** — all 7 prompts auto-answered; `--interactive` restores them
-- **Checkpoint resume** — re-run to continue from last completed step
+- **Checkpoint resume** — re-run to continue from last completed step; verification failures keep checkpoint at step 14 so re-run repeats only verification
+- **Exit codes** — `0` on success, `1` on verification failure or fatal error
 - **`--dry-run`** — zero side effects, zero network, zero interaction
 - **`--minimal`** — skip heavy optional packages for RAM-constrained devices
 - **Idempotent** — config files skip if already present
