@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.4.0
-# Date:    2026-03-25
-# Changes: add innoextract + gog-extract wrapper for extracting GOG game installers without Wine
+# Version: 5.4.1
+# Date:    2026-03-26
+# Changes: harden preflight curl (--proto/--tlsv1.2); escape dot in locale.gen sed regex
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.4.0"
+readonly SCRIPT_VERSION="5.4.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -732,7 +732,7 @@ if should_run_step 1; then
     # 1f. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
-    elif curl -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
+    elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -1826,7 +1826,7 @@ SVCEOF
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — if cp fails (disk full), proceeding to sed -i risks corrupting locale.gen with no rollback.
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
-            if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
+            if run sudo sed -i 's/^# *en_US\.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
                     if ! $DRY_RUN; then
                         run sudo rm -f -- /etc/locale.gen.bak || true

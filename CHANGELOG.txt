@@ -4,6 +4,18 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.4.1  2026-03-26
+
+  Correctness:
+  - add --proto '=https' --tlsv1.2 to preflight network check curl
+    (step 1); all other curl calls (rustup download, SHA-256 fetch)
+    already had both flags; the preflight check fetched Release.gpg
+    over HTTPS but did not enforce protocol or TLS floor
+  - escape literal dot in locale.gen sed regex: 's/^# *en_US.UTF-8/'
+    matched en_US.UTF-8 correctly but also en_USxUTF-8 (any char);
+    changed to 's/^# *en_US\.UTF-8/' for exact match; RHS unchanged
+    (replacement string, not regex)
+
 5.4.0  2026-03-25
 
   Features:
