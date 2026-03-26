@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.3.2
+# Version: 5.3.3
 # Date:    2026-03-25
-# Changes: fix unbound $ver crash (FIX-10), move success banner after verification + exit non-zero on failure (FIX-15), add tmux/ssh version flags (FIX-11/13), fix lsof label-line skip (FIX-14)
+# Changes: add -- to all rm -f calls for defensive path safety; add file existence guard to run-x86 wrapper
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.3.2"
+readonly SCRIPT_VERSION="5.3.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -63,8 +63,8 @@ cleanup() {
     # Strip ANSI escape codes from the log file in a single pass. This replaces the previous per-line sed approach (via process substitution) which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
     # Remove temp files
-    if [[ -n "${_rustup_tmp:-}" ]]; then rm -f "$_rustup_tmp" 2>/dev/null; fi
-    if [[ -n "${_rustup_sha:-}" ]]; then rm -f "$_rustup_sha" 2>/dev/null; fi
+    if [[ -n "${_rustup_tmp:-}" ]]; then rm -f -- "$_rustup_tmp" 2>/dev/null; fi
+    if [[ -n "${_rustup_sha:-}" ]]; then rm -f -- "$_rustup_sha" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         # Remove all files (pid + any orphaned tmpfiles from crash)
@@ -224,9 +224,9 @@ _strip_log_ansi() {
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
     chmod 600 "$_tmp" 2>/dev/null || true
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07\x1b]*\x07//g' -e 's/\x1b\][^\x1b]*\x1b\\//g' -e 's/\x1b[0-9A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
-        mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
+        mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f -- "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
-        rm -f "$_tmp"
+        rm -f -- "$_tmp"
         _cleanup_warn "ANSI strip failed — log file retains escape codes"
         return 1
     fi
@@ -267,8 +267,8 @@ set_checkpoint() {
     # Atomic write: tmpfile + mv prevents empty/partial checkpoint on crash
     local _ckpt_tmp
     _ckpt_tmp="$(mktemp "${STEP_FILE}.tmp_XXXXXXXX")" || { warn "Cannot create checkpoint tmpfile"; return 1; }
-    printf '%s\n' "$1" > "$_ckpt_tmp" || { rm -f "$_ckpt_tmp"; warn "Cannot write checkpoint"; return 1; }
-    mv -- "$_ckpt_tmp" "$STEP_FILE" || { rm -f "$_ckpt_tmp"; warn "Cannot move checkpoint into place"; return 1; }
+    printf '%s\n' "$1" > "$_ckpt_tmp" || { rm -f -- "$_ckpt_tmp"; warn "Cannot write checkpoint"; return 1; }
+    mv -- "$_ckpt_tmp" "$STEP_FILE" || { rm -f -- "$_ckpt_tmp"; warn "Cannot move checkpoint into place"; return 1; }
 }
 
 should_run_step() {
@@ -325,10 +325,10 @@ write_file() {
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
+    cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
     # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
-    chmod 644 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
-    mv -- "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
+    chmod 644 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
+    mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest"
 }
 
@@ -343,9 +343,9 @@ write_file_private() {
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    cat > "$tmp" || { rm -f "$tmp"; die "Cannot write $dest"; }
-    chmod 600 "$tmp" || { rm -f "$tmp"; die "Cannot chmod $dest"; }
-    mv -- "$tmp" "$dest" || { rm -f "$tmp"; die "Cannot move $dest into place"; }
+    cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
+    chmod 600 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
+    mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest (mode 600)"
 }
 
@@ -360,9 +360,9 @@ write_file_sudo() {
     sudo mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    sudo tee "$tmp" > /dev/null || { sudo rm -f "$tmp"; die "Cannot write $dest"; }
-    sudo chmod 644 "$tmp" || { sudo rm -f "$tmp"; die "Cannot chmod tmpfile for $dest"; }
-    sudo mv -- "$tmp" "$dest" || { sudo rm -f "$tmp"; die "Cannot move $dest into place"; }
+    sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; die "Cannot write $dest"; }
+    sudo chmod 644 "$tmp" || { sudo rm -f -- "$tmp"; die "Cannot chmod tmpfile for $dest"; }
+    sudo mv -- "$tmp" "$dest" || { sudo rm -f -- "$tmp"; die "Cannot move $dest into place"; }
     log "Wrote $dest (sudo)"
 }
 
@@ -573,8 +573,8 @@ for arg in "$@"; do
             ;;
         --minimal) MINIMAL=true ;;
         --trixie)  UPGRADE_TRIXIE=true ;;
-        --help)    rm -f "$LOG_FILE" 2>/dev/null; usage ;;
-        --version) rm -f "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
+        --help)    rm -f -- "$LOG_FILE" 2>/dev/null; usage ;;
+        --version) rm -f -- "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
         --reset)
             if [[ -d "$LOCK_FILE" ]]; then
                 _rpid="$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")"
@@ -619,7 +619,7 @@ _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
     || die "Cannot create PID tmpfile"
 printf '%s\n' "$$" > "$_pid_tmp"
 mv -- "$_pid_tmp" "$LOCK_FILE/pid" \
-    || { rm -f "$_pid_tmp"; die "Cannot write PID file"; }
+    || { rm -f -- "$_pid_tmp"; die "Cannot write PID file"; }
 _LOCK_ACQUIRED=true
 unset _pid_tmp
 
@@ -1675,11 +1675,11 @@ if should_run_step 10; then
             if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 \
                 "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init" \
                 -o "$_rustup_tmp"; then
-                rm -f "$_rustup_tmp"
+                rm -f -- "$_rustup_tmp"
                 die "Rustup download failed"
             fi
             if [[ ! -s "$_rustup_tmp" ]]; then
-                rm -f "$_rustup_tmp"
+                rm -f -- "$_rustup_tmp"
                 die "Rustup installer is empty"
             fi
             # Verify SHA-256 checksum (TOFU via HTTPS, no GPG since rustup 1.26.0)
@@ -1691,20 +1691,20 @@ if should_run_step 10; then
                     _expected="$(awk '{print $1}' "$_rustup_sha")"
                     _actual="$(sha256sum "$_rustup_tmp" | awk '{print $1}')"
                     if [[ "$_expected" != "$_actual" ]]; then
-                        rm -f "$_rustup_tmp" "$_rustup_sha"
+                        rm -f -- "$_rustup_tmp" "$_rustup_sha"
                         die "rustup-init SHA-256 mismatch: expected ${_expected}, got ${_actual}"
                     fi
                     log "rustup-init SHA-256 verified: ${_actual}"
                 else
                     warn "Cannot download rustup checksum — proceeding with TOFU"
                 fi
-                rm -f "$_rustup_sha"
+                rm -f -- "$_rustup_sha"
             else
                 warn "Cannot create checksum tmpfile — proceeding with TOFU"
             fi
-            chmod +x "$_rustup_tmp" || { rm -f "$_rustup_tmp"; die "Cannot make rustup-init executable (noexec mount?)"; }
+            chmod +x "$_rustup_tmp" || { rm -f -- "$_rustup_tmp"; die "Cannot make rustup-init executable (noexec mount?)"; }
             run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
-            rm -f "$_rustup_tmp"
+            rm -f -- "$_rustup_tmp"
             unset _rustup_tmp _rustup_sha _expected _actual
         fi
 
@@ -1829,7 +1829,7 @@ SVCEOF
             if run sudo sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
                     if ! $DRY_RUN; then
-                        run sudo rm -f /etc/locale.gen.bak || true
+                        run sudo rm -f -- /etc/locale.gen.bak || true
                         log "en_US.UTF-8 locale generated"
                     fi
                 else
@@ -1838,7 +1838,7 @@ SVCEOF
             else
                 warn "locale.gen edit failed — restoring backup"
                 run sudo cp -- /etc/locale.gen.bak /etc/locale.gen || warn "Rollback of locale.gen failed — manual restore from /etc/locale.gen.bak required"
-                run sudo rm -f /etc/locale.gen.bak || true
+                run sudo rm -f -- /etc/locale.gen.bak || true
             fi
         else
             warn "locale.gen backup failed — skipping locale edit to avoid unrecoverable corruption"
@@ -2189,6 +2189,11 @@ if [[ $# -lt 1 ]]; then
 fi
 
 prog="$1"
+
+if [[ ! -f "$prog" ]]; then
+    printf 'run-x86: file not found: %s\n' "$prog" >&2
+    exit 2
+fi
 
 # Detect ELF architecture via raw header bytes (od)
 # ELF header: bytes 0-3=magic, byte 4=class, bytes 18-19=e_machine (LE)
@@ -2636,7 +2641,7 @@ if should_run_step 15; then
         if $DRY_RUN; then
             log "[DRY-RUN] would remove checkpoint file"
         else
-            rm -f "$STEP_FILE"
+            rm -f -- "$STEP_FILE"
             log "Checkpoint file removed. Setup fully complete."
         fi
     else

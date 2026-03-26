@@ -4,6 +4,17 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.3.3  2026-03-25
+
+  Correctness:
+  - add -- to all 27 rm -f calls (cleanup, write_file, write_file_private,
+    write_file_sudo, set_checkpoint, --help, --version, PID lock, rustup
+    temp files, locale.gen backup, checkpoint removal); previously only
+    --reset handler (L589) used --; all mv/cp calls already had it
+  - add file existence guard to run-x86 wrapper before od/ELF detection;
+    missing file previously fell through to "no suitable emulator found"
+    instead of the clearer "file not found" with exit 2
+
 5.3.2  2026-03-25
 
   Correctness:
