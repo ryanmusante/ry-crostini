@@ -4,6 +4,29 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.4.0  2026-03-25
+
+  Features:
+  - install innoextract in step 13 for extracting GOG Windows .exe
+    installers (Inno Setup format) on ARM64 Linux without Wine; supports
+    GOG Galaxy multi-part .bin archives with --gog flag; available in
+    Debian repos for both Bookworm (1.9) and Trixie (1.9)
+  - write ~/.local/bin/gog-extract convenience wrapper: auto-detects
+    installer type (.exe → innoextract --gog --exclude-temp, .sh →
+    makeself --noexec); optional output directory argument; prints game
+    file location (app/ for Windows, data/noarch/game/ for Linux)
+  - add innoextract and gog-extract to step 15 verification
+    (check_tool + check_config)
+  - add innoextract to step 13 inline post-install verification log
+
+  Documentation:
+  - sync step 13 description across all four locations (comment, banner,
+    --help, README): add innoextract/GOG
+  - README: expand GOG games subsection with gog-extract usage examples
+    for Windows .exe and Linux .sh installers; add multi-part .bin note
+  - README: add GOG extraction verify commands (5.4.0+)
+  - README: update config files written and Gaming intro paragraphs
+
 5.3.3  2026-03-25
 
   Correctness:

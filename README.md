@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-5.3.3-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.4.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -68,7 +68,7 @@ bash crostini-setup-duet5.sh --                           # stop processing opti
 | 10 | Rust stable aarch64 via rustup |
 | 11 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
 | 12 | Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned) |
-| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static) |
+| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static) |
 | 14 | Container backup (`--interactive`) |
 | 15 | Summary and verification |
 
@@ -83,7 +83,8 @@ vm.max\_map\_count, sysctl persistence service, shell env + PATH +
 CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
 pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
 run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
-x86/x86\_64 binaries). Memory tuning attempted if /proc/sys/vm/ is writable.
+x86/x86\_64 binaries), gog-extract wrapper (`~/.local/bin/gog-extract` — extracts
+GOG Windows .exe and Linux .sh installers without Wine). Memory tuning attempted if /proc/sys/vm/ is writable.
 
 ## Compatibility
 
@@ -140,10 +141,11 @@ Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_coun
 ## Gaming
 
 Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), FluidSynth GM
-soundfont, box64 (Trixie only — x86\_64 DynaRec JIT), and qemu-user-static
+soundfont, innoextract (GOG/Inno Setup extractor),
+box64 (Trixie only — x86\_64 DynaRec JIT), and qemu-user-static
 (Bookworm) or qemu-user (Trixie) for TCG x86/x86\_64 + i386 emulation
 (skipped with `--minimal`). Default config files are written for RetroArch,
-ScummVM, box64, and run-x86 on first install.
+ScummVM, box64, run-x86, and gog-extract on first install.
 
 ### Compatibility tiers
 
@@ -258,6 +260,29 @@ create a privileged container:
 
 ### GOG games
 
+Step 13 installs `innoextract` and writes the `gog-extract` wrapper
+(`~/.local/bin/gog-extract`) for extracting GOG game installers on Linux
+without Wine.
+
+**Windows GOG installers** (`.exe`) use Inno Setup. `innoextract` unpacks
+them natively on ARM64, including GOG Galaxy multi-part `.bin` archives:
+
+```bash
+gog-extract setup_monkey_island_1.0.exe              # extracts to ./setup_monkey_island_1.0/
+gog-extract setup_monkey_island_1.0.exe ~/Games/MI    # extracts to ~/Games/MI/
+# Game files land in the app/ subdirectory
+```
+
+**Linux GOG installers** (`.sh`) are makeself archives:
+
+```bash
+gog-extract gog_baldurs_gate_enhanced_edition.sh       # extracts to ./gog_baldurs_gate_enhanced_edition/
+# Game files land in data/noarch/game/
+```
+
+For multi-part GOG Windows installers with `.bin` RAR archives, ensure
+`unar` or `unrar` is in PATH (`sudo apt install unar`).
+
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
 has arm64 `.deb` releases (Flatpak is x86\_64-only; heavy at ~200-400 MB).
 Alternative: download GOG `.sh` installers from [gog.com](https://www.gog.com)
@@ -299,6 +324,10 @@ flatpak override --user --show org.libretro.RetroArch | grep MESA_LOADER
 # x86 emulation (5.2.0+)
 run-x86 --help                   # wrapper available
 qemu-x86_64-static --version     # Bookworm (or qemu-x86_64 on Trixie)
+
+# GOG extraction (5.4.0+)
+innoextract --version            # Inno Setup extractor
+gog-extract --help               # GOG installer wrapper
 ```
 
 ## License

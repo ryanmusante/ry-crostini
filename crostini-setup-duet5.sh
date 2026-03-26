@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.3.3
+# Version: 5.4.0
 # Date:    2026-03-25
-# Changes: add -- to all rm -f calls for defensive path safety; add file existence guard to run-x86 wrapper
+# Changes: add innoextract + gog-extract wrapper for extracting GOG game installers without Wine
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.3.3"
+readonly SCRIPT_VERSION="5.4.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -529,7 +529,7 @@ STEPS PERFORMED:
     12  Flatpak + Flathub (ARM64 app source, Freedesktop Platform
         24.08 pinned)
     13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
-        soundfont, box64 [Trixie only], qemu-user-static)
+        soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
     14  Container backup (--interactive)
     15  Summary and verification
 
@@ -1988,12 +1988,12 @@ if should_run_step 12; then
     set_checkpoint 12
     log "Step 12 complete."
 fi
-# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static)
+# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
 if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, box64 [Trixie only], qemu-user-static)"
+    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)"
 
-    # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM
-    install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm || warn "Some gaming packages failed"
+    # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM innoextract: extract GOG/Inno Setup Windows installers without Wine
+    install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm innoextract || warn "Some gaming packages failed"
 
     # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
     if $DRY_RUN; then
@@ -2089,6 +2089,13 @@ SVMCFG
             unset _scummvm_ver
         else
             warn "scummvm not found"
+        fi
+        if command -v innoextract &>/dev/null; then
+            _innoextract_ver="$(timeout 3 innoextract --version 2>/dev/null | head -1 || true)"
+            log "innoextract: ${_innoextract_ver:-installed} ✓"
+            unset _innoextract_ver
+        else
+            warn "innoextract not found"
         fi
         if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
             log "RetroArch Flatpak: installed ✓"
@@ -2253,6 +2260,82 @@ WRAPPER
         log "run-x86 wrapper already exists — skipping"
     fi
     unset _RUN_X86
+
+    # gog-extract: convenience wrapper — extracts GOG Windows .exe (Inno Setup) or Linux .sh (makeself) installers
+    _GOG_EXTRACT="${HOME}/.local/bin/gog-extract"
+    if [[ ! -f "$_GOG_EXTRACT" ]]; then
+        write_file "$_GOG_EXTRACT" <<'GOGWRAP'
+#!/usr/bin/env bash
+# gog-extract — extract GOG game installers on ARM64 Linux without Wine
+# Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec)
+# Usage: gog-extract <installer> [output-dir]
+# Managed by crostini-setup-duet5.sh — edit freely.
+
+set -euo pipefail
+
+case "${1:-}" in
+    --help)    printf 'Usage: gog-extract <installer> [output-dir]\nExtracts GOG Windows .exe or Linux .sh installers.\n'; exit 0 ;;
+    --version) printf 'gog-extract from crostini-setup-duet5.sh\n'; exit 0 ;;
+esac
+
+if [[ $# -lt 1 ]]; then
+    printf 'Usage: gog-extract <installer> [output-dir]\n' >&2
+    exit 2
+fi
+
+installer="$1"
+
+if [[ ! -f "$installer" ]]; then
+    printf 'gog-extract: file not found: %s\n' "$installer" >&2
+    exit 2
+fi
+
+# Default output directory: installer basename without extension, in current dir
+_base="$(basename -- "$installer")"
+_base="${_base%.*}"
+outdir="${2:-$_base}"
+
+case "$installer" in
+    *.exe|*.EXE)
+        if ! command -v innoextract &>/dev/null; then
+            printf 'gog-extract: innoextract not found — install with: sudo apt install innoextract\n' >&2
+            exit 1
+        fi
+        printf 'Extracting GOG Windows installer: %s\n' "$installer"
+        # --gog: handle multi-part .bin RAR archives (needs unrar/unar in PATH)
+        # --exclude-temp: skip files deleted at end of install (temp extractors, etc.)
+        innoextract --gog --exclude-temp -d "$outdir" -- "$installer"
+        printf 'Extracted to: %s/\n' "$outdir"
+        # Show game directory (typically under app/)
+        if [[ -d "${outdir}/app" ]]; then
+            printf 'Game files: %s/app/\n' "$outdir"
+        fi
+        ;;
+    *.sh|*.SH)
+        printf 'Extracting GOG Linux installer: %s\n' "$installer"
+        mkdir -p -- "$outdir"
+        # GOG Linux installers are makeself archives
+        chmod +x -- "$installer"
+        "$installer" --noexec --target="$outdir"
+        printf 'Extracted to: %s/\n' "$outdir"
+        # GOG Linux .sh contents: data/noarch/game/ contains game files
+        if [[ -d "${outdir}/data/noarch/game" ]]; then
+            printf 'Game files: %s/data/noarch/game/\n' "$outdir"
+        fi
+        ;;
+    *)
+        printf 'gog-extract: unsupported file type: %s\n' "$installer" >&2
+        printf 'Expected: .exe (Windows GOG installer) or .sh (Linux GOG installer)\n' >&2
+        exit 2
+        ;;
+esac
+GOGWRAP
+        if ! $DRY_RUN; then chmod +x "$_GOG_EXTRACT"; fi
+        log "Wrote ${_GOG_EXTRACT}"
+    else
+        log "gog-extract wrapper already exists — skipping"
+    fi
+    unset _GOG_EXTRACT
 
     set_checkpoint 13
     log "Step 13 complete."
@@ -2488,6 +2571,7 @@ if should_run_step 15; then
     # Step 13: gaming
     check_tool "dosbox"      dosbox
     check_tool "scummvm"     scummvm
+    check_tool "innoextract" innoextract
     _box64_v_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ "$_box64_v_codename" == "trixie" ]]; then
         check_tool "box64" box64
@@ -2507,6 +2591,7 @@ if should_run_step 15; then
         fi
     fi
     check_tool "run-x86" run-x86
+    check_tool "gog-extract" gog-extract
     if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
         logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
         ((_verify_pass++)) || true
@@ -2589,6 +2674,7 @@ if should_run_step 15; then
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
+    check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
     if [[ -f "/etc/sysctl.d/99-crostini-memory.conf" ]]; then
         check_config "/etc/sysctl.d/99-crostini-memory.conf"     "Memory tuning (4 GB)"
     else
