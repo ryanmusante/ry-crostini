@@ -1,8 +1,19 @@
 CHANGELOG
 =========
 
-crostini-setup-duet5.sh -- Crostini post-install bootstrap
+ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
+
+6.0.0  2026-03-26
+
+  Breaking:
+  - rename project crostini-setup-duet5 → ry-crostini; script filename,
+    log files, checkpoint, lock, and all managed system config paths
+    changed; existing checkpoint/lock files from ≤5.5.0 are not
+    recognized — run --reset on old version before upgrading, or
+    delete manually:
+      rm -f ~/.crostini-setup-checkpoint
+      rm -rf ~/.crostini-setup.lock
 
 5.5.0  2026-03-26
 

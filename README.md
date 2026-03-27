@@ -1,6 +1,6 @@
-# crostini-setup-duet5
+# ry-crostini
 
-![version](https://img.shields.io/badge/version-5.5.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-6.0.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -21,17 +21,17 @@ configured desktop environment in one unattended run.
 ## Usage
 
 ```bash
-bash crostini-setup-duet5.sh                              # unattended (default, stays on Bookworm)
-bash crostini-setup-duet5.sh --interactive                # prompt for toggles
-bash crostini-setup-duet5.sh --trixie                     # upgrade Bookworm to Trixie (Debian 13)
-bash crostini-setup-duet5.sh --dry-run                    # preview, zero side effects
-bash crostini-setup-duet5.sh --minimal                    # skip heavy optional packages
-bash crostini-setup-duet5.sh --from-step=6                # resume from a specific step
-bash crostini-setup-duet5.sh --verify                     # run only summary/verification
-bash crostini-setup-duet5.sh --reset                      # clear checkpoint, start over
-bash crostini-setup-duet5.sh --help                       # show usage and step list
-bash crostini-setup-duet5.sh --version                    # show version
-bash crostini-setup-duet5.sh --                           # stop processing options
+bash ry-crostini.sh                              # unattended (default, stays on Bookworm)
+bash ry-crostini.sh --interactive                # prompt for toggles
+bash ry-crostini.sh --trixie                     # upgrade Bookworm to Trixie (Debian 13)
+bash ry-crostini.sh --dry-run                    # preview, zero side effects
+bash ry-crostini.sh --minimal                    # skip heavy optional packages
+bash ry-crostini.sh --from-step=6                # resume from a specific step
+bash ry-crostini.sh --verify                     # run only summary/verification
+bash ry-crostini.sh --reset                      # clear checkpoint, start over
+bash ry-crostini.sh --help                       # show usage and step list
+bash ry-crostini.sh --version                    # show version
+bash ry-crostini.sh --                           # stop processing options
 ```
 
 ## Prerequisites
@@ -116,7 +116,7 @@ step 3 caps it at 512 MB to prevent OOM.
 - **No eval, no bash -c** — `run()` passes `"$@"` directly
 - **Colored output** — respects `NO_COLOR`
 - **Progress bar** — bottom-pinned step counter with percentage; resize-aware
-- **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
+- **Full logging** — `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
 
 ## Known limitations
 
@@ -132,7 +132,7 @@ restart. Closing and reopening the Terminal app is all that is required.
 **sysctl keys are partially read-only in Crostini.** `fs.inotify.max_user_watches`
 is writable and applied on first run. `vm.overcommit_memory`, `vm.max_map_count`,
 and `fs.protected_*` are blocked by the ChromeOS Termina VM namespace.
-`crostini-sysctl.service` retries on each container start.
+`ry-crostini-sysctl.service` retries on each container start.
 Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
 
 **Steam is x86-only.** Community translation layers
