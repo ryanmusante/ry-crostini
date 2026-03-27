@@ -4,6 +4,17 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+6.0.1  2026-03-26
+
+  Documentation:
+  - remove version-specific "Changes:" header line (line 5); release note
+    for the 6.0.0 rename belongs in CHANGELOG only, not in the permanent
+    file header
+  - update header sudo count ~66 → ~70; audit found 66 grep matches but
+    ~9 are comments/log strings; runtime count on first Trixie run is ~70
+    (30 from write_file_sudo internals + ~40 direct); ~66 undercounted
+    the standard path
+
 6.0.0  2026-03-26
 
   Breaking:
