@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 6.0.1
-# Date:    2026-03-26
+# Version: 7.0.0
+# Date:    2026-03-27
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -9,7 +9,7 @@
 # NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
-# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp (rustup installer) are transient and small (<100 MB); they are cleaned up in both normal flow and EXIT trap.
+# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
 # Restrict tempfiles/logs to owner-only by default
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="6.0.1"
+readonly SCRIPT_VERSION="7.0.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -61,9 +61,6 @@ cleanup() {
     _progress_cleanup
     # Strip ANSI escape codes from the log file in a single pass. This replaces the previous per-line sed approach (via process substitution) which was racy — the background sed could be killed before flushing.
     _strip_log_ansi
-    # Remove temp files
-    if [[ -n "${_rustup_tmp:-}" ]]; then rm -f -- "$_rustup_tmp" 2>/dev/null; fi
-    if [[ -n "${_rustup_sha:-}" ]]; then rm -f -- "$_rustup_sha" 2>/dev/null; fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         # Remove all files (pid + any orphaned tmpfiles from crash)
@@ -103,7 +100,7 @@ fi
 readonly RED GREEN YELLOW BOLD RESET
 
 # Progress bar — pinned to bottom of terminal via scroll region
-readonly _PROGRESS_TOTAL=15
+readonly _PROGRESS_TOTAL=11
 
 # _progress_init: reserve bottom terminal line, draw initial bar. Called once after lock+checkpoint.
 # shellcheck disable=SC2317
@@ -502,8 +499,8 @@ OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
     --trixie       Upgrade Bookworm to Trixie (default: stay on Bookworm)
-    --from-step=N  Start (or restart) from step N (1-15; N=15 is same as --verify)
-    --verify       Run only step 15 (summary and verification)
+    --from-step=N  Start (or restart) from step N (1-11; N=11 is same as --verify)
+    --verify       Run only step 11 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
     --help         Show this help message
     --version      Show version
@@ -511,31 +508,25 @@ OPTIONS:
     --             Stop processing options (remaining args ignored)
 
 STEPS PERFORMED:
-     1  Preflight checks (arch, bash ≥5.0, Crostini, Debian version,
-        disk, GPU, network, root, sommelier)
-     2  ChromeOS integration (GPU, mic, USB, folders, ports, disk;
-        --interactive)
-     3  System update (apt tuning; --trixie upgrades Bookworm to Trixie
+     1  Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini,
+        Debian version, disk, GPU, network, root, sommelier, mic, USB,
+        folders, ports; --interactive)
+     2  System update (apt tuning; --trixie upgrades Bookworm to Trixie
         with cros pkg hold, deb822 migration, /tmp tmpfs cap)
-     4  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
+     3  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
         ripgrep, fd, fzf, bat, ...)
-     5  Build essentials and development headers
-     6  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
-     7  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
+     4  Build essentials and development headers
+     5  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
+     6  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
         PipeWire gaming tuning)
-     8  Display scaling and HiDPI (sommelier, Super key passthrough,
+     7  Display scaling and HiDPI (sommelier, Super key passthrough,
         GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
-     9  GUI applications (Thunar, Evince, Eye of GNOME, file-roller,
-        xterm, fonts, MIME defaults)
-    10  Rust stable aarch64 via rustup
-    11  Container resource tuning (sysctl, sysctl persistence service,
+     8  GUI essentials (xterm, session support, fonts, icons)
+     9  Container resource tuning (sysctl, sysctl persistence service,
         locale, env, XDG, paths, memory)
-    12  Flatpak + Flathub (ARM64 app source, Freedesktop Platform
-        24.08 pinned)
-    13  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
+    10  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
         soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
-    14  Container backup (--interactive)
-    15  Summary and verification
+    11  Summary and verification
 
 CHECKPOINT:
     Progress is saved after each step to ${STEP_FILE}.
@@ -559,8 +550,8 @@ for arg in "$@"; do
                 die "Cannot specify --from-step more than once, or combine with --verify"
             fi
             _from="${arg#*=}"
-            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$((10#$_from))" -lt 1 ]] || [[ "$((10#$_from))" -gt 15 ]]; then
-                die "--from-step requires a number 1-15 (got '${_from}')"
+            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$((10#$_from))" -lt 1 ]] || [[ "$((10#$_from))" -gt 11 ]]; then
+                die "--from-step requires a number 1-11 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="$((10#$_from - 1))"
@@ -572,8 +563,8 @@ for arg in "$@"; do
                 die "Cannot specify --verify more than once, or combine with --from-step"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
-            _DEFERRED_CHECKPOINT="14"
-            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 14; running verification only."
+            _DEFERRED_CHECKPOINT="10"
+            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
         --trixie)  UPGRADE_TRIXIE=true ;;
@@ -670,9 +661,9 @@ MESA_DISK_CACHE_SINGLE_FILE=1
 EOF
 }
 
-# Step 1: Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier)
+# Step 1: Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; --interactive)
 if should_run_step 1; then
-    step_banner 1 "Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier)"
+    step_banner 1 "Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; --interactive)"
 
     # 1a. Architecture
     CURRENT_ARCH="$(uname -m)"
@@ -760,14 +751,8 @@ if should_run_step 1; then
     fi
 
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
-    set_checkpoint 1
-    log "Step 1 complete."
-fi
-# Step 2: ChromeOS integration (GPU, mic, USB, folders, ports, disk; --interactive)
-if should_run_step 2; then
-    step_banner 2 "ChromeOS integration (GPU, mic, USB, folders, ports, disk; --interactive)"
 
-    # 2a. GPU acceleration
+    # 1i. GPU acceleration (ChromeOS integration)
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU acceleration: ALREADY ACTIVE ✓"
     else
@@ -797,7 +782,7 @@ if should_run_step 2; then
         fi
     fi
 
-    # 2b. Microphone access
+    # 1j. Microphone access
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         log "Microphone capture device: detected ✓"
     else
@@ -824,7 +809,7 @@ if should_run_step 2; then
         fi
     fi
 
-    # 2c. USB device passthrough
+    # 1k. USB device passthrough
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening USB device management..."
         _prompt '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
@@ -836,7 +821,7 @@ if should_run_step 2; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
-    # 2d. Shared folders
+    # 1l. Shared folders
     if [[ -d /mnt/chromeos ]]; then
         SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)" || true
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
@@ -856,7 +841,7 @@ if should_run_step 2; then
         unset SHARED_COUNT
     fi
 
-    # 2e. Port forwarding
+    # 1m. Port forwarding
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening port forwarding settings..."
         _prompt '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
@@ -869,7 +854,7 @@ if should_run_step 2; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
-    # 2f. Disk size check
+    # 1n. Disk size check
     _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ "$_avail_raw" =~ ^[0-9]+$ ]]; then
         AVAIL_MB_NOW=$((_avail_raw / 1024))
@@ -895,12 +880,12 @@ if should_run_step 2; then
     fi
 
     unset AVAIL_MB_NOW
-    set_checkpoint 2
-    log "Step 2 complete."
+    set_checkpoint 1
+    log "Step 1 complete."
 fi
-# Step 3: System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)
-if should_run_step 3; then
-    step_banner 3 "System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)"
+# Step 2: System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)
+if should_run_step 2; then
+    step_banner 2 "System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
@@ -1091,12 +1076,12 @@ TMPEOF
     fi
     unset _mod_codename
 
-    set_checkpoint 3
-    log "Step 3 complete."
+    set_checkpoint 2
+    log "Step 2 complete."
 fi
-# Step 4: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
-if should_run_step 4; then
-    step_banner 4 "Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)"
+# Step 3: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
+if should_run_step 3; then
+    step_banner 3 "Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)"
 
     CORE_PKGS=(
         # Navigation and file management
@@ -1141,12 +1126,12 @@ if should_run_step 4; then
     fi
 
     unset CORE_PKGS
-    set_checkpoint 4
-    log "Step 4 complete."
+    set_checkpoint 3
+    log "Step 3 complete."
 fi
-# Step 5: Build essentials and development headers
-if should_run_step 5; then
-    step_banner 5 "Build essentials and development headers"
+# Step 4: Build essentials and development headers
+if should_run_step 4; then
+    step_banner 4 "Build essentials and development headers"
 
     DEV_PKGS=(
         build-essential gcc g++ make cmake pkg-config
@@ -1159,13 +1144,13 @@ if should_run_step 5; then
     install_pkgs_best_effort "${DEV_PKGS[@]}" || warn "Some dev packages unavailable — non-fatal"
 
     unset DEV_PKGS
-    set_checkpoint 5
-    log "Step 5 complete."
+    set_checkpoint 4
+    log "Step 4 complete."
 fi
 
-# Step 6: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
-if should_run_step 6; then
-    step_banner 6 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
+# Step 5: GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
+if should_run_step 5; then
+    step_banner 5 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
     # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64) libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
     GPU_STABLE_PKGS=(
@@ -1224,12 +1209,12 @@ if should_run_step 6; then
     fi
 
     unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
-    set_checkpoint 6
-    log "Step 6 complete."
+    set_checkpoint 5
+    log "Step 5 complete."
 fi
-# Step 7: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)
-if should_run_step 7; then
-    step_banner 7 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)"
+# Step 6: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)
+if should_run_step 6; then
+    step_banner 6 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)"
 
     AUDIO_PKGS=(
         # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by alsa-utils and libasound2-plugins; no explicit listing needed.
@@ -1353,12 +1338,12 @@ PPEOF
     unset _PW_PULSE_GAMING
 
     unset AUDIO_PKGS SND_DEV_COUNT
-    set_checkpoint 7
-    log "Step 7 complete."
+    set_checkpoint 6
+    log "Step 6 complete."
 fi
-# Step 8: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
-if should_run_step 8; then
-    step_banner 8 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)"
+# Step 7: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
+if should_run_step 7; then
+    step_banner 7 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)"
 
     # 13.3in FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
@@ -1550,25 +1535,14 @@ EOF
     fi
 
     unset SOMMELIER_ENV GTK3_SETTINGS GTK4_SETTINGS GTK2_RC QT_ENV XRESOURCES FC_LOCAL CURSOR_DIR
-    set_checkpoint 8
-    log "Step 8 complete."
+    set_checkpoint 7
+    log "Step 7 complete."
 fi
-# Step 9: GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults)
-if should_run_step 9; then
-    step_banner 9 "GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults)"
+# Step 8: GUI essentials (xterm, session support, fonts, icons)
+if should_run_step 8; then
+    step_banner 8 "GUI essentials (xterm, session support, fonts, icons)"
 
     GUI_PKGS=(
-        # File management: thunar (lightweight), archive plugin, thumbnail service
-        thunar
-        thunar-archive-plugin
-        tumbler
-
-        # Document and image viewers
-        evince
-        eog
-
-        # Utilities: archive manager
-        file-roller
         xdg-utils
 
         # Session support: D-Bus for X11, accessibility (suppresses GTK warnings), desktop notifications (notify-send)
@@ -1576,7 +1550,7 @@ if should_run_step 9; then
         at-spi2-core
         libnotify-bin
 
-        # Terminal emulator — needed for Thunar "Open Terminal Here" and other desktop actions. xterm is the standard X11 fallback that sensible-terminal and xdg-terminal-exec resolve to.
+        # Terminal emulator — standard X11 fallback that sensible-terminal and xdg-terminal-exec resolve to.
         xterm
 
         # Fonts — comprehensive set for international content
@@ -1601,40 +1575,6 @@ if should_run_step 9; then
         log "Skipping gnome-disk-utility (--minimal mode)"
     fi
 
-    # Set default file manager Desktop file was renamed in Thunar 4.20 (Xfce reverse-DNS convention)
-    _thunar_desktop="thunar.desktop"
-    if [[ -f /usr/share/applications/org.xfce.thunar.desktop ]]; then
-        _thunar_desktop="org.xfce.thunar.desktop"
-    fi
-    if command -v thunar &>/dev/null || $DRY_RUN; then
-        if run xdg-mime default "$_thunar_desktop" inode/directory; then
-            $DRY_RUN || log "Thunar set as default file manager ($_thunar_desktop)"
-        else
-            warn "xdg-mime default for Thunar failed"
-        fi
-    fi
-    unset _thunar_desktop
-
-    # Set default PDF viewer
-    if command -v evince &>/dev/null || $DRY_RUN; then
-        if run xdg-mime default org.gnome.Evince.desktop application/pdf; then
-            $DRY_RUN || log "Evince set as default PDF viewer"
-        else
-            warn "xdg-mime default for Evince failed"
-        fi
-    fi
-
-    # Set default image viewer
-    if command -v eog &>/dev/null || $DRY_RUN; then
-        _eog_ok=true
-        for _mime in image/png image/jpeg image/gif image/webp image/svg+xml image/bmp image/tiff; do
-            run xdg-mime default org.gnome.eog.desktop "$_mime" || { warn "xdg-mime default for eog/${_mime#image/} failed"; _eog_ok=false; }
-        done
-        unset _mime
-        $_eog_ok && { $DRY_RUN || log "Eye of GNOME set as default image viewer"; }
-        unset _eog_ok
-    fi
-
     # Ensure desktop applications directory exists (garcon integration)
     if run mkdir -p "${HOME}/.local/share/applications"; then
         $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
@@ -1643,89 +1583,12 @@ if should_run_step 9; then
     fi
 
     unset GUI_PKGS
-    set_checkpoint 9
-    log "Step 9 complete."
+    set_checkpoint 8
+    log "Step 8 complete."
 fi
-# Step 10: Rust stable aarch64 via rustup
-if should_run_step 10; then
-    step_banner 10 "Rust stable aarch64 via rustup"
-
-    if command -v rustc &>/dev/null; then
-        log "Rust already installed: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
-    elif [[ -d "${HOME}/.rustup" ]]; then
-        # ~/.rustup exists but rustc not in PATH — source cargo/env to recover
-        warn "Existing ~/.rustup detected but rustc not in PATH"
-        if [[ -f "${HOME}/.cargo/env" ]]; then
-            # shellcheck source=/dev/null
-            source "${HOME}/.cargo/env" || true
-        fi
-        if command -v rustc &>/dev/null; then
-            log "Rust recovered via cargo/env: $(timeout 3 rustc --version 2>/dev/null || echo 'unknown')"
-        else
-            warn "rustc still not found after sourcing cargo/env — re-running rustup"
-        fi
-    fi
-
-    if ! command -v rustc &>/dev/null; then
-        log "Installing Rust via rustup (non-interactive)..."
-        if $DRY_RUN; then
-            log "[DRY-RUN] curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init -o /tmp/rustup-init-XXXXXXXXXX"
-            log "[DRY-RUN] sha256sum verify against rustup-init.sha256"
-            log "[DRY-RUN] /tmp/rustup-init-XXXXXXXXXX -y --default-toolchain stable"
-        else
-            # TOFU (Trust On First Use): HTTPS-only. rustup.rs does not publish a stable signing key (GPG removed in 1.26.0). SHA-256 verify added below. Download binary directly (not shell wrapper) to enable checksum verification.
-            _rustup_tmp="$(mktemp /tmp/rustup-init-XXXXXXXXXX)" || die "Cannot create tmpfile for rustup installer"
-            if ! run curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 \
-                "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init" \
-                -o "$_rustup_tmp"; then
-                rm -f -- "$_rustup_tmp"
-                die "Rustup download failed"
-            fi
-            if [[ ! -s "$_rustup_tmp" ]]; then
-                rm -f -- "$_rustup_tmp"
-                die "Rustup installer is empty"
-            fi
-            # Verify SHA-256 checksum (TOFU via HTTPS, no GPG since rustup 1.26.0)
-            _rustup_sha="$(mktemp /tmp/rustup-sha-XXXXXXXXXX)" || { warn "Cannot create checksum tmpfile"; _rustup_sha=""; }
-            if [[ -n "$_rustup_sha" ]]; then
-                if curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 30 \
-                    "https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init.sha256" \
-                    -o "$_rustup_sha" 2>/dev/null && [[ -s "$_rustup_sha" ]]; then
-                    _expected="$(awk '{print $1}' "$_rustup_sha")"
-                    _actual="$(sha256sum "$_rustup_tmp" | awk '{print $1}')"
-                    if [[ "$_expected" != "$_actual" ]]; then
-                        rm -f -- "$_rustup_tmp" "$_rustup_sha"
-                        die "rustup-init SHA-256 mismatch: expected ${_expected}, got ${_actual}"
-                    fi
-                    log "rustup-init SHA-256 verified: ${_actual}"
-                else
-                    warn "Cannot download rustup checksum — proceeding with TOFU"
-                fi
-                rm -f -- "$_rustup_sha"
-            else
-                warn "Cannot create checksum tmpfile — proceeding with TOFU"
-            fi
-            chmod +x "$_rustup_tmp" || { rm -f -- "$_rustup_tmp"; die "Cannot make rustup-init executable (noexec mount?)"; }
-            run "$_rustup_tmp" -y --default-toolchain stable || die "Rustup installer failed"
-            rm -f -- "$_rustup_tmp"
-            unset _rustup_tmp _rustup_sha _expected _actual
-        fi
-
-        if [[ -f "${HOME}/.cargo/env" ]]; then
-            # shellcheck source=/dev/null
-            source "${HOME}/.cargo/env" || warn "Failed to source ${HOME}/.cargo/env — PATH may not include cargo/rustc"
-        fi
-    fi
-
-    log "rustc version: $(timeout 3 rustc --version 2>/dev/null || echo 'not installed')"
-    log "cargo version: $(timeout 3 cargo --version 2>/dev/null || echo 'not installed')"
-
-    set_checkpoint 10
-    log "Step 10 complete."
-fi
-# Step 11: Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)
-if should_run_step 11; then
-    step_banner 11 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
+# Step 9: Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)
+if should_run_step 9; then
+    step_banner 9 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
 
     # 11a. Install linux-sysctl-defaults (Trixie only — provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
     _sysctl_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
@@ -1870,11 +1733,6 @@ _ry_crostini_path_prepend() {
     esac
 }
 
-# Cargo/Rust
-[ -d "$HOME/.cargo/bin" ] && _ry_crostini_path_prepend "$HOME/.cargo/bin"
-# Limit cargo parallel jobs — 4 GB RAM constraint
-export CARGO_BUILD_JOBS=2
-
 # Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _ry_crostini_path_prepend "$HOME/.local/bin"
 
@@ -1956,73 +1814,23 @@ MEMEOF
     fi
 
     unset PROFILE_D MEM_CONF
-    set_checkpoint 11
-    log "Step 11 complete."
+    set_checkpoint 9
+    log "Step 9 complete."
 fi
-# Step 12: Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned)
-if should_run_step 12; then
-    step_banner 12 "Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned)"
-
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y flatpak || warn "flatpak install failed"
-    if $DRY_RUN; then
-        # In dry-run, apt install is a no-op so flatpak binary won't exist; always trace the planned remote-add.
-        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-        run flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-    elif command -v flatpak &>/dev/null; then
-        # System-level remote (may fail due to polkit in Crostini — non-fatal)
-        run sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "System Flathub remote add failed (polkit) — user remote below"
-        # User-level remote (no polkit needed; required for --user installs)
-        run flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || warn "User Flathub remote add failed"
-        log "Flatpak installed with Flathub remote."
-    else
-        warn "flatpak binary not available — skipping Flathub remote"
-    fi
-    if ! $DRY_RUN; then
-        # Pin Freedesktop Platform 24.08 — ≥25.08 crashes on Crostini (Mesa Zink incompatibility)
-        if command -v flatpak &>/dev/null; then
-            run flatpak install --user --noninteractive -y flathub org.freedesktop.Platform//24.08 \
-                || warn "Freedesktop Platform 24.08 install failed — pin per-app with: flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl <app-id>"
-        fi
-    else
-        log "[DRY-RUN] flatpak install --user org.freedesktop.Platform//24.08"
-    fi
-    log "Install apps: flatpak install flathub <app-id>"
-
-    set_checkpoint 12
-    log "Step 12 complete."
-fi
-# Step 13: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
-if should_run_step 13; then
-    step_banner 13 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)"
+# Step 10: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
+if should_run_step 10; then
+    step_banner 10 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)"
 
     # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM innoextract: extract GOG/Inno Setup Windows installers without Wine
     install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm innoextract || warn "Some gaming packages failed"
 
-    # RetroArch via Flatpak (aarch64 confirmed on Flathub) User-mode install: system-mode requires polkit (flatpak-system-helper) which is blocked in Crostini containers.
-    if $DRY_RUN; then
-        # In dry-run, flatpak may not exist (apt install was a no-op); always trace.
-        run flatpak install --user --noninteractive -y flathub org.libretro.RetroArch
-    elif command -v flatpak &>/dev/null; then
-        run flatpak install --user --noninteractive -y flathub org.libretro.RetroArch || warn "RetroArch Flatpak install failed"
-    else
-        warn "flatpak not available — skip RetroArch (install flatpak first)"
-    fi
-
-    # RetroArch Flatpak environment overrides — sandbox does not inherit host env (§5.5.1)
-    if ! $DRY_RUN && timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
-        run flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch || true
-        run flatpak override --user --env=MESA_LOADER_DRIVER_OVERRIDE=virgl org.libretro.RetroArch || true
-        run flatpak override --user --env=MESA_NO_ERROR=1 org.libretro.RetroArch || true
-        run flatpak override --user --env=EGL_PLATFORM=wayland org.libretro.RetroArch || true
-        log "RetroArch Flatpak Mesa overrides applied"
-    elif $DRY_RUN; then
-        log "[DRY-RUN] flatpak override --user --env=GALLIUM_DRIVER=virgl org.libretro.RetroArch (+ 3 more)"
-    fi
+    # RetroArch multi-system emulator — native arm64 Debian package
+    install_pkgs_best_effort retroarch retroarch-assets || warn "RetroArch install failed"
 
     # RetroArch default config (§5.5.2)
-    _RA_CFG="${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"
+    _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"
     if [[ ! -f "$_RA_CFG" ]]; then
-        run mkdir -p "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch" || true
+        run mkdir -p "${HOME}/.config/retroarch" || true
         write_file_private "$_RA_CFG" <<'RACFG'
 # RetroArch Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2100,10 +1908,10 @@ SVMCFG
         else
             warn "innoextract not found"
         fi
-        if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
-            log "RetroArch Flatpak: installed ✓"
+        if command -v retroarch &>/dev/null; then
+            log "RetroArch: installed ✓"
         else
-            warn "RetroArch Flatpak not detected"
+            warn "RetroArch not found"
         fi
     fi
 
@@ -2340,36 +2148,13 @@ GOGWRAP
     fi
     unset _GOG_EXTRACT
 
-    set_checkpoint 13
-    log "Step 13 complete."
+    set_checkpoint 10
+    log "Step 10 complete."
 fi
-# Step 14: Container backup (--interactive)
-if should_run_step 14; then
-    step_banner 14 "Container backup (--interactive)"
-
-    if ! $DRY_RUN && ! $UNATTENDED; then
-        log "Opening ChromeOS backup page to snapshot this fresh setup..."
-        _prompt '%b  → Click "Backup" to save your Linux container state.%b\n' "$YELLOW" "$RESET"
-        _prompt '%b  → Do this periodically after major changes.%b\n\n' "$YELLOW" "$RESET"
-        open_chromeos_url "chrome://os-settings/crostini/exportImport"
-        sleep 2
-        _prompt '%bPress Enter after backup completes (or to skip)...%b' "$YELLOW" "$RESET"
-        read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN && ! $UNATTENDED; then
-        log "[DRY-RUN] would open chrome://os-settings/crostini/exportImport"
-    elif $DRY_RUN; then
-        log "[DRY-RUN] Skipping interactive backup prompt (unattended mode)"
-    else
-        log "Skipping interactive backup prompt (unattended mode)"
-    fi
-
-    set_checkpoint 14
-    log "Step 14 complete."
-fi
-# Step 15: Summary and verification
+# Step 11: Summary and verification
 _had_failures=0
-if should_run_step 15; then
-    step_banner 15 "Summary and verification"
+if should_run_step 11; then
+    step_banner 11 "Summary and verification"
 
     # Verification counters (used by check_tool / check_config below)
     _verify_pass=0
@@ -2379,7 +2164,6 @@ if should_run_step 15; then
     # Inject install-time paths into current shell for accurate verification.
     # /etc/profile.d/ry-crostini-env.sh is sourced on next login; not active here.
     [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
-    [[ -d "${HOME}/.cargo/bin" && ":${PATH}:" != *":${HOME}/.cargo/bin:"* ]] && PATH="${HOME}/.cargo/bin:${PATH}"
 
     if $DRY_RUN; then
         log "[DRY-RUN] Verification runs live (all checks are read-only)"
@@ -2511,10 +2295,10 @@ if should_run_step 15; then
     fi
     logprintf '\n'
 
-    # Installed tools — ordered by installation step (4→5→6→7→9→10→12→13)
+    # Installed tools — ordered by installation step (3→4→5→6→8→10)
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
-    # Step 4: core CLI utilities
+    # Step 3: core CLI utilities
     check_tool "vim"         vim
     check_tool "nano"        nano
     check_tool "curl"        curl
@@ -2537,48 +2321,32 @@ if should_run_step 15; then
     check_tool "7z"          7z
     check_tool "rename"      rename
     check_tool "wl-clipboard" wl-copy
-    # Step 4: Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
+    # Step 3: Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
     check_tool "fzf"         fzf
     check_tool "ripgrep"     rg
     if command -v fd &>/dev/null; then check_tool "fd" fd; else check_tool "fd" fdfind; fi
     if command -v bat &>/dev/null; then check_tool "bat" bat; else check_tool "bat" batcat; fi
-    # Step 5: build essentials
+    # Step 4: build essentials
     check_tool "gcc"         gcc
     check_tool "g++"         g++
     check_tool "make"        make
     check_tool "cmake"       cmake
     check_tool "pkg-config"  pkg-config
-    # Step 6: GPU + graphics
+    # Step 5: GPU + graphics
     check_tool "glxinfo"     glxinfo
     check_tool "vulkaninfo"  vulkaninfo
-    # Step 7: audio
+    # Step 6: audio
     check_tool "pactl"       pactl
     check_tool "pavucontrol" pavucontrol
-    # Step 9: GUI applications
-    check_tool "thunar"      thunar
-    check_tool "evince"      evince
-    check_tool "eog"         eog
-    check_tool "file-roller" file-roller
+    # Step 8: GUI essentials
     check_tool "xterm"       xterm
     if ! $MINIMAL; then
         check_tool "gnome-disks" gnome-disks
     fi
-    # Step 10: Rust
-    check_tool "rustc"       rustc
-    check_tool "cargo"       cargo
-    # Step 12: Flatpak
-    check_tool "flatpak"     flatpak
-    # Step 12: Freedesktop Platform runtime pin
-    if timeout 5 flatpak list --runtime --user 2>/dev/null | grep -q 'org\.freedesktop\.Platform.*24\.08'; then
-        logprintf '  %-14s %b✓%b  Flatpak runtime (user)\n' "fd-platform" "$GREEN" "$RESET"
-        ((_verify_pass++)) || true
-    else
-        logprintf '  %-14s %b⚠%b  24.08 not found — apps may use Zink (crash risk)\n' "fd-platform" "$YELLOW" "$RESET"
-        ((_verify_warn++)) || true
-    fi
-    # Step 13: gaming
+    # Step 10: gaming
     check_tool "dosbox"      dosbox
     check_tool "scummvm"     scummvm
+    check_tool "retroarch"   retroarch
     check_tool "innoextract" innoextract
     _box64_v_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ "$_box64_v_codename" == "trixie" ]]; then
@@ -2587,7 +2355,7 @@ if should_run_step 15; then
         logprintf '  %-14s %b—%b  Trixie only (skipped)\n' "box64" "$YELLOW" "$RESET"
     fi
     unset _box64_v_codename
-    # Step 13: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
+    # Step 10: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
     if ! $MINIMAL; then
         if command -v qemu-x86_64-static &>/dev/null; then
             check_tool "qemu-x86_64" qemu-x86_64-static
@@ -2600,23 +2368,6 @@ if should_run_step 15; then
     fi
     check_tool "run-x86" run-x86
     check_tool "gog-extract" gog-extract
-    if timeout 5 flatpak list --app --user 2>/dev/null | grep -q org.libretro.RetroArch; then
-        logprintf '  %-14s %b✓%b  Flatpak (user)\n' "retroarch" "$GREEN" "$RESET"
-        ((_verify_pass++)) || true
-        # Verify Mesa overrides (step 13 applies 4 env vars)
-        _ra_overrides="$(flatpak override --user --show org.libretro.RetroArch 2>/dev/null)" || true
-        if printf '%s\n' "$_ra_overrides" | grep -q 'MESA_LOADER_DRIVER_OVERRIDE=virgl'; then
-            logprintf '  %-14s %b✓%b  Mesa virgl override active\n' "" "$GREEN" "$RESET"
-            ((_verify_pass++)) || true
-        else
-            logprintf '  %-14s %b⚠%b  Mesa virgl override missing\n' "" "$YELLOW" "$RESET"
-            ((_verify_warn++)) || true
-        fi
-        unset _ra_overrides
-    else
-        logprintf '  %-14s %b✗%b  not found\n' "retroarch" "$RED" "$RESET"
-        ((_verify_fail++)) || true
-    fi
     logprintf '\n'
 
     # Config files
@@ -2626,7 +2377,7 @@ if should_run_step 15; then
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
-    # Step 8: Qt GTK platform themes (at least one should be present)
+    # Step 7: Qt GTK platform themes (at least one should be present)
     if dpkg -s qt5-gtk-platformtheme &>/dev/null || dpkg -s qt5-style-plugins &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt5 GTK platform theme"
         ((_verify_pass++)) || true
@@ -2678,7 +2429,7 @@ if should_run_step 15; then
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
-    check_config "${HOME}/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg"    "RetroArch config"
+    check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
@@ -2707,7 +2458,6 @@ if should_run_step 15; then
     # Reminders
     logprintf '%bReminders:%b\n' "$YELLOW" "$RESET"
     logprintf '  • Manual .deb downloads: always get the arm64 variant\n'
-    logprintf '  • Flatpak apps: flatpak install --user flathub <app-id>\n'
     logprintf '  • If GPU not active: reboot entire Chromebook (not just container)\n'
     logprintf '  • Gaming (box86/Wine/GOG/cloud): see README.md § Gaming\n'
     logprintf '\n'
@@ -2730,8 +2480,8 @@ if should_run_step 15; then
     fi
 
     if [[ "$_had_failures" -eq 0 ]]; then
-        # All checks passed — mark step 15 complete and remove checkpoint
-        set_checkpoint 15
+        # All checks passed — mark step 11 complete and remove checkpoint
+        set_checkpoint 11
         if $DRY_RUN; then
             log "[DRY-RUN] would remove checkpoint file"
         else
@@ -2739,11 +2489,11 @@ if should_run_step 15; then
             log "Checkpoint file removed. Setup fully complete."
         fi
     else
-        # Verification failed — keep checkpoint at 14 so re-run repeats step 15 only
+        # Verification failed — keep checkpoint at 10 so re-run repeats step 11 only
         log "Verification failures detected. Fix issues, then re-run or use --verify to re-check."
     fi
 
-    # Clean up step 15 variables
+    # Clean up step 11 variables
     unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
     unset _verify_pass _verify_fail _verify_warn
 
@@ -2758,7 +2508,7 @@ if should_run_step 15; then
     unset _now_epoch _elapsed
 
     logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
-    log "Step 15 complete."
+    log "Step 11 complete."
 fi
 
 if [[ "$_had_failures" -gt 0 ]]; then

@@ -4,6 +4,51 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.0.0  2026-03-27
+
+  Breaking:
+  - consolidate 15 steps to 11; checkpoint files from ≤6.0.1 are
+    incompatible — run --reset before upgrading
+  - merge step 1 (preflight) and step 2 (ChromeOS integration) into
+    single step 1; subsections relabeled 1a–1n
+  - remove step 10 (Rust stable via rustup): rustup installer, SHA-256
+    verification, EXIT trap cleanup (_rustup_tmp, _rustup_sha),
+    embedded profile ~/.cargo/bin PATH and CARGO_BUILD_JOBS=2,
+    verify PATH injection, check_tool rustc/cargo
+  - remove step 12 (Flatpak + Flathub): flatpak package install,
+    system/user Flathub remote, Freedesktop Platform 24.08 pin,
+    check_tool flatpak, runtime pin verification
+  - remove step 14 (Container backup): interactive backup prompt,
+    chrome://os-settings/crostini/exportImport open
+  - switch RetroArch from Flatpak (org.libretro.RetroArch) to native
+    arm64 Debian package (retroarch + retroarch-assets); config path
+    changed: ~/.var/app/org.libretro.RetroArch/config/retroarch/
+    → ~/.config/retroarch/; Flatpak Mesa virgl overrides removed
+    (native package inherits host environment)
+  - remove GUI apps: thunar, thunar-archive-plugin, tumbler, evince,
+    eog, file-roller; remove all MIME default associations (file
+    manager, PDF viewer, image viewer); ChromeOS handles these
+    natively via /mnt/chromeos shared folders
+  - step 8 renamed: "GUI applications" → "GUI essentials (xterm,
+    session support, fonts, icons)"
+
+  Renumbering (old → new):
+  - 1+2→1, 3→2, 4→3, 5→4, 6→5, 7→6, 8→7, 9→8, 11→9, 13→10, 15→11
+  - steps 10 (Rust), 12 (Flatpak), 14 (backup) removed
+
+  Updated:
+  - _PROGRESS_TOTAL 15→11
+  - --from-step bounds 1-15 → 1-11
+  - --verify deferred checkpoint 14→10
+  - verify comment refs: "step 15"→"step 11", "step 14"→"step 10"
+  - verify tool ordering comment updated to new numbering
+  - Flatpak reminder line removed from summary
+  - header NOTE: remove rustup tmpfs reference
+  - README: step table, version badge, config files written, prompt
+    count 7→6, compatibility section step refs, gaming section step
+    refs, known limitations step refs, Moonlight Flatpak ref removed,
+    PPSSPP Flatpak install hint removed
+
 6.0.1  2026-03-26
 
   Documentation:

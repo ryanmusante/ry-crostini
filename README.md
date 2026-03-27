@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-6.0.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.0.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -56,21 +56,17 @@ bash ry-crostini.sh --                           # stop processing options
 
 | # | Step |
 |---|------|
-| 1 | Preflight checks (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier) |
-| 2 | ChromeOS integration (GPU, mic, USB, folders, ports, disk; `--interactive`) |
-| 3 | System update (apt tuning; `--trixie` upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap) |
-| 4 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
-| 5 | Build essentials and development headers |
-| 6 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
-| 7 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning) |
-| 8 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
-| 9 | GUI applications (Thunar, Evince, Eye of GNOME, file-roller, xterm, fonts, MIME defaults) |
-| 10 | Rust stable aarch64 via rustup |
-| 11 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
-| 12 | Flatpak + Flathub (ARM64 app source, Freedesktop Platform 24.08 pinned) |
-| 13 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static) |
-| 14 | Container backup (`--interactive`) |
-| 15 | Summary and verification |
+| 1 | Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; `--interactive`) |
+| 2 | System update (apt tuning; `--trixie` upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap) |
+| 3 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
+| 4 | Build essentials and development headers |
+| 5 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
+| 6 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning) |
+| 7 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
+| 8 | GUI essentials (xterm, session support, fonts, icons) |
+| 9 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
+| 10 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static) |
+| 11 | Summary and verification |
 
 ## Config files written
 
@@ -79,8 +75,8 @@ theme), PipeWire gaming quantum + pulse overrides (user-level KVM VM override),
 sommelier scaling + Super key passthrough, Qt 5/6 theming,
 GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
 fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
-vm.max\_map\_count, sysctl persistence service, shell env + PATH +
-CARGO\_BUILD\_JOBS, /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
+vm.max\_map\_count, sysctl persistence service, shell env + PATH,
+/tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
 pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
 run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
 x86/x86\_64 binaries), gog-extract wrapper (`~/.local/bin/gog-extract` — extracts
@@ -88,8 +84,8 @@ GOG Windows .exe and Linux .sh installers without Wine). Memory tuning attempted
 
 ## Compatibility
 
-Step 3 runs `apt update && apt upgrade` on the current release (Bookworm
-by default). With `--trixie`, step 3 upgrades to Debian 13 (Trixie) by
+Step 2 runs `apt update && apt upgrade` on the current release (Bookworm
+by default). With `--trixie`, step 2 upgrades to Debian 13 (Trixie) by
 rewriting `/etc/apt/sources.list` and running `apt full-upgrade`. Backups
 are saved with a `.pre-trixie` suffix under `/etc/apt/`.
 `VERSION_CODENAME` is validated before any rewrite. Already-Trixie
@@ -101,12 +97,12 @@ The Crostini-managed `cros.list` is also updated (with `--trixie`) but
 may reset on container restart (expected ChromeOS behavior). After
 `apt modernize-sources`, any duplicate `cros.list` is removed if a
 `.sources` equivalent was created. Trixie mounts `/tmp` as tmpfs;
-step 3 caps it at 512 MB to prevent OOM.
+step 2 caps it at 512 MB to prevent OOM.
 
 ## Features
 
-- **Unattended by default** — all 7 prompts auto-answered; `--interactive` restores them
-- **Checkpoint resume** — re-run to continue from last completed step; verification failures keep checkpoint at step 14 so re-run repeats only verification
+- **Unattended by default** — all 6 prompts auto-answered; `--interactive` restores them
+- **Checkpoint resume** — re-run to continue from last completed step; verification failures keep checkpoint at step 10 so re-run repeats only verification
 - **Exit codes** — `0` on success, `1` on verification failure or fatal error
 - **`--dry-run`** — zero side effects, zero network, zero interaction
 - **`--minimal`** — skip heavy optional packages for RAM-constrained devices
@@ -126,7 +122,7 @@ no Vulkan device is enumerated. Vulkan-only games and apps will not run.
 
 **Sommelier is not running during install.** Sommelier (the Wayland/X11
 bridge) is started by the container login process, not inside a running
-shell. Step 15 verification reports this as a warning and prompts a terminal
+shell. Step 11 verification reports this as a warning and prompts a terminal
 restart. Closing and reopening the Terminal app is all that is required.
 
 **sysctl keys are partially read-only in Crostini.** `fs.inotify.max_user_watches`
@@ -141,16 +137,12 @@ Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_coun
 4 GB RAM + virgl. Use [GeForce NOW](https://play.geforcenow.com) or
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
 
-Flatpak apps with Freedesktop Platform ≥25.08 may crash (Mesa Zink +
-virgl incompatibility; see zen-browser/desktop#12276). Step 12 pins
-24.08; for stubborn apps: `flatpak override --user
---env=MESA_LOADER_DRIVER_OVERRIDE=virgl <app-id>`. Flatpak uses `--user`
-mode (system-mode blocked by polkit). The `#crostini-multi-container`
-flag expires at milestone 140 (Baguette replaces it).
+The `#crostini-multi-container` flag expires at milestone 140 (Baguette
+replaces it).
 
 ## Gaming
 
-Step 13 installs DOSBox, ScummVM, RetroArch (Flatpak), FluidSynth GM
+Step 10 installs DOSBox, ScummVM, RetroArch, FluidSynth GM
 soundfont, innoextract (GOG/Inno Setup extractor),
 box64 (Trixie only — x86\_64 DynaRec JIT), and qemu-user-static
 (Bookworm) or qemu-user (Trixie) for TCG x86/x86\_64 + i386 emulation
@@ -167,7 +159,7 @@ ScummVM, box64, run-x86, and gog-extract on first install.
 | Marginal | RetroArch N64, box64+Wine 2D | 500 MB-2 GB | May lag or OOM |
 | No-go | Vulkan / D3D10+ / Steam | N/A | Use cloud gaming |
 
-### Native ARM64 (installed by step 13)
+### Native ARM64 (installed by step 10)
 
 **DOSBox** — classic DOS emulation (interpreter-only on ARM64).
 
@@ -175,10 +167,8 @@ ScummVM, box64, run-x86, and gog-extract on first install.
 `~/.config/scummvm/scummvm.ini` with OpenGL, pixel-perfect scaling, and
 FluidSynth.
 
-**RetroArch** — multi-system emulator via Flatpak
-(`org.libretro.RetroArch`). Flatpak sandbox receives Mesa virgl overrides
-automatically. Config at
-`~/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg`.
+**RetroArch** — multi-system emulator (native arm64 Debian package).
+Config at `~/.config/retroarch/retroarch.cfg`.
 
 ### RetroArch recommended cores
 
@@ -190,7 +180,7 @@ automatically. Config at
 | GBA | mGBA | Core | ARM64-optimized |
 | PSX | pcsx_rearmed | Core | ARM NEON dynarec, software renderer (avoids virgl overhead) |
 | N64 | mupen64plus-next | Core | GLideN64 with GLES renderer; may struggle at 4 GB |
-| PSP | PPSSPP | Core | Install via RetroArch Online Updater; or `flatpak install --user flathub org.ppsspp.PPSSPP` for standalone |
+| PSP | PPSSPP | Core | Install via RetroArch Online Updater |
 | DS | melonDS DS | Core | ARM64 builds confirmed (v1.1.8+) |
 | Dreamcast | Flycast | Core | ARM64 JIT; lighter titles at full speed |
 
@@ -221,11 +211,11 @@ run_ahead_secondary_instance = "false"
 Never enable two-instance run-ahead on this hardware (doubles RAM usage per
 core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
-### x86 translation (step 13)
+### x86 translation (step 10)
 
 > **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game loads. Not recommended for RAM-intensive titles.
 
-**box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 13 on all releases.
+**box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 10 on all releases.
 
 **qemu-user-static** (Bookworm) / **qemu-user** (Trixie) is installed
 automatically (skipped with `--minimal`). Slower than box64 but provides
@@ -233,9 +223,9 @@ i386 support and works on Bookworm where box64 is not packaged.
 
 | Tool | Install | Performance | Notes |
 |------|---------|-------------|-------|
-| box64 | Step 13 (Trixie only) | Fast — ARM64 DynaRec | x86\_64 only; not in Bookworm repos |
-| qemu-user(-static) | Step 13 (Bookworm: qemu-user-static; Trixie: qemu-user) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; Bookworm: `qemu-x86_64-static`, Trixie: `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
-| box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 5 installs both |
+| box64 | Step 10 (Trixie only) | Fast — ARM64 DynaRec | x86\_64 only; not in Bookworm repos |
+| qemu-user(-static) | Step 10 (Bookworm: qemu-user-static; Trixie: qemu-user) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; Bookworm: `qemu-x86_64-static`, Trixie: `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
+| box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 4 installs both |
 
 `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
 and dispatches to box64 (preferred) or qemu as appropriate.
@@ -270,7 +260,7 @@ create a privileged container:
 
 ### GOG games
 
-Step 13 installs `innoextract` and writes the `gog-extract` wrapper
+Step 10 installs `innoextract` and writes the `gog-extract` wrapper
 (`~/.local/bin/gog-extract`) for extracting GOG game installers on Linux
 without Wine.
 
@@ -294,7 +284,7 @@ For multi-part GOG Windows installers with `.bin` RAR archives, ensure
 `unar` or `unrar` is in PATH (`sudo apt install unar`).
 
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
-has arm64 `.deb` releases (Flatpak is x86\_64-only; heavy at ~200-400 MB).
+has arm64 `.deb` releases.
 Alternative: download GOG `.sh` installers from [gog.com](https://www.gog.com)
 directly.
 
@@ -310,7 +300,7 @@ directly.
 
 | Client | Issue |
 |--------|-------|
-| Moonlight Qt | No arm64 .deb/Flatpak; software decode only |
+| Moonlight Qt | No arm64 .deb; software decode only |
 | Parsec | No ARM64 Linux support |
 | Steam Link | No ARM64 Linux support |
 
@@ -329,7 +319,6 @@ fc-match monospace              # fonts
 glxinfo | grep -i renderer       # should say "virgl", not "zink"
 printenv MESA_NO_ERROR           # should be 1
 pw-top                           # QUANT column should show 256
-flatpak override --user --show org.libretro.RetroArch | grep MESA_LOADER
 
 # x86 emulation (5.2.0+)
 run-x86 --help                   # wrapper available
