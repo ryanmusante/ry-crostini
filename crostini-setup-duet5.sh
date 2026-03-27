@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # crostini-setup-duet5.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 5.4.1
+# Version: 5.5.0
 # Date:    2026-03-26
-# Changes: harden preflight curl (--proto/--tlsv1.2); escape dot in locale.gen sed regex
+# Changes: fix verify PATH (FIX-1); fix sysctl exit-code gating (FIX-2); fix libavcodec dpkg conflict (FIX-3); fix 7z blank-line (FIX-4a); fix tool version flags (FIX-4b); demote sommelier to WARN (FIX-5)
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash crostini-setup-duet5.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -18,7 +18,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="crostini-setup-duet5.sh"
-readonly SCRIPT_VERSION="5.4.1"
+readonly SCRIPT_VERSION="5.5.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/crostini-setup-${_log_ts}.log"
@@ -409,11 +409,11 @@ declare -gA _TOOL_VER_FLAG=(
     [7z]="i"
     [tmux]="-V"
     [ssh]="-V"
-    [glxinfo]=""
+    [glxinfo]="--version"
     [xterm]="-v"
-    [gnome-disks]=""
-    [dosbox]=""
-    [vulkaninfo]=""
+    [gnome-disks]="--version"
+    [dosbox]="--version"
+    [vulkaninfo]="--version"
 )
 check_tool() {
     local name="$1" cmd="$2"
@@ -430,6 +430,11 @@ check_tool() {
             # Some tools (java, scummvm) output version to stderr; try stdout first
             # shellcheck disable=SC2086
             ver="$(timeout 3 "$cmd" $flag 2>/dev/null | head -1)" || true
+            # Some tools (e.g. 7z i on p7zip 16.02) emit a blank first line before the version banner.
+            if [[ -z "$ver" ]]; then
+                # shellcheck disable=SC2086
+                ver="$(timeout 3 "$cmd" $flag 2>/dev/null | grep -m1 .)" || true
+            fi
             if [[ -z "$ver" ]]; then
                 # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
                 local _raw
@@ -1244,6 +1249,11 @@ if should_run_step 7; then
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
     )
+    # Append libavcodec-extra here (same transaction as libasound2-plugins) so apt
+    # resolves the full dep graph at once and never installs then removes libavcodec59.
+    if ! $MINIMAL; then
+        AUDIO_PKGS+=(libavcodec-extra)
+    fi
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
@@ -1273,13 +1283,7 @@ if should_run_step 7; then
         log "[DRY-RUN] systemctl --user enable --now pipewire-pulse.socket"
     fi
 
-    # libavcodec-extra (~80 MB of codec libraries) — skip with --minimal
-    if ! $MINIMAL; then
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libavcodec-extra \
-            || warn "libavcodec-extra unavailable — media codec support may be limited"
-    else
-        log "Skipping libavcodec-extra (--minimal mode)"
-    fi
+    # libavcodec-extra is now included in AUDIO_PKGS above (same transaction).
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
@@ -1746,26 +1750,26 @@ vm.overcommit_memory=0
 # Prevent mmap failures in emulators, Wine, and box64
 vm.max_map_count=262144
 EOF
-        if run sudo sysctl -e --system; then
-            if ! $DRY_RUN; then
-                _inotify_val="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
-                if [[ "$_inotify_val" == "524288" ]]; then
-                    log "inotify watchers applied (524288) ✓"
-                else
-                    warn "inotify config written but value is ${_inotify_val:-unknown} (Termina VM may block writes)"
-                    warn "May take effect after container restart; if not, this is a Crostini limitation"
-                fi
-                unset _inotify_val
-                _overcommit_val="$(sysctl -n vm.overcommit_memory 2>/dev/null)" || true
-                if [[ "$_overcommit_val" == "0" ]]; then
-                    log "vm.overcommit_memory applied (0 — heuristic) ✓"
-                else
-                    warn "vm.overcommit_memory is ${_overcommit_val:-unknown} (may be read-only in this container)"
-                fi
-                unset _overcommit_val
+        # sysctl -e exits 1 in Crostini namespace even though fs.inotify IS writable.
+        # Do not gate read-back on exit code — always verify the writable key directly.
+        run sudo sysctl -e --system || true
+        if ! $DRY_RUN; then
+            _inotify_val="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
+            if [[ "$_inotify_val" == "524288" ]]; then
+                log "inotify watchers applied (524288) ✓"
+            elif [[ -n "$_inotify_val" ]]; then
+                warn "inotify config written; current value ${_inotify_val} (expected 524288 — may apply after container restart)"
+            else
+                warn "inotify.max_user_watches unreadable — Crostini kernel restriction"
             fi
-        else
-            warn "sysctl apply failed — inotify setting written to file but not active until reboot"
+            unset _inotify_val
+            _overcommit_val="$(sysctl -n vm.overcommit_memory 2>/dev/null)" || true
+            if [[ "$_overcommit_val" == "0" ]]; then
+                log "vm.overcommit_memory applied (0 — heuristic) ✓"
+            else
+                log "vm.overcommit_memory=${_overcommit_val:-read-only} (container namespace restriction — expected)"
+            fi
+            unset _overcommit_val
         fi
     else
         log "sysctl tuning already applied"
@@ -2373,6 +2377,11 @@ if should_run_step 15; then
     _verify_fail=0
     _verify_warn=0
 
+    # Inject install-time paths into current shell for accurate verification.
+    # /etc/profile.d/crostini-env.sh is sourced on next login; not active here.
+    [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
+    [[ -d "${HOME}/.cargo/bin" && ":${PATH}:" != *":${HOME}/.cargo/bin:"* ]] && PATH="${HOME}/.cargo/bin:${PATH}"
+
     if $DRY_RUN; then
         log "[DRY-RUN] Verification runs live (all checks are read-only)"
     fi
@@ -2447,8 +2456,8 @@ if should_run_step 15; then
         logprintf '  Sommelier:     %b✓%b running\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
     else
-        logprintf '  Sommelier:     %b✗%b not running — restart terminal\n' "$RED" "$RESET"
-        ((_verify_fail++)) || true
+        logprintf '  Sommelier:     %b⚠%b not running — restart terminal to activate\n' "$YELLOW" "$RESET"
+        ((_verify_warn++)) || true
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"

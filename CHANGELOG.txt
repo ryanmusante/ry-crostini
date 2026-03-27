@@ -4,6 +4,32 @@ CHANGELOG
 crostini-setup-duet5.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+5.5.0  2026-03-26
+
+  Bug fixes:
+  - FIX-1: inject ~/.local/bin and ~/.cargo/bin into PATH at step 15 verify
+    start so run-x86 and gog-extract resolve correctly without requiring a
+    new login shell; previously both reported ✗ not found and drove exit 1
+  - FIX-2: stop gating sysctl read-back on sysctl -e --system exit code;
+    ChromeOS kernel exits 1 even with -e when namespace-restricted keys are
+    denied; fs.inotify.max_user_watches IS writable and must be read back
+    unconditionally; eliminates spurious 'sysctl apply failed' warn and
+    'inotify unreadable' verify warning
+  - FIX-3: move libavcodec-extra into AUDIO_PKGS array so it installs in
+    the same apt transaction as libasound2-plugins; eliminates dpkg forced-
+    removal warning (libavcodec59 conflict) by letting apt resolve the full
+    dep graph at once; MINIMAL flag behaviour preserved via AUDIO_PKGS+=
+  - FIX-4a: add grep -m1 . fallback in check_tool stdout capture; 7z i on
+    p7zip 16.02 emits a blank first line before the version banner causing
+    head -1 to return empty and reporting version unverified
+  - FIX-4b: add --version flag for glxinfo, gnome-disks, dosbox, vulkaninfo
+    in _TOOL_VER_FLAG; empty entry caused check_tool to skip version probe
+    entirely and report version unverified for all four tools
+  - FIX-5: demote sommelier not-running from _verify_fail to _verify_warn;
+    sommelier starts on next container login, never during install session;
+    counting it as a failure drove exit 1 and FINISHED WITH N FAILURE(S)
+    on every clean first run
+
 5.4.1  2026-03-26
 
   Correctness:

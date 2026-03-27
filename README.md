@@ -1,6 +1,6 @@
 # crostini-setup-duet5
 
-![version](https://img.shields.io/badge/version-5.4.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-5.5.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -118,7 +118,22 @@ step 3 caps it at 512 MB to prevent OOM.
 - **Progress bar** — bottom-pinned step counter with percentage; resize-aware
 - **Full logging** — `~/crostini-setup-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
 
-## Limitations
+## Known limitations
+
+**Vulkan is unavailable.** The virgl paravirtualized GPU exposes OpenGL 4.3
+only. `vulkaninfo` installs and its version is reported in verification, but
+no Vulkan device is enumerated. Vulkan-only games and apps will not run.
+
+**Sommelier is not running during install.** Sommelier (the Wayland/X11
+bridge) is started by the container login process, not inside a running
+shell. Step 15 verification reports this as a warning and prompts a terminal
+restart. Closing and reopening the Terminal app is all that is required.
+
+**sysctl keys are partially read-only in Crostini.** `fs.inotify.max_user_watches`
+is writable and applied on first run. `vm.overcommit_memory`, `vm.max_map_count`,
+and `fs.protected_*` are blocked by the ChromeOS Termina VM namespace.
+`crostini-sysctl.service` retries on each container start.
+Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
 
 **Steam is x86-only.** Community translation layers
 ([box64](https://github.com/ptitSeb/box64) /
@@ -132,11 +147,6 @@ virgl incompatibility; see zen-browser/desktop#12276). Step 12 pins
 --env=MESA_LOADER_DRIVER_OVERRIDE=virgl <app-id>`. Flatpak uses `--user`
 mode (system-mode blocked by polkit). The `#crostini-multi-container`
 flag expires at milestone 140 (Baguette replaces it).
-
-`fs.inotify.max_user_watches`, `vm.overcommit_memory`, and
-`vm.max_map_count` are applied by `crostini-sysctl.service` on start,
-but the Termina VM may block writes.
-Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
 
 ## Gaming
 
@@ -308,7 +318,7 @@ directly.
 
 ```bash
 glxgears                        # GPU
-vulkaninfo --summary            # Vulkan
+vulkaninfo --summary            # Vulkan (reports version; no device on virgl)
 pactl info                      # audio
 pavucontrol                     # audio mixer (GUI)
 xdpyinfo | grep resolution      # display
