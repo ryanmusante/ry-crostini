@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.0.0
+# Version: 7.3.0
 # Date:    2026-03-27
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
-# Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
-# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
+# Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
+# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
-# NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
+# NOTE: Crostini may initially ship Bookworm; step 2 upgrades to Trixie. Package arrays use canonical (non-transitional) names.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
 
 set -euo pipefail
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.0.0"
+readonly SCRIPT_VERSION="7.3.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -38,7 +38,6 @@ fi
 DRY_RUN=false
 UNATTENDED=true
 MINIMAL=false
-UPGRADE_TRIXIE=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
@@ -408,7 +407,7 @@ declare -gA _TOOL_VER_FLAG=(
     [glxinfo]="--version"
     [xterm]="-v"
     [gnome-disks]="--version"
-    [dosbox]="--version"
+    [dosbox-x]="--version"
     [vulkaninfo]="--version"
 )
 check_tool() {
@@ -498,7 +497,6 @@ USAGE:
 OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
-    --trixie       Upgrade Bookworm to Trixie (default: stay on Bookworm)
     --from-step=N  Start (or restart) from step N (1-11; N=11 is same as --verify)
     --verify       Run only step 11 (summary and verification)
     --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
@@ -510,9 +508,9 @@ OPTIONS:
 STEPS PERFORMED:
      1  Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini,
         Debian version, disk, GPU, network, root, sommelier, mic, USB,
-        folders, ports; --interactive)
-     2  System update (apt tuning; --trixie upgrades Bookworm to Trixie
-        with cros pkg hold, deb822 migration, /tmp tmpfs cap)
+        folders, ports, disk-resize; --interactive)
+     2  System update (apt tuning, Trixie upgrade, cros pkg hold,
+        deb822 migration, /tmp tmpfs cap)
      3  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
         ripgrep, fd, fzf, bat, ...)
      4  Build essentials and development headers
@@ -524,8 +522,9 @@ STEPS PERFORMED:
      8  GUI essentials (xterm, session support, fonts, icons)
      9  Container resource tuning (sysctl, sysctl persistence service,
         locale, env, XDG, paths, memory)
-    10  Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth
-        soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
+    10  Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth
+        soundfont, innoextract/GOG, unrar/unar, box64,
+        qemu-user)
     11  Summary and verification
 
 CHECKPOINT:
@@ -567,7 +566,6 @@ for arg in "$@"; do
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only."
             ;;
         --minimal) MINIMAL=true ;;
-        --trixie)  UPGRADE_TRIXIE=true ;;
         --help)    rm -f -- "$LOG_FILE" 2>/dev/null; usage ;;
         --version) rm -f -- "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
         --reset)
@@ -661,9 +659,9 @@ MESA_DISK_CACHE_SINGLE_FILE=1
 EOF
 }
 
-# Step 1: Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; --interactive)
+# Step 1: Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)
 if should_run_step 1; then
-    step_banner 1 "Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; --interactive)"
+    step_banner 1 "Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)"
 
     # 1a. Architecture
     CURRENT_ARCH="$(uname -m)"
@@ -883,9 +881,9 @@ if should_run_step 1; then
     set_checkpoint 1
     log "Step 1 complete."
 fi
-# Step 2: System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)
+# Step 2: System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap)
 if should_run_step 2; then
-    step_banner 2 "System update (apt tuning; --trixie upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap)"
+    step_banner 2 "System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap)"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
@@ -903,121 +901,111 @@ EOF
     fi
     unset APT_PARALLEL
 
-    # 2a. Upgrade to Trixie if --trixie flag is set and still on Bookworm (or any pre-Trixie release)
+    # 2a. Upgrade to Trixie if not already running it
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
-    if $UPGRADE_TRIXIE; then
-        if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
-            log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
-            if $DRY_RUN; then
-                log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
-                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
-                log "[DRY-RUN] cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie (if exists)"
-                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list.d/cros.list (if exists)"
-                log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
-            else
-                # Back up sources before rewriting
-                if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
-                    die "Cannot back up /etc/apt/sources.list — aborting upgrade"
-                fi
-                # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
-                if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
-                    warn "sources.list rewrite failed — restoring backup"
-                    run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
-                        || die "Cannot restore sources.list backup — manual fix required"
-                    die "Trixie upgrade aborted"
-                fi
-                log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
-                # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
-                if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-                    run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
-                    if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
-                        log "Rewrote cros.list: ${_cur_codename} → trixie"
-                        warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
-                        warn "Debian repos in sources.list are permanent — only cros-packages affected"
-                    else
-                        warn "cros.list rewrite failed — continuing (non-fatal)"
-                    fi
-                fi
-                # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
-                for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-                    [[ -f "$_sfile" ]] || continue
-                    if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
-                        _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
-                        run sudo cp -- "$_sfile" "$_sfile_bak" \
-                            || { warn "Cannot back up ${_sfile} — skipping"; continue; }
-                        run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
-                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
-                    fi
-                done
-                unset _sfile _sfile_bak
-            fi
-        elif [[ "$_cur_codename" == "trixie" ]]; then
-            log "Already running Trixie — no upgrade needed"
+    if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
+        log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
+        if $DRY_RUN; then
+            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
+            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on cros.list and additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
         else
-            warn "Cannot determine current release codename — skipping Trixie upgrade"
+            # Back up sources before rewriting
+            if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+                die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+            fi
+            # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
+            if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+                warn "sources.list rewrite failed — restoring backup"
+                run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
+                    || die "Cannot restore sources.list backup — manual fix required"
+                die "Trixie upgrade aborted"
+            fi
+            log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
+            # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
+            if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
+                if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+                    log "Rewrote cros.list: ${_cur_codename} → trixie"
+                    warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
+                    warn "Debian repos in sources.list are permanent — only cros-packages affected"
+                else
+                    warn "cros.list rewrite failed — continuing (non-fatal)"
+                fi
+            fi
+            # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
+            for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                [[ -f "$_sfile" ]] || continue
+                if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
+                    _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
+                    run sudo cp -- "$_sfile" "$_sfile_bak" \
+                        || { warn "Cannot back up ${_sfile} — skipping"; continue; }
+                    run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
+                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                fi
+            done
+            unset _sfile _sfile_bak
         fi
+    elif [[ "$_cur_codename" == "trixie" ]]; then
+        log "Already running Trixie — no upgrade needed"
     else
-        log "Staying on ${_cur_codename:-current release} (use --trixie to upgrade to Debian 13)"
+        die "Cannot determine current release codename — aborting"
     fi
     unset _cur_codename
 
     # 2b. Update and upgrade
     # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS manages cros-guest-tools/sommelier via the Termina VM; upgrading them to Trixie versions can break the container lifecycle contract (garcon, vshd, maitred), causing the container to crash on next boot.
-    if $UPGRADE_TRIXIE; then
-        _CROS_HOLD_PKGS=()
-        for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
-                     cros-sftp cros-sommelier cros-sommelier-config \
-                     cros-wayland cros-pulse-config cros-apt-config; do
-            if dpkg -s "$_cpkg" &>/dev/null; then
-                _CROS_HOLD_PKGS+=("$_cpkg")
-            fi
-        done
-        if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
-            else
-                run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
-                    || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
-                log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
-            fi
+    _CROS_HOLD_PKGS=()
+    for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
+                 cros-sftp cros-sommelier cros-sommelier-config \
+                 cros-wayland cros-pulse-config cros-apt-config; do
+        if dpkg -s "$_cpkg" &>/dev/null; then
+            _CROS_HOLD_PKGS+=("$_cpkg")
         fi
-        unset _cpkg
+    done
+    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+        if $DRY_RUN; then
+            log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
+        else
+            run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
+                || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
+            log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
+        fi
     fi
+    unset _cpkg
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: accept package maintainer defaults for new conffiles, keep existing modified conffiles. Without these, dpkg can prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive (which sudo strips via env_reset unless sudoers has env_keep).
         run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
-        if $UPGRADE_TRIXIE; then
-            # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete old directory '/lib/...': Directory not empty". These are harmless artifacts of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles the conversion correctly; the warnings indicate leftover empty dirs that dpkg cannot remove because other packages still reference them temporarily.
-            log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
-            run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
-                -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-                || warn "apt-get full-upgrade had issues"
-        fi
+        # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete old directory '/lib/...': Directory not empty". These are harmless artifacts of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles the conversion correctly; the warnings indicate leftover empty dirs that dpkg cannot remove because other packages still reference them temporarily.
+        log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
+        run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
+            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            || warn "apt-get full-upgrade had issues"
     else
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
     # Unhold Crostini packages — restore normal apt behavior for future updates
-    if $UPGRADE_TRIXIE && [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt-mark unhold ${_CROS_HOLD_PKGS[*]}"
         else
             run sudo apt-mark unhold "${_CROS_HOLD_PKGS[@]}" || warn "apt-mark unhold failed"
         fi
     fi
-    if $UPGRADE_TRIXIE; then unset _CROS_HOLD_PKGS; fi
+    unset _CROS_HOLD_PKGS
 
     # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages, which can include Crostini integration configs that other packages depend on at next boot. Plain autoremove is safer — conffiles remain for inspection.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
-    # 2c. Verify upgrade landed on Trixie (only when --trixie was requested)
-    if $UPGRADE_TRIXIE && ! $DRY_RUN; then
+    # 2c. Verify upgrade landed on Trixie
+    if ! $DRY_RUN; then
         _post_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
         if [[ "$_post_codename" == "trixie" ]]; then
             log "Trixie upgrade verified: $(. /etc/os-release && printf '%s' "${PRETTY_NAME:-Debian 13}")"
@@ -1049,32 +1037,26 @@ TMPEOF
     fi
     unset _TMP_DROPIN
 
-    # 2e. Migrate APT sources to deb822 format — Trixie only. modernize-sources ships in apt 2.9.26+ (Trixie); Bookworm has apt 2.6.x which lacks the subcommand. Old .list format supported until 2029.
-    _mod_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-    if [[ "$_mod_codename" == "trixie" ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] apt -y modernize-sources"
-        elif apt --help 2>/dev/null | grep -q 'modernize-sources'; then
-            if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
-                log "APT sources migrated to deb822 format"
-                # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries.
-                if [[ -f /etc/apt/sources.list.d/cros.sources ]] && [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-                    if run sudo mv -- /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-modernize; then
-                        log "Removed duplicate cros.list (modernize-sources created cros.sources)"
-                    else
-                        warn "cros.list duplicate removal failed — both cros.list and cros.sources may exist"
-                    fi
+    # 2e. Migrate APT sources to deb822 format
+    if $DRY_RUN; then
+        log "[DRY-RUN] apt -y modernize-sources"
+    elif apt --help 2>/dev/null | grep -q 'modernize-sources'; then
+        if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
+            log "APT sources migrated to deb822 format"
+            # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries.
+            if [[ -f /etc/apt/sources.list.d/cros.sources ]] && [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+                if run sudo mv -- /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-modernize; then
+                    log "Removed duplicate cros.list (modernize-sources created cros.sources)"
+                else
+                    warn "cros.list duplicate removal failed — both cros.list and cros.sources may exist"
                 fi
-            else
-                warn "apt modernize-sources failed — old format still works"
             fi
         else
-            warn "apt modernize-sources not found on Trixie — apt may need upgrading"
+            warn "apt modernize-sources failed — old format still works"
         fi
     else
-        log "Skipping apt modernize-sources (Trixie-only, running ${_mod_codename:-unknown})"
+        warn "apt modernize-sources not available — apt may need upgrading"
     fi
-    unset _mod_codename
 
     set_checkpoint 2
     log "Step 2 complete."
@@ -1590,15 +1572,9 @@ fi
 if should_run_step 9; then
     step_banner 9 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
 
-    # 9a. Install linux-sysctl-defaults (Trixie only — provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
-    _sysctl_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-    if [[ "$_sysctl_codename" == "trixie" ]]; then
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
-            || warn "linux-sysctl-defaults unavailable on Trixie — ping permissions may require manual sysctl"
-    else
-        log "Skipping linux-sysctl-defaults (Trixie-only package, running ${_sysctl_codename:-unknown})"
-    fi
-    unset _sysctl_codename
+    # 9a. Install linux-sysctl-defaults (provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
+        || warn "linux-sysctl-defaults unavailable — ping permissions may require manual sysctl"
 
     # 9b. Increase inotify watchers (file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
@@ -1649,7 +1625,7 @@ EOF
         fi
     fi
 
-    # 11b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
+    # 9b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
     # @@WHY: -e suppresses "Invalid argument"/"Read-only file system" errors from container-unsupported keys (ping_group_range, unprivileged_userns_clone). Without -e, sysctl --system fails even when writable keys (fs.inotify.max_user_watches) applied successfully.
     _SYSCTL_SVC="/etc/systemd/system/ry-crostini-sysctl.service"
     if [[ ! -f "$_SYSCTL_SVC" ]]; then
@@ -1817,12 +1793,15 @@ MEMEOF
     set_checkpoint 9
     log "Step 9 complete."
 fi
-# Step 10: Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)
+# Step 10: Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)
 if should_run_step 10; then
-    step_banner 10 "Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static)"
+    step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)"
 
-    # Native ARM packages — classic DOSBox (interpreter-only on ARM64) fluid-soundfont-gm: General MIDI soundfont for DOSBox and ScummVM innoextract: extract GOG/Inno Setup Windows installers without Wine
-    install_pkgs_best_effort dosbox scummvm fluid-soundfont-gm innoextract || warn "Some gaming packages failed"
+    # Native ARM packages — DOSBox-X (Trixie; interpreter-only on ARM64), ScummVM, FluidSynth GM soundfont, innoextract (GOG/Inno Setup), unrar/unar (GOG multi-part .bin RAR archives)
+    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unrar unar || warn "Some gaming packages failed"
+
+    # DOSBox-X: actively maintained DOSBox fork with save-states, PC-98, MT-32, and CJK support.
+    install_pkgs_best_effort dosbox-x || warn "dosbox-x install failed"
 
     # RetroArch multi-system emulator — native arm64 Debian package
     install_pkgs_best_effort retroarch retroarch-assets || warn "RetroArch install failed"
@@ -1887,12 +1866,12 @@ SVMCFG
 
     # Verify (skip in dry-run — packages were not actually installed)
     if ! $DRY_RUN; then
-        if command -v dosbox &>/dev/null; then
-            _dosbox_ver="$(timeout 3 dosbox --version 2>/dev/null | head -1 || true)"
-            log "dosbox: ${_dosbox_ver:-installed} ✓"
+        if command -v dosbox-x &>/dev/null; then
+            _dosbox_ver="$(timeout 3 dosbox-x --version 2>/dev/null | head -1 || true)"
+            log "dosbox-x: ${_dosbox_ver:-installed} ✓"
             unset _dosbox_ver
         else
-            warn "dosbox not found"
+            warn "dosbox-x not found"
         fi
         if command -v scummvm &>/dev/null; then
             _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
@@ -1917,40 +1896,26 @@ SVMCFG
 
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
-    # box64: x86_64 userspace emulator with DynaRec — Trixie official repos only (not in Bookworm)
+    # box64: x86_64 userspace emulator with DynaRec
     # NOTE: binfmt-misc automatic exec requires a privileged LXC container; standard Crostini is
     # unprivileged. Use box64 explicitly: box64 ./program
-    _box64_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-    if [[ "$_box64_codename" == "trixie" ]]; then
-        if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
-            log "box64 installed ✓"
-        else
-            warn "box64 install failed — may not be available yet in this Trixie snapshot"
-        fi
+    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
+        log "box64 installed ✓"
     else
-        log "Skipping box64 (Trixie-only package, running ${_box64_codename:-unknown}) — build from source for Bookworm: https://github.com/ptitSeb/box64"
+        warn "box64 install failed"
     fi
-    unset _box64_codename
 
-    # qemu-user-static: x86/x86_64 emulation via TCG dynamic binary translation
-    # Fills gap on Bookworm (no box64 package) and adds i386 support on both.
+    # qemu-user: x86/x86_64 emulation via TCG dynamic binary translation
+    # Fills gap for i386 support (box64 is x86_64-only).
     # NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini —
-    # must invoke explicitly: qemu-x86_64-static ./program
-    # NOTE: Do NOT install binfmt-support (Bookworm) or qemu-user-binfmt (Trixie).
-    # Their postinst triggers systemd-binfmt / binfmt-support.service which fails
-    # with EPERM in unprivileged containers, leaving a failed unit in systemctl.
+    # must invoke explicitly: qemu-x86_64 ./program
+    # NOTE: Do NOT install qemu-user-binfmt. Its postinst triggers
+    # systemd-binfmt which fails with EPERM in unprivileged containers,
+    # leaving a failed unit in systemctl.
     if ! $MINIMAL; then
-        _qemu_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-        if [[ "$_qemu_codename" == "trixie" ]]; then
-            # Trixie: qemu-user provides dynamically-linked binaries (qemu-x86_64 etc.)
-            install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
-        else
-            # Bookworm: qemu-user-static provides statically-linked binaries
-            install_pkgs_best_effort qemu-user-static || warn "qemu-user-static install failed"
-        fi
-        unset _qemu_codename
+        install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
     else
-        log "Skipping qemu-user-static (--minimal)"
+        log "Skipping qemu-user (--minimal)"
     fi
 
     # Write ~/.box64rc with SC7180P-tuned defaults
@@ -1987,10 +1952,10 @@ RCEOF
     _RUN_X86="${HOME}/.local/bin/run-x86"
     if [[ ! -f "$_RUN_X86" ]]; then
         run mkdir -p "${HOME}/.local/bin" || true
-        write_file "$_RUN_X86" <<'WRAPPER'
+        write_file_private "$_RUN_X86" <<'WRAPPER'
 #!/usr/bin/env bash
 # run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini
-# Prefers box64 (DynaRec JIT) when available; falls back to qemu-user-static (TCG).
+# Prefers box64 (DynaRec JIT) when available; falls back to qemu-user (TCG).
 # Usage: run-x86 ./program [args...]
 # Managed by ry-crostini.sh — edit freely.
 
@@ -2039,33 +2004,29 @@ case "$arch" in
     x86_64)
         if command -v box64 &>/dev/null; then
             exec box64 "$@"
-        elif command -v qemu-x86_64-static &>/dev/null; then
-            exec qemu-x86_64-static "$@"
         elif command -v qemu-x86_64 &>/dev/null; then
             exec qemu-x86_64 "$@"
         fi
         ;;
     i386)
-        if command -v qemu-i386-static &>/dev/null; then
-            exec qemu-i386-static "$@"
-        elif command -v qemu-i386 &>/dev/null; then
+        if command -v qemu-i386 &>/dev/null; then
             exec qemu-i386 "$@"
         fi
         ;;
     "")
         if command -v box64 &>/dev/null; then
             exec box64 "$@"
-        elif command -v qemu-x86_64-static &>/dev/null; then
-            exec qemu-x86_64-static "$@"
+        elif command -v qemu-x86_64 &>/dev/null; then
+            exec qemu-x86_64 "$@"
         fi
         ;;
 esac
 
 printf 'run-x86: no suitable emulator found for %s (arch=%s)\n' "$prog" "${arch:-unknown}" >&2
-printf 'Install: sudo apt install qemu-user-static  (or qemu-user on Trixie)\n' >&2
+printf 'Install: sudo apt install qemu-user\n' >&2
 exit 1
 WRAPPER
-        if ! $DRY_RUN; then chmod +x "$_RUN_X86"; fi
+        if ! $DRY_RUN; then chmod 700 "$_RUN_X86"; fi
         log "Wrote ${_RUN_X86}"
     else
         log "run-x86 wrapper already exists — skipping"
@@ -2075,7 +2036,7 @@ WRAPPER
     # gog-extract: convenience wrapper — extracts GOG Windows .exe (Inno Setup) or Linux .sh (makeself) installers
     _GOG_EXTRACT="${HOME}/.local/bin/gog-extract"
     if [[ ! -f "$_GOG_EXTRACT" ]]; then
-        write_file "$_GOG_EXTRACT" <<'GOGWRAP'
+        write_file_private "$_GOG_EXTRACT" <<'GOGWRAP'
 #!/usr/bin/env bash
 # gog-extract — extract GOG game installers on ARM64 Linux without Wine
 # Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec)
@@ -2141,7 +2102,7 @@ case "$installer" in
         ;;
 esac
 GOGWRAP
-        if ! $DRY_RUN; then chmod +x "$_GOG_EXTRACT"; fi
+        if ! $DRY_RUN; then chmod 700 "$_GOG_EXTRACT"; fi
         log "Wrote ${_GOG_EXTRACT}"
     else
         log "gog-extract wrapper already exists — skipping"
@@ -2344,27 +2305,16 @@ if should_run_step 11; then
         check_tool "gnome-disks" gnome-disks
     fi
     # Step 10: gaming
-    check_tool "dosbox"      dosbox
+    check_tool "dosbox-x"    dosbox-x
     check_tool "scummvm"     scummvm
     check_tool "retroarch"   retroarch
     check_tool "innoextract" innoextract
-    _box64_v_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
-    if [[ "$_box64_v_codename" == "trixie" ]]; then
-        check_tool "box64" box64
-    else
-        logprintf '  %-14s %b—%b  Trixie only (skipped)\n' "box64" "$YELLOW" "$RESET"
-    fi
-    unset _box64_v_codename
-    # Step 10: qemu-user (binary name differs: Bookworm=qemu-x86_64-static, Trixie=qemu-x86_64)
+    check_tool "unrar"       unrar
+    check_tool "unar"        unar
+    check_tool "box64"       box64
+    # Step 10: qemu-user
     if ! $MINIMAL; then
-        if command -v qemu-x86_64-static &>/dev/null; then
-            check_tool "qemu-x86_64" qemu-x86_64-static
-        elif command -v qemu-x86_64 &>/dev/null; then
-            check_tool "qemu-x86_64" qemu-x86_64
-        else
-            logprintf '  %-14s %b✗%b  not found\n' "qemu-x86_64" "$RED" "$RESET"
-            ((_verify_fail++)) || true
-        fi
+        check_tool "qemu-x86_64" qemu-x86_64
     fi
     check_tool "run-x86" run-x86
     check_tool "gog-extract" gog-extract
@@ -2452,7 +2402,7 @@ if should_run_step 11; then
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU/Audio:   glxgears / vulkaninfo --summary / pactl info\n'
     logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
-    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox --version\n'
+    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox-x --version\n'
     logprintf '\n'
 
     # Reminders

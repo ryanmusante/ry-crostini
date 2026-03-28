@@ -1,12 +1,13 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.0.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.3.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
-(82QS0001US). Takes a fresh Debian Bookworm or Trixie container from zero to a fully
-configured desktop environment in one unattended run.
+(82QS0001US). Takes a fresh Debian container from zero to a fully
+configured Trixie (Debian 13) desktop environment in one unattended run.
+Bookworm containers are upgraded to Trixie automatically in step 2.
 
 ## Hardware
 
@@ -16,14 +17,13 @@ configured desktop environment in one unattended run.
 | GPU | Adreno 618 → virgl (paravirtualized) |
 | RAM / Storage | 4 GB LPDDR4x / 128 GB eMMC |
 | Display | 13.3" 1920×1080 OLED |
-| Container | Debian Bookworm/Trixie arm64, bash |
+| Container | Debian Trixie arm64, bash |
 
 ## Usage
 
 ```bash
-bash ry-crostini.sh                              # unattended (default, stays on Bookworm)
+bash ry-crostini.sh                              # unattended (default, upgrades to Trixie)
 bash ry-crostini.sh --interactive                # prompt for toggles
-bash ry-crostini.sh --trixie                     # upgrade Bookworm to Trixie (Debian 13)
 bash ry-crostini.sh --dry-run                    # preview, zero side effects
 bash ry-crostini.sh --minimal                    # skip heavy optional packages
 bash ry-crostini.sh --from-step=6                # resume from a specific step
@@ -56,8 +56,8 @@ bash ry-crostini.sh --                           # stop processing options
 
 | # | Step |
 |---|------|
-| 1 | Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports; `--interactive`) |
-| 2 | System update (apt tuning; `--trixie` upgrades Bookworm to Trixie with cros pkg hold, deb822 migration, /tmp tmpfs cap) |
+| 1 | Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive`) |
+| 2 | System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap) |
 | 3 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
 | 4 | Build essentials and development headers |
 | 5 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
@@ -65,7 +65,7 @@ bash ry-crostini.sh --                           # stop processing options
 | 7 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
 | 8 | GUI essentials (xterm, session support, fonts, icons) |
 | 9 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
-| 10 | Gaming packages (DOSBox, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, box64 [Trixie only], qemu-user-static) |
+| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user) |
 | 11 | Summary and verification |
 
 ## Config files written
@@ -84,17 +84,16 @@ GOG Windows .exe and Linux .sh installers without Wine). Memory tuning attempted
 
 ## Compatibility
 
-Step 2 runs `apt update && apt upgrade` on the current release (Bookworm
-by default). With `--trixie`, step 2 upgrades to Debian 13 (Trixie) by
-rewriting `/etc/apt/sources.list` and running `apt full-upgrade`. Backups
-are saved with a `.pre-trixie` suffix under `/etc/apt/`.
-`VERSION_CODENAME` is validated before any rewrite. Already-Trixie
-containers get a normal update/upgrade. Package arrays use canonical
-names that resolve on both releases (t64 transition is transparent on
-arm64).
+Step 2 upgrades the container to Debian 13 (Trixie) by rewriting
+`/etc/apt/sources.list` and running `apt full-upgrade`. Crostini
+lifecycle packages (`cros-guest-tools`, `cros-sommelier`, etc.) are held
+during the upgrade and unheld afterward. Backups are saved with a
+`.pre-trixie` suffix under `/etc/apt/`. `VERSION_CODENAME` is validated
+before any rewrite. Already-Trixie containers get a normal
+update/upgrade.
 
-The Crostini-managed `cros.list` is also updated (with `--trixie`) but
-may reset on container restart (expected ChromeOS behavior). After
+The Crostini-managed `cros.list` is also updated but may reset on
+container restart (expected ChromeOS behavior). After
 `apt modernize-sources`, any duplicate `cros.list` is removed if a
 `.sources` equivalent was created. Trixie mounts `/tmp` as tmpfs;
 step 2 caps it at 512 MB to prevent OOM.
@@ -142,18 +141,18 @@ replaces it).
 
 ## Gaming
 
-Step 10 installs DOSBox, ScummVM, RetroArch, FluidSynth GM
-soundfont, innoextract (GOG/Inno Setup extractor),
-box64 (Trixie only — x86\_64 DynaRec JIT), and qemu-user-static
-(Bookworm) or qemu-user (Trixie) for TCG x86/x86\_64 + i386 emulation
-(skipped with `--minimal`). Default config files are written for RetroArch,
-ScummVM, box64, run-x86, and gog-extract on first install.
+Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM
+soundfont, innoextract (GOG/Inno Setup extractor), unrar/unar (GOG
+multi-part RAR archives), box64 (x86\_64 DynaRec JIT),
+and qemu-user for TCG x86/x86\_64 + i386 emulation
+(skipped with `--minimal`). Default config files are written for
+RetroArch, ScummVM, box64, run-x86, and gog-extract on first install.
 
 ### Compatibility tiers
 
 | Tier | What runs | RAM | Examples |
 |------|-----------|-----|---------|
-| Excellent | ScummVM, DOSBox | < 200 MB | Monkey Island, DOOM, Ultima |
+| Excellent | ScummVM, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
 | Fair | RetroArch PSX/PSP | 300-500 MB | PS1 catalog, lighter PSP titles |
 | Marginal | RetroArch N64, box64+Wine 2D | 500 MB-2 GB | May lag or OOM |
@@ -161,7 +160,8 @@ ScummVM, box64, run-x86, and gog-extract on first install.
 
 ### Native ARM64 (installed by step 10)
 
-**DOSBox** — classic DOS emulation (interpreter-only on ARM64).
+**DOSBox-X** — comprehensive DOS emulator with save-states, PC-98, MT-32,
+and CJK support.
 
 **ScummVM** — 200+ native engine reimplementations. Config at
 `~/.config/scummvm/scummvm.ini` with OpenGL, pixel-perfect scaling, and
@@ -215,17 +215,15 @@ core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
 > **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game loads. Not recommended for RAM-intensive titles.
 
-**box64** is installed automatically on Trixie (official Debian package). A tuned `~/.box64rc` is written by step 10 on all releases.
+**box64** is installed automatically (official Debian package). A tuned `~/.box64rc` is written by step 10.
 
-**qemu-user-static** (Bookworm) / **qemu-user** (Trixie) is installed
-automatically (skipped with `--minimal`). Slower than box64 but provides
-i386 support and works on Bookworm where box64 is not packaged.
+**qemu-user** is installed automatically (skipped with `--minimal`).
+Slower than box64 but provides i386 support.
 
 | Tool | Install | Performance | Notes |
 |------|---------|-------------|-------|
-| box64 | Step 10 (Trixie only) | Fast — ARM64 DynaRec | x86\_64 only; not in Bookworm repos |
-| qemu-user(-static) | Step 10 (Bookworm: qemu-user-static; Trixie: qemu-user) | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; Bookworm: `qemu-x86_64-static`, Trixie: `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
-| box64 (source build) | see [github.com/ptitSeb/box64](https://github.com/ptitSeb/box64) | Fast — ARM64 DynaRec | Requires build-essential + cmake; step 4 installs both |
+| box64 | Step 10 | Fast — ARM64 DynaRec | x86\_64 only |
+| qemu-user | Step 10 | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
 
 `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
 and dispatches to box64 (preferred) or qemu as appropriate.
@@ -245,11 +243,6 @@ create a privileged container:
    ```
 3. Inside the new container, install binfmt support:
    ```bash
-   # Bookworm
-   sudo apt install qemu-user-static binfmt-support
-   sudo systemctl restart binfmt-support
-
-   # Trixie
    sudo apt install qemu-user qemu-user-binfmt
    sudo systemctl restart systemd-binfmt
    ```
@@ -280,11 +273,12 @@ gog-extract gog_baldurs_gate_enhanced_edition.sh       # extracts to ./gog_baldu
 # Game files land in data/noarch/game/
 ```
 
-For multi-part GOG Windows installers with `.bin` RAR archives, ensure
-`unar` or `unrar` is in PATH (`sudo apt install unar`).
+Multi-part GOG Windows installers with `.bin` RAR archives require
+`unrar` or `unar` (both installed by step 10).
 
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
-has arm64 `.deb` releases.
+provides Linux `.deb` releases (amd64 only — no native arm64 build; could
+run under box64 on Trixie but is untested on 4 GB RAM).
 Alternative: download GOG `.sh` installers from [gog.com](https://www.gog.com)
 directly.
 
@@ -322,7 +316,7 @@ pw-top                           # QUANT column should show 256
 
 # x86 emulation (5.2.0+)
 run-x86 --help                   # wrapper available
-qemu-x86_64-static --version     # Bookworm (or qemu-x86_64 on Trixie)
+qemu-x86_64 --version            # QEMU TCG emulator
 
 # GOG extraction (5.4.0+)
 innoextract --version            # Inno Setup extractor

@@ -4,6 +4,65 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.3.0  2026-03-27
+
+  Breaking:
+  - make Trixie upgrade mandatory; remove --trixie flag and
+    UPGRADE_TRIXIE variable; step 2 now always upgrades Bookworm
+    (or any pre-Trixie release) to Trixie with full-upgrade
+  - remove all Bookworm fallback paths: dosbox (replaced by
+    dosbox-x), qemu-user-static (replaced by qemu-user),
+    conditional box64/sysctl/deb822 codename checks
+  - remove Bookworm references from run-x86 wrapper
+    (qemu-x86_64-static, qemu-i386-static); wrapper now uses
+    qemu-x86_64 and qemu-i386 exclusively
+
+  Changes:
+  - simplify step 2: unconditional cros pkg hold/unhold, always
+    run full-upgrade, always run modernize-sources; remove
+    codename-conditional branches
+  - simplify step 9a: always install linux-sysctl-defaults
+    (no longer gated on Trixie codename check)
+  - simplify step 10: dosbox-x installed directly (no dosbox
+    fallback); box64 installed unconditionally; qemu-user
+    installed unconditionally (no codename switch)
+  - simplify step 11: direct check_tool calls for dosbox-x,
+    box64, qemu-x86_64 (no conditional logic or fallback probes)
+  - update README: mandatory Trixie in intro, hardware table,
+    usage examples, step table, compatibility section, gaming
+    section, x86 translation table, verify commands; remove all
+    Bookworm-specific language and --trixie references
+
+7.2.0  2026-03-27
+
+  Changes:
+  - add unrar and unar to step 10 gaming packages; required by
+    innoextract --gog for multi-part GOG Windows installers with
+    .bin RAR archives; previously documented as manual install
+  - add unrar and unar to step 11 verification (check_tool)
+  - fix README: Heroic Games Launcher does not publish arm64 .deb;
+    correct to "amd64 only" with box64 caveat
+
+7.1.0  2026-03-27
+
+  Changes:
+  - replace DOSBox 0.74 with DOSBox-X (save-states, PC-98, MT-32,
+    CJK, Windows 3.x/9x support); Trixie arm64 package; Bookworm
+    falls back to classic DOSBox automatically
+  - add dosbox-x to _TOOL_VER_FLAG; step 10 verification and step 11
+    check_tool prefer dosbox-x, fall back to dosbox
+  - update step 10 banner, usage(), README step table, gaming section,
+    compatibility tiers, and verify commands for DOSBox-X
+
+  Fixes (from 7.0.1):
+  - fix stale comment label: "# 11b2." → "# 9b2." inside step 9
+    (leftover from pre-7.0 15-step layout)
+  - add undocumented subsection 1o (disk-resize advisory) to step 1
+    banner, usage(), and README step table
+  - harden run-x86 and gog-extract file permissions: write_file (644)
+    → write_file_private (600) + chmod 700; eliminates brief
+    world-readable non-executable window during atomic write
+
 7.0.0  2026-03-27
 
   Breaking:
