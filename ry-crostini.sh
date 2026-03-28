@@ -6,7 +6,7 @@
 # Target:  Debian Bookworm or Trixie container under ChromeOS Crostini
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--trixie] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may ship Bookworm or Trixie. Package arrays use canonical (non-transitional) names that resolve on both.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
@@ -676,12 +676,12 @@ if should_run_step 1; then
     fi
     log "Architecture: ${CURRENT_ARCH} ✓"
 
-    # 1a2. Bash version (mapfile, PIPESTATUS, local -a require bash 4+; 5.0 for consistency)
+    # 1b. Bash version (mapfile, PIPESTATUS, local -a require bash 4+; 5.0 for consistency)
     if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
         die "Requires bash 5.0+ (got ${BASH_VERSION:-unknown}). Crostini ships bash 5.x by default."
     fi
 
-    # 1b. Crostini container detection
+    # 1c. Crostini container detection
     if [[ -f /dev/.cros_milestone ]]; then
         log "ChromeOS milestone: $(cat /dev/.cros_milestone) ✓"
     elif [[ -d /mnt/chromeos ]]; then
@@ -690,7 +690,7 @@ if should_run_step 1; then
         warn "Cannot confirm Crostini environment. Proceeding anyway."
     fi
 
-    # 1c. Debian version
+    # 1d. Debian version
     if [[ -f /etc/os-release ]]; then
         _os_pretty="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
         _os_codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-bookworm}")"
@@ -704,7 +704,7 @@ if should_run_step 1; then
         _os_codename="bookworm"
     fi
 
-    # 1d. Disk space check (need at least 2 GB free)
+    # 1e. Disk space check (need at least 2 GB free)
     AVAIL_KB="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ ! "$AVAIL_KB" =~ ^[0-9]+$ ]]; then
         die "Cannot determine available disk space (df returned '${AVAIL_KB:-empty}')"
@@ -715,7 +715,7 @@ if should_run_step 1; then
     fi
     log "Available disk: ${AVAIL_MB} MB ✓"
 
-    # 1e. GPU acceleration warning (disabled by default since ChromeOS 131)
+    # 1f. GPU acceleration warning (disabled by default since ChromeOS 131)
     if [[ ! -e /dev/dri/renderD128 ]]; then
         warn "IMPORTANT: GPU acceleration is disabled by default since ChromeOS 131."
         warn "Enable: chrome://flags#crostini-gpu-support → Enabled → full Chromebook reboot."
@@ -724,7 +724,7 @@ if should_run_step 1; then
         log "GPU render node: /dev/dri/renderD128 already active ✓"
     fi
 
-    # 1f. Network connectivity (uses detected codename for repo URL)
+    # 1g. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
     elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
@@ -733,7 +733,7 @@ if should_run_step 1; then
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
     fi
 
-    # 1g. Not running as root
+    # 1h. Not running as root
     if [[ "$EUID" -eq 0 ]]; then
         if $DRY_RUN; then
             warn "[DRY-RUN] Running as root. Would abort in live mode."
@@ -743,7 +743,7 @@ if should_run_step 1; then
     fi
     log "Running as user: $(whoami) ✓"
 
-    # 1h. Sommelier (Wayland bridge) — needed for all GUI apps
+    # 1i. Sommelier (Wayland bridge) — needed for all GUI apps
     if pgrep -x sommelier &>/dev/null; then
         log "Sommelier (Wayland bridge): running ✓"
     else
@@ -752,7 +752,7 @@ if should_run_step 1; then
 
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
 
-    # 1i. GPU acceleration (ChromeOS integration)
+    # 1j. GPU acceleration (ChromeOS integration)
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU acceleration: ALREADY ACTIVE ✓"
     else
@@ -782,7 +782,7 @@ if should_run_step 1; then
         fi
     fi
 
-    # 1j. Microphone access
+    # 1k. Microphone access
     if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
         log "Microphone capture device: detected ✓"
     else
@@ -809,7 +809,7 @@ if should_run_step 1; then
         fi
     fi
 
-    # 1k. USB device passthrough
+    # 1l. USB device passthrough
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening USB device management..."
         _prompt '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
@@ -821,7 +821,7 @@ if should_run_step 1; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
-    # 1l. Shared folders
+    # 1m. Shared folders
     if [[ -d /mnt/chromeos ]]; then
         SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)" || true
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
@@ -841,7 +841,7 @@ if should_run_step 1; then
         unset SHARED_COUNT
     fi
 
-    # 1m. Port forwarding
+    # 1n. Port forwarding
     if ! $DRY_RUN && ! $UNATTENDED; then
         log "Opening port forwarding settings..."
         _prompt '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
@@ -854,7 +854,7 @@ if should_run_step 1; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
-    # 1n. Disk size check
+    # 1o. Disk size check
     _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ "$_avail_raw" =~ ^[0-9]+$ ]]; then
         AVAIL_MB_NOW=$((_avail_raw / 1024))
@@ -903,7 +903,7 @@ EOF
     fi
     unset APT_PARALLEL
 
-    # 3a. Upgrade to Trixie if --trixie flag is set and still on Bookworm (or any pre-Trixie release)
+    # 2a. Upgrade to Trixie if --trixie flag is set and still on Bookworm (or any pre-Trixie release)
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
@@ -964,7 +964,7 @@ EOF
     fi
     unset _cur_codename
 
-    # 3b. Update and upgrade
+    # 2b. Update and upgrade
     # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS manages cros-guest-tools/sommelier via the Termina VM; upgrading them to Trixie versions can break the container lifecycle contract (garcon, vshd, maitred), causing the container to crash on next boot.
     if $UPGRADE_TRIXIE; then
         _CROS_HOLD_PKGS=()
@@ -1016,7 +1016,7 @@ EOF
     # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages, which can include Crostini integration configs that other packages depend on at next boot. Plain autoremove is safer — conffiles remain for inspection.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
-    # 3c. Verify upgrade landed on Trixie (only when --trixie was requested)
+    # 2c. Verify upgrade landed on Trixie (only when --trixie was requested)
     if $UPGRADE_TRIXIE && ! $DRY_RUN; then
         _post_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
         if [[ "$_post_codename" == "trixie" ]]; then
@@ -1028,7 +1028,7 @@ EOF
         unset _post_codename
     fi
 
-    # 3d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
+    # 2d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
     _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
     if [[ ! -f "$_TMP_DROPIN" ]]; then
         if $DRY_RUN; then
@@ -1049,7 +1049,7 @@ TMPEOF
     fi
     unset _TMP_DROPIN
 
-    # 3e. Migrate APT sources to deb822 format — Trixie only. modernize-sources ships in apt 2.9.26+ (Trixie); Bookworm has apt 2.6.x which lacks the subcommand. Old .list format supported until 2029.
+    # 2e. Migrate APT sources to deb822 format — Trixie only. modernize-sources ships in apt 2.9.26+ (Trixie); Bookworm has apt 2.6.x which lacks the subcommand. Old .list format supported until 2029.
     _mod_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ "$_mod_codename" == "trixie" ]]; then
         if $DRY_RUN; then
@@ -1282,7 +1282,7 @@ if should_run_step 6; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
-    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection that forces min-quantum=1024 (21.3 ms). See SPEC §5.2.
+    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection that forces min-quantum=1024 (21.3 ms).
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
@@ -1347,7 +1347,7 @@ if should_run_step 7; then
 
     # 13.3in FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
-    # 8a. Sommelier environment (controls Linux app scaling)
+    # 7a. Sommelier environment (controls Linux app scaling)
     SOMMELIER_ENV="${HOME}/.config/environment.d/sommelier.conf"
     if [[ ! -f "$SOMMELIER_ENV" ]]; then
         write_file "$SOMMELIER_ENV" <<'EOF'
@@ -1369,7 +1369,7 @@ EOF
         log "Sommelier env already exists — skipping"
     fi
 
-    # 8b. GTK 3 settings
+    # 7b. GTK 3 settings
     GTK3_SETTINGS="${HOME}/.config/gtk-3.0/settings.ini"
     if [[ ! -f "$GTK3_SETTINGS" ]]; then
         write_file "$GTK3_SETTINGS" <<'EOF'
@@ -1390,7 +1390,7 @@ EOF
         log "GTK 3 settings.ini already exists — skipping"
     fi
 
-    # 8c. GTK 4 settings
+    # 7c. GTK 4 settings
     GTK4_SETTINGS="${HOME}/.config/gtk-4.0/settings.ini"
     if [[ ! -f "$GTK4_SETTINGS" ]]; then
         write_file "$GTK4_SETTINGS" <<'EOF'
@@ -1410,7 +1410,7 @@ EOF
         log "GTK 4 settings.ini already exists — skipping"
     fi
 
-    # 8d. GTK 2 settings (legacy apps)
+    # 7d. GTK 2 settings (legacy apps)
     GTK2_RC="${HOME}/.gtkrc-2.0"
     if [[ ! -f "$GTK2_RC" ]]; then
         write_file "$GTK2_RC" <<'EOF'
@@ -1429,7 +1429,7 @@ EOF
         log ".gtkrc-2.0 already exists — skipping"
     fi
 
-    # 8e. Qt scaling and theming
+    # 7e. Qt scaling and theming
     QT_ENV="${HOME}/.config/environment.d/qt.conf"
     if [[ ! -f "$QT_ENV" ]]; then
         write_file "$QT_ENV" <<'EOF'
@@ -1452,7 +1452,7 @@ EOF
     install_pkgs_best_effort qt6-gtk-platformtheme || \
         warn "qt6-gtk-platformtheme not available — Qt6 apps may not follow dark theme"
 
-    # 8f. Xft / Xresources (for pure X11 apps)
+    # 7f. Xft / Xresources (for pure X11 apps)
     XRESOURCES="${HOME}/.Xresources"
     if [[ ! -f "$XRESOURCES" ]]; then
         write_file "$XRESOURCES" <<'EOF'
@@ -1481,7 +1481,7 @@ EOF
         fi
     fi
 
-    # 8g. Fontconfig (grayscale AA for OLED, Noto defaults)
+    # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
     if [[ ! -f "$FC_LOCAL" ]]; then
         write_file "$FC_LOCAL" <<'FCEOF'
@@ -1523,7 +1523,7 @@ FCEOF
         fi
     fi
 
-    # 8h. Cursor theme (ensure consistency across toolkits)
+    # 7h. Cursor theme (ensure consistency across toolkits)
     CURSOR_DIR="${HOME}/.icons/default"
     if [[ ! -f "${CURSOR_DIR}/index.theme" ]]; then
         write_file "${CURSOR_DIR}/index.theme" <<'EOF'
@@ -1590,7 +1590,7 @@ fi
 if should_run_step 9; then
     step_banner 9 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
 
-    # 11a. Install linux-sysctl-defaults (Trixie only — provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
+    # 9a. Install linux-sysctl-defaults (Trixie only — provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
     _sysctl_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ "$_sysctl_codename" == "trixie" ]]; then
         run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
@@ -1600,7 +1600,7 @@ if should_run_step 9; then
     fi
     unset _sysctl_codename
 
-    # 11b. Increase inotify watchers (file-heavy tools need this)
+    # 9b. Increase inotify watchers (file-heavy tools need this)
     if [[ ! -f "$SYSCTL_CONF" ]]; then
         write_file_sudo "$SYSCTL_CONF" <<'EOF'
 fs.inotify.max_user_watches=524288
@@ -1635,7 +1635,7 @@ EOF
         fi
     else
         log "sysctl tuning already applied"
-        # Upgrade path: append vm.max_map_count if absent (§6)
+        # Upgrade path: append vm.max_map_count if absent
         if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
             # Read existing content into variable first — avoids same-file read→write pipeline where cat failure yields an empty file.
             _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
@@ -1688,7 +1688,7 @@ SVCEOF
     fi
     unset _SYSCTL_SVC
 
-    # 11c. Set locale to en_US.UTF-8
+    # 9c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — if cp fails (disk full), proceeding to sed -i risks corrupting locale.gen with no rollback.
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
@@ -1713,7 +1713,7 @@ SVCEOF
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 11d. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 9d. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/ry-crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1742,7 +1742,7 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 11e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
+    # 9e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
     # NOTE: sysctl -e --system ignores read-only/unsupported keys. Verify: sysctl vm.swappiness vm.vfs_cache_pressure
     MEM_CONF="/etc/sysctl.d/99-ry-crostini-memory.conf"
     if [[ ! -f "$MEM_CONF" ]]; then
@@ -1767,7 +1767,7 @@ MEMEOF
         fi
     else
         log "Memory tuning config already exists"
-        # Upgrade path: change vfs_cache_pressure 150→50 (§6)
+        # Upgrade path: change vfs_cache_pressure 150→50
         if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
             # Read existing content into variable first — avoids same-file read→write pipeline where sed failure yields an empty file.
             _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
@@ -1802,7 +1802,7 @@ MEMEOF
         run sudo sysctl -e --system || warn "sysctl apply failed after overcommit_memory update"
     fi
 
-    # 11f. Ensure XDG dirs exist
+    # 9f. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
@@ -1827,7 +1827,7 @@ if should_run_step 10; then
     # RetroArch multi-system emulator — native arm64 Debian package
     install_pkgs_best_effort retroarch retroarch-assets || warn "RetroArch install failed"
 
-    # RetroArch default config (§5.5.2)
+    # RetroArch default config
     _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"
     if [[ ! -f "$_RA_CFG" ]]; then
         run mkdir -p "${HOME}/.config/retroarch" || true
@@ -1864,7 +1864,7 @@ RACFG
     fi
     unset _RA_CFG
 
-    # ScummVM default config (§5.6)
+    # ScummVM default config
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
     if [[ ! -f "$_SVM_CFG" ]]; then
         run mkdir -p "${HOME}/.config/scummvm" || true
