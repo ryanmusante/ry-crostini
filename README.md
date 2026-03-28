@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.4.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.4.2-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -122,8 +122,9 @@ no Vulkan device is enumerated. Vulkan-only games and apps will not run.
 
 **Sommelier is not running during install.** Sommelier (the Wayland/X11
 bridge) is started by the container login process, not inside a running
-shell. Step 11 verification reports this as a warning and prompts a terminal
-restart. Closing and reopening the Terminal app is all that is required.
+shell. Step 1 logs this as informational; step 11 verification reports it
+as a warning only if still not running at completion. Closing and reopening
+the Terminal app is all that is required.
 
 **sysctl keys are read-only in Crostini.** All kernel tuning parameters
 (`fs.inotify.max_user_watches`, `vm.max_map_count`, `vm.overcommit_memory`,

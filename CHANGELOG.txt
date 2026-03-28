@@ -4,6 +4,41 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.4.2  2026-03-28
+
+  Fixes:
+  - downgrade Sommelier preflight from warn() to log(): process is
+    not running during install by design (started by container login,
+    not by the running shell); message updated to "not yet active —
+    will start on terminal restart ✓"
+  - downgrade two cros.list NOTE messages from warn() to log():
+    "cros.list resets on container restart" and "Debian repos in
+    sources.list are permanent" are informational context, not errors
+  - suppress spurious "Command exited 100" warn for unrar install:
+    unrar (non-free) is unavailable on default Crostini sources and
+    the failure is fully expected; replace run() call with a direct
+    subshell that logs success or logs the fallback message without
+    routing through run()'s generic non-zero-exit warn path
+  - downgrade unrar step 11 check from ⚠/_verify_warn to
+    ✓/_verify_pass when unar is present: unar handles RAR4/RAR5
+    and GOG multi-part archives; absence of unrar is intentional
+    and not a degraded state
+  - fix dosbox-x emitting ⚠ "version unverified": remove dosbox-x
+    from _TOOL_VER_FLAG empty-flag map; --version produces a parseable
+    version string and the empty-flag workaround was never needed
+  - fix glxinfo and gnome-disks emitting ⚠ "version unverified":
+    both remain in _TOOL_VER_FLAG with flag=""; update check_tool()
+    to treat an explicit empty flag entry as "installed, no version
+    probe" and report ✓ (installed) / _verify_pass++ instead of
+    ⚠ (version unverified) / _verify_warn++; preserves the ability
+    to deliberately opt out of version probing for tools that have
+    no usable version flag
+  - net effect on a standard run: 0 [WARN] lines during execution
+    (was 5); verification totals: ~75 passed / 1 warning (only the
+    runtime Sommelier state check in step 11 summary, which is
+    correct until terminal restart)
+  - bump version to 7.4.2
+
 7.4.1  2026-03-28
 
   Fixes:

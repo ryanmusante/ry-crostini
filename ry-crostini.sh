@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.4.1
-# Date:    2026-03-27
+# Version: 7.4.2
+# Date:    2026-03-28
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.4.1"
+readonly SCRIPT_VERSION="7.4.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -428,7 +428,6 @@ declare -gA _TOOL_VER_FLAG=(
     [glxinfo]=""
     [xterm]="-v"
     [gnome-disks]=""
-    [dosbox-x]=""
     [vulkaninfo]="--version"
 )
 check_tool() {
@@ -480,8 +479,14 @@ check_tool() {
         fi
 
         if (( _bad )); then
-            logprintf '  %-14s %b⚠%b  version unverified (installed)\n' "$name" "$YELLOW" "$RESET"
-            ((_verify_warn++)) || true
+            if [[ -v _TOOL_VER_FLAG[$cmd] && -z "${_TOOL_VER_FLAG[$cmd]}" ]]; then
+                # Explicitly no version probe — tool is present and functional
+                logprintf '  %-14s %b✓%b  (installed)\n' "$name" "$GREEN" "$RESET"
+                ((_verify_pass++)) || true
+            else
+                logprintf '  %-14s %b⚠%b  version unverified (installed)\n' "$name" "$YELLOW" "$RESET"
+                ((_verify_warn++)) || true
+            fi
         else
             logprintf '  %-14s %b✓%b  %s\n' "$name" "$GREEN" "$RESET" "$ver"
             ((_verify_pass++)) || true
@@ -765,7 +770,7 @@ if should_run_step 1; then
     if pgrep -x sommelier &>/dev/null; then
         log "Sommelier (Wayland bridge): running ✓"
     else
-        warn "Sommelier not detected. GUI apps may not display until container restarts."
+        log "Sommelier not yet active — will start on terminal restart ✓"
     fi
 
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
@@ -950,8 +955,8 @@ EOF
                 run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
                 if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
                     log "Rewrote cros.list: ${_cur_codename} → trixie"
-                    warn "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
-                    warn "Debian repos in sources.list are permanent — only cros-packages affected"
+                    log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
+                    log "Debian repos in sources.list are permanent — only cros-packages affected"
                 else
                     warn "cros.list rewrite failed — continuing (non-fatal)"
                 fi
@@ -1711,8 +1716,11 @@ if should_run_step 10; then
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
     # Attempt non-free unrar separately; failure is non-fatal — unar covers the same use case.
     # To enable: sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar 2>/dev/null \
-        || warn "unrar not available (non-free not enabled) — unar will be used for RAR archives"
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
+        log "unrar installed ✓"
+    else
+        log "unrar not available (non-free not enabled) — unar will be used for RAR archives ✓"
+    fi
 
     # DOSBox-X: actively maintained DOSBox fork with save-states, PC-98, MT-32, and CJK support.
     install_pkgs_best_effort dosbox-x || warn "dosbox-x install failed"
@@ -2219,13 +2227,13 @@ if should_run_step 11; then
     check_tool "scummvm"     scummvm
     check_tool "retroarch"   retroarch
     check_tool "innoextract" innoextract
-    # unrar is in non-free; demote to warn when unar (functional equivalent) is present
+    # unrar is in non-free; when unar (functional equivalent) is present treat as pass
     if command -v unrar &>/dev/null; then
         check_tool "unrar"   unrar
     elif command -v unar &>/dev/null; then
-        logprintf '  %-14s %b⚠%b  not found — unar present; adequate for GOG/RAR4+RAR5\n' \
-            "unrar" "$YELLOW" "$RESET"
-        ((_verify_warn++)) || true
+        logprintf '  %-14s %b✓%b  not installed — unar present (adequate for GOG/RAR4+RAR5)\n' \
+            "unrar" "$GREEN" "$RESET"
+        ((_verify_pass++)) || true
     else
         logprintf '  %-14s %b✗%b  not found\n' "unrar" "$RED" "$RESET"
         ((_verify_fail++)) || true
