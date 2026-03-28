@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.3.0
+# Version: 7.4.1
 # Date:    2026-03-27
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,13 +17,12 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.3.0"
+readonly SCRIPT_VERSION="7.4.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.ry-crostini-checkpoint"
 readonly LOCK_FILE="${HOME}/.ry-crostini.lock"
-readonly SYSCTL_CONF="/etc/sysctl.d/99-ry-crostini-tuning.conf"
 unset _log_ts
 _start_epoch="$(date +%s)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly _START_EPOCH="$_start_epoch"
@@ -67,7 +66,12 @@ cleanup() {
         rmdir "$LOCK_FILE" 2>/dev/null || true
     fi
     if [[ "$rc" -ne 0 ]]; then
-        _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
+        if [[ "${_had_failures:-0}" -gt 0 ]]; then
+            # Exited due to verification failures — steps 1-10 are complete
+            _cleanup_warn "Script exited with code $rc. Verification failed. Fix issues above, then run: bash ry-crostini.sh --verify"
+        else
+            _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
+        fi
     fi
     # Re-raise caught signal for correct 128+N exit code to parent
     if [[ -n "${_received_signal:-}" ]]; then
@@ -344,6 +348,23 @@ write_file_private() {
     log "Wrote $dest (mode 600)"
 }
 
+# write_file_exec: atomic write stdin to path, mode 700. For user scripts/wrappers.
+write_file_exec() {
+    local dest="$1"
+    if $DRY_RUN; then
+        log "[DRY-RUN] write $dest"
+        cat > /dev/null
+        return 0
+    fi
+    mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
+    local tmp
+    tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
+    cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
+    chmod 700 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
+    mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
+    log "Wrote $dest (mode 700)"
+}
+
 # write_file_sudo: atomic write via sudo, respects dry-run. Output mode 644.
 write_file_sudo() {
     local dest="$1"
@@ -404,10 +425,10 @@ declare -gA _TOOL_VER_FLAG=(
     [7z]="i"
     [tmux]="-V"
     [ssh]="-V"
-    [glxinfo]="--version"
+    [glxinfo]=""
     [xterm]="-v"
-    [gnome-disks]="--version"
-    [dosbox-x]="--version"
+    [gnome-disks]=""
+    [dosbox-x]=""
     [vulkaninfo]="--version"
 )
 check_tool() {
@@ -520,8 +541,7 @@ STEPS PERFORMED:
      7  Display scaling and HiDPI (sommelier, Super key passthrough,
         GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
      8  GUI essentials (xterm, session support, fonts, icons)
-     9  Container resource tuning (sysctl, sysctl persistence service,
-        locale, env, XDG, paths, memory)
+     9  Container resource tuning (locale, env, XDG, paths)
     10  Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth
         soundfont, innoextract/GOG, unrar/unar, box64,
         qemu-user)
@@ -1058,6 +1078,41 @@ TMPEOF
         warn "apt modernize-sources not available — apt may need upgrading"
     fi
 
+    # 2f. Service to clean up stale cros.list after container restart
+    # ChromeOS regenerates /etc/apt/sources.list.d/cros.list on every container restart,
+    # restoring the original bookworm codename. When cros.sources (our persistent trixie
+    # version) already exists, the regenerated cros.list causes duplicate APT sources and
+    # potential version conflicts. This service removes the stale file early on each boot.
+    _CROS_PIN_SVC="/etc/systemd/system/ry-crostini-cros-pin.service"
+    if [[ ! -f "$_CROS_PIN_SVC" ]]; then
+        write_file_sudo "$_CROS_PIN_SVC" <<'CROSEOF'
+[Unit]
+Description=Remove stale cros.list when cros.sources is present
+DefaultDependencies=no
+Before=apt-daily.service apt-daily-upgrade.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c \
+    'if [ -f /etc/apt/sources.list.d/cros.sources ] && \
+        [ -f /etc/apt/sources.list.d/cros.list ]; then \
+        mv /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.regenerated; \
+    fi'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+CROSEOF
+        run sudo systemctl daemon-reload \
+            || warn "daemon-reload failed — ry-crostini-cros-pin.service enable may fail"
+        run sudo systemctl enable ry-crostini-cros-pin.service \
+            || warn "ry-crostini-cros-pin.service enable failed"
+        log "ry-crostini-cros-pin.service enabled (removes stale cros.list on container restart)"
+    else
+        log "ry-crostini-cros-pin.service already exists"
+    fi
+    unset _CROS_PIN_SVC
+
     set_checkpoint 2
     log "Step 2 complete."
 fi
@@ -1568,101 +1623,13 @@ if should_run_step 8; then
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)
+# Step 9: Container resource tuning (locale, env, XDG, paths)
+# NOTE: Crostini containers run in a locked-down kernel namespace; sysctl keys such as
+# fs.inotify.max_user_watches, vm.max_map_count, vm.overcommit_memory, and vm.swappiness
+# are all read-only from inside the container. Writing them to /etc/sysctl.d/ has no effect
+# and the sysctl service exits 1 on every boot. These settings have been removed.
 if should_run_step 9; then
-    step_banner 9 "Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory)"
-
-    # 9a. Install linux-sysctl-defaults (provides /usr/lib/sysctl.d/50-default.conf for unprivileged ping access via net.ipv4.ping_group_range)
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y linux-sysctl-defaults \
-        || warn "linux-sysctl-defaults unavailable — ping permissions may require manual sysctl"
-
-    # 9b. Increase inotify watchers (file-heavy tools need this)
-    if [[ ! -f "$SYSCTL_CONF" ]]; then
-        write_file_sudo "$SYSCTL_CONF" <<'EOF'
-fs.inotify.max_user_watches=524288
-# Heuristic overcommit (default) — kernel rejects clearly impossible allocations.
-# @@WHY: overcommit_memory=1 (always overcommit) on 4 GB RAM with no swap leads to
-# OOM-killer killing container lifecycle daemons (garcon, sommelier) → crash on boot.
-# Mode 0 still allows reasonable overcommit while rejecting pathological allocations.
-vm.overcommit_memory=0
-# Prevent mmap failures in emulators, Wine, and box64
-vm.max_map_count=262144
-EOF
-        # sysctl -e exits 1 in Crostini namespace even though fs.inotify IS writable.
-        # Do not gate read-back on exit code — always verify the writable key directly.
-        run sudo sysctl -e --system || true
-        if ! $DRY_RUN; then
-            _inotify_val="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
-            if [[ "$_inotify_val" == "524288" ]]; then
-                log "inotify watchers applied (524288) ✓"
-            elif [[ -n "$_inotify_val" ]]; then
-                warn "inotify config written; current value ${_inotify_val} (expected 524288 — may apply after container restart)"
-            else
-                warn "inotify.max_user_watches unreadable — Crostini kernel restriction"
-            fi
-            unset _inotify_val
-            _overcommit_val="$(sysctl -n vm.overcommit_memory 2>/dev/null)" || true
-            if [[ "$_overcommit_val" == "0" ]]; then
-                log "vm.overcommit_memory applied (0 — heuristic) ✓"
-            else
-                log "vm.overcommit_memory=${_overcommit_val:-read-only} (container namespace restriction — expected)"
-            fi
-            unset _overcommit_val
-        fi
-    else
-        log "sysctl tuning already applied"
-        # Upgrade path: append vm.max_map_count if absent
-        if ! grep -q 'vm.max_map_count' "$SYSCTL_CONF"; then
-            # Read existing content into variable first — avoids same-file read→write pipeline where cat failure yields an empty file.
-            _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
-            { printf '%s\n' "$_existing"
-              printf '%s\n%s\n' '# Prevent mmap failures in emulators, Wine, and box64' \
-                  'vm.max_map_count=262144'
-            } | write_file_sudo "$SYSCTL_CONF"
-            unset _existing
-            log "Appended vm.max_map_count to $SYSCTL_CONF"
-            run sudo sysctl -e --system || warn "sysctl apply failed after appending vm.max_map_count"
-        fi
-    fi
-
-    # 9b2. Sysctl startup persistence — Crostini containers may not run systemd-sysctl on start
-    # @@WHY: -e suppresses "Invalid argument"/"Read-only file system" errors from container-unsupported keys (ping_group_range, unprivileged_userns_clone). Without -e, sysctl --system fails even when writable keys (fs.inotify.max_user_watches) applied successfully.
-    _SYSCTL_SVC="/etc/systemd/system/ry-crostini-sysctl.service"
-    if [[ ! -f "$_SYSCTL_SVC" ]]; then
-        write_file_sudo "$_SYSCTL_SVC" <<'SVCEOF'
-[Unit]
-Description=Apply sysctl settings at container start
-After=systemd-sysctl.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/sbin/sysctl -e --system
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-        run sudo systemctl daemon-reload \
-            || warn "daemon-reload failed — service enable may fail"
-        run sudo systemctl enable ry-crostini-sysctl.service || warn "ry-crostini-sysctl.service enable failed"
-    else
-        log "ry-crostini-sysctl.service already exists"
-        # Upgrade path: add -e flag if missing (§4.10.5 — suppresses container-unsupported key errors)
-        if grep -q 'ExecStart=/usr/sbin/sysctl --system' "$_SYSCTL_SVC" 2>/dev/null; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] update ry-crostini-sysctl.service: sysctl --system → sysctl -e --system"
-            else
-                _existing="$(cat "$_SYSCTL_SVC")" || die "Cannot read $_SYSCTL_SVC for upgrade"
-                printf '%s\n' "$_existing" \
-                    | sed 's|ExecStart=/usr/sbin/sysctl --system|ExecStart=/usr/sbin/sysctl -e --system|' \
-                    | write_file_sudo "$_SYSCTL_SVC"
-                unset _existing
-                run sudo systemctl daemon-reload || warn "daemon-reload failed after sysctl service update"
-                log "Updated ry-crostini-sysctl.service: added -e flag (suppress container-unsupported key errors)"
-            fi
-        fi
-    fi
-    unset _SYSCTL_SVC
+    step_banner 9 "Container resource tuning (locale, env, XDG, paths)"
 
     # 9c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
@@ -1718,66 +1685,6 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 9e. Memory tuning — vm.* sysctls are read-only in Crostini; test before applying
-    # NOTE: sysctl -e --system ignores read-only/unsupported keys. Verify: sysctl vm.swappiness vm.vfs_cache_pressure
-    MEM_CONF="/etc/sysctl.d/99-ry-crostini-memory.conf"
-    if [[ ! -f "$MEM_CONF" ]]; then
-        if $DRY_RUN || [[ -w /proc/sys/vm/swappiness ]]; then
-            write_file_sudo "$MEM_CONF" <<'MEMEOF'
-# Memory tuning for 4 GB Duet 5 — managed by ry-crostini.sh
-# Keep kernel default swappiness — on 4 GB with no dedicated swap partition,
-# aggressive anti-swap (swappiness=10) starves page reclaim and triggers OOM.
-# @@WHY: The kernel's default (60) balances file cache vs anonymous pages.
-vm.swappiness=60
-# Retain filesystem metadata cache — reduces eMMC random reads
-# (150 was overly aggressive; 50 balances cache retention vs memory pressure)
-vm.vfs_cache_pressure=50
-# Lower dirty ratio thresholds — flush writes earlier on low-RAM device
-vm.dirty_ratio=10
-vm.dirty_background_ratio=5
-MEMEOF
-            run sudo sysctl -e --system || warn "memory sysctl apply failed"
-        else
-            warn "vm.swappiness is read-only in this container (expected in Crostini)"
-            warn "Memory tuning requires host-level (termina VM) access — skipping"
-        fi
-    else
-        log "Memory tuning config already exists"
-        # Upgrade path: change vfs_cache_pressure 150→50
-        if grep -q 'vfs_cache_pressure=150' "$MEM_CONF"; then
-            # Read existing content into variable first — avoids same-file read→write pipeline where sed failure yields an empty file.
-            _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
-            printf '%s\n' "$_existing" \
-                | sed -e 's/vfs_cache_pressure=150/vfs_cache_pressure=50/' \
-                      -e 's/More aggressive page cache reclaim under memory pressure/Retain filesystem metadata cache — reduces eMMC random reads/' \
-                | write_file_sudo "$MEM_CONF"
-            unset _existing
-            log "Updated vfs_cache_pressure: 150 → 50"
-            run sudo sysctl -e --system || warn "memory sysctl apply failed after vfs_cache_pressure update"
-        fi
-        # Upgrade path: change swappiness 10→60 (§4.10.5 — OOM fix) @@WHY: $ anchor prevents matching vm.swappiness=100 → vm.swappiness=600
-        if grep -q 'vm\.swappiness=10$' "$MEM_CONF"; then
-            _existing="$(cat "$MEM_CONF")" || die "Cannot read $MEM_CONF for upgrade"
-            printf '%s\n' "$_existing" \
-                | sed 's/vm\.swappiness=10$/vm.swappiness=60/' \
-                | write_file_sudo "$MEM_CONF"
-            unset _existing
-            log "Updated vm.swappiness: 10 → 60 (OOM mitigation)"
-            run sudo sysctl -e --system || warn "memory sysctl apply failed after swappiness update"
-        fi
-    fi
-
-    # Upgrade path: change overcommit_memory 1→0 in tuning conf (§4.10.5 — OOM fix) @@WHY: $ anchor prevents matching vm.overcommit_memory=10 (mode 2 = strict)
-    if [[ -f "$SYSCTL_CONF" ]] && grep -q 'vm\.overcommit_memory=1$' "$SYSCTL_CONF"; then
-        _existing="$(cat "$SYSCTL_CONF")" || die "Cannot read $SYSCTL_CONF for upgrade"
-        printf '%s\n' "$_existing" \
-            | sed 's/vm\.overcommit_memory=1$/vm.overcommit_memory=0/' \
-            | write_file_sudo "$SYSCTL_CONF"
-        unset _existing
-        log "Updated vm.overcommit_memory: 1 → 0 (OOM mitigation)"
-        run sudo sysctl -e --system || warn "sysctl apply failed after overcommit_memory update"
-    fi
-
     # 9f. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
         || warn "Cannot create XDG directories"
@@ -1789,7 +1696,7 @@ MEMEOF
         fi
     fi
 
-    unset PROFILE_D MEM_CONF
+    unset PROFILE_D
     set_checkpoint 9
     log "Step 9 complete."
 fi
@@ -1797,8 +1704,15 @@ fi
 if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)"
 
-    # Native ARM packages — DOSBox-X (Trixie; interpreter-only on ARM64), ScummVM, FluidSynth GM soundfont, innoextract (GOG/Inno Setup), unrar/unar (GOG multi-part .bin RAR archives)
-    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unrar unar || warn "Some gaming packages failed"
+    # Native ARM packages — DOSBox-X, ScummVM, FluidSynth GM, innoextract, unar.
+    # unrar (RARLAB) is in non-free and not available on default Crostini sources.
+    # unar handles RAR4/RAR5 including GOG multi-part archives — adequate replacement.
+    # innoextract --gog handles multi-part .bin extraction internally (v1.9+).
+    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
+    # Attempt non-free unrar separately; failure is non-fatal — unar covers the same use case.
+    # To enable: sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar 2>/dev/null \
+        || warn "unrar not available (non-free not enabled) — unar will be used for RAR archives"
 
     # DOSBox-X: actively maintained DOSBox fork with save-states, PC-98, MT-32, and CJK support.
     install_pkgs_best_effort dosbox-x || warn "dosbox-x install failed"
@@ -1952,7 +1866,7 @@ RCEOF
     _RUN_X86="${HOME}/.local/bin/run-x86"
     if [[ ! -f "$_RUN_X86" ]]; then
         run mkdir -p "${HOME}/.local/bin" || true
-        write_file_private "$_RUN_X86" <<'WRAPPER'
+        write_file_exec "$_RUN_X86" <<'WRAPPER'
 #!/usr/bin/env bash
 # run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini
 # Prefers box64 (DynaRec JIT) when available; falls back to qemu-user (TCG).
@@ -2026,8 +1940,6 @@ printf 'run-x86: no suitable emulator found for %s (arch=%s)\n' "$prog" "${arch:
 printf 'Install: sudo apt install qemu-user\n' >&2
 exit 1
 WRAPPER
-        if ! $DRY_RUN; then chmod 700 "$_RUN_X86"; fi
-        log "Wrote ${_RUN_X86}"
     else
         log "run-x86 wrapper already exists — skipping"
     fi
@@ -2036,7 +1948,7 @@ WRAPPER
     # gog-extract: convenience wrapper — extracts GOG Windows .exe (Inno Setup) or Linux .sh (makeself) installers
     _GOG_EXTRACT="${HOME}/.local/bin/gog-extract"
     if [[ ! -f "$_GOG_EXTRACT" ]]; then
-        write_file_private "$_GOG_EXTRACT" <<'GOGWRAP'
+        write_file_exec "$_GOG_EXTRACT" <<'GOGWRAP'
 #!/usr/bin/env bash
 # gog-extract — extract GOG game installers on ARM64 Linux without Wine
 # Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec)
@@ -2074,7 +1986,7 @@ case "$installer" in
             exit 1
         fi
         printf 'Extracting GOG Windows installer: %s\n' "$installer"
-        # --gog: handle multi-part .bin RAR archives (needs unrar/unar in PATH)
+        # --gog: handle multi-part .bin RAR archives (innoextract v1.9+ handles internally)
         # --exclude-temp: skip files deleted at end of install (temp extractors, etc.)
         innoextract --gog --exclude-temp -d "$outdir" -- "$installer"
         printf 'Extracted to: %s/\n' "$outdir"
@@ -2102,8 +2014,6 @@ case "$installer" in
         ;;
 esac
 GOGWRAP
-        if ! $DRY_RUN; then chmod 700 "$_GOG_EXTRACT"; fi
-        log "Wrote ${_GOG_EXTRACT}"
     else
         log "gog-extract wrapper already exists — skipping"
     fi
@@ -2309,7 +2219,17 @@ if should_run_step 11; then
     check_tool "scummvm"     scummvm
     check_tool "retroarch"   retroarch
     check_tool "innoextract" innoextract
-    check_tool "unrar"       unrar
+    # unrar is in non-free; demote to warn when unar (functional equivalent) is present
+    if command -v unrar &>/dev/null; then
+        check_tool "unrar"   unrar
+    elif command -v unar &>/dev/null; then
+        logprintf '  %-14s %b⚠%b  not found — unar present; adequate for GOG/RAR4+RAR5\n' \
+            "unrar" "$YELLOW" "$RESET"
+        ((_verify_warn++)) || true
+    else
+        logprintf '  %-14s %b✗%b  not found\n' "unrar" "$RED" "$RESET"
+        ((_verify_fail++)) || true
+    fi
     check_tool "unar"        unar
     check_tool "box64"       box64
     # Step 10: qemu-user
@@ -2349,30 +2269,6 @@ if should_run_step 11; then
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/ry-crostini-env.sh"                "Shell env + PATH"
-    check_config "/etc/sysctl.d/99-ry-crostini-tuning.conf"         "inotify + overcommit + max_map_count"
-    # @@WHY: check_config only tests file existence. For the sysctl service, verify it is actually enabled and check the one sysctl that IS writable in Crostini.
-    if [[ -f "/etc/systemd/system/ry-crostini-sysctl.service" ]]; then
-        if systemctl is-enabled --quiet ry-crostini-sysctl.service 2>/dev/null; then
-            logprintf '  %b✓%b  %-44s enabled\n' "$GREEN" "$RESET" "Sysctl persistence service"
-            ((_verify_pass++)) || true
-        else
-            logprintf '  %b⚠%b  %-44s not enabled\n' "$YELLOW" "$RESET" "Sysctl persistence service"
-            ((_verify_warn++)) || true
-        fi
-        # Runtime check: fs.inotify is writable in Crostini; vm.* is read-only
-        _inotify_live="$(sysctl -n fs.inotify.max_user_watches 2>/dev/null)" || true
-        if [[ "$_inotify_live" == "524288" ]]; then
-            logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "inotify.max_user_watches (runtime)" "$_inotify_live"
-            ((_verify_pass++)) || true
-        elif [[ -n "$_inotify_live" ]]; then
-            logprintf '  %b⚠%b  %-44s %s (expected 524288)\n' "$YELLOW" "$RESET" "inotify.max_user_watches (runtime)" "$_inotify_live"
-            ((_verify_warn++)) || true
-        else
-            logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "inotify.max_user_watches (runtime)" "unreadable"
-            ((_verify_warn++)) || true
-        fi
-        unset _inotify_live
-    fi
     if [[ -f "/etc/systemd/system/tmp.mount.d/override.conf" ]]; then
         check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
     fi
@@ -2384,12 +2280,6 @@ if should_run_step 11; then
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
     check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
-    if [[ -f "/etc/sysctl.d/99-ry-crostini-memory.conf" ]]; then
-        check_config "/etc/sysctl.d/99-ry-crostini-memory.conf"     "Memory tuning (4 GB)"
-    else
-        logprintf '  %b⚠%b  %-44s %s\n' "$YELLOW" "$RESET" "Memory tuning (4 GB)" "skipped (vm.* read-only in container)"
-        ((_verify_warn++)) || true
-    fi
     # PipeWire audio chain verification
     if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"

@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.3.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.4.1-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -57,15 +57,15 @@ bash ry-crostini.sh --                           # stop processing options
 | # | Step |
 |---|------|
 | 1 | Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive`) |
-| 2 | System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap) |
+| 2 | System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service) |
 | 3 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
 | 4 | Build essentials and development headers |
 | 5 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
 | 6 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning) |
 | 7 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
 | 8 | GUI essentials (xterm, session support, fonts, icons) |
-| 9 | Container resource tuning (sysctl, sysctl persistence service, locale, env, XDG, paths, memory) |
-| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user) |
+| 9 | Container resource tuning (locale, env, XDG, paths) |
+| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unar, box64, qemu-user) |
 | 11 | Summary and verification |
 
 ## Config files written
@@ -74,13 +74,12 @@ Apt download tuning, GPU env (EGL, Mesa virgl override, shader cache, GTK dark
 theme), PipeWire gaming quantum + pulse overrides (user-level KVM VM override),
 sommelier scaling + Super key passthrough, Qt 5/6 theming,
 GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
-fontconfig, Adwaita cursor, inotify watchers + vm.overcommit\_memory +
-vm.max\_map\_count, sysctl persistence service, shell env + PATH,
+fontconfig, Adwaita cursor, shell env + PATH,
 /tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
 pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
 run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
 x86/x86\_64 binaries), gog-extract wrapper (`~/.local/bin/gog-extract` — extracts
-GOG Windows .exe and Linux .sh installers without Wine). Memory tuning attempted if /proc/sys/vm/ is writable.
+GOG Windows .exe and Linux .sh installers without Wine).
 
 ## Compatibility
 
@@ -93,21 +92,23 @@ before any rewrite. Already-Trixie containers get a normal
 update/upgrade.
 
 The Crostini-managed `cros.list` is also updated but may reset on
-container restart (expected ChromeOS behavior). After
-`apt modernize-sources`, any duplicate `cros.list` is removed if a
-`.sources` equivalent was created. Trixie mounts `/tmp` as tmpfs;
-step 2 caps it at 512 MB to prevent OOM.
+container restart (expected ChromeOS behavior). Step 2 installs
+`ry-crostini-cros-pin.service` to automatically remove any stale
+regenerated `cros.list` on each container start, preventing duplicate
+APT sources. After `apt modernize-sources`, any duplicate `cros.list`
+is removed if a `.sources` equivalent was created. Trixie mounts `/tmp`
+as tmpfs; step 2 caps it at 512 MB to prevent OOM.
 
 ## Features
 
 - **Unattended by default** — all 6 prompts auto-answered; `--interactive` restores them
 - **Checkpoint resume** — re-run to continue from last completed step; verification failures keep checkpoint at step 10 so re-run repeats only verification
-- **Exit codes** — `0` on success, `1` on verification failure or fatal error
+- **Exit codes** — `0` on success, `1` on verification failure or fatal error; exit message distinguishes verify-fail from mid-step fatal
 - **`--dry-run`** — zero side effects, zero network, zero interaction
 - **`--minimal`** — skip heavy optional packages for RAM-constrained devices
 - **Idempotent** — config files skip if already present
 - **Concurrent-safe** — PID-based mkdir lock
-- **Atomic writes** — tmpfile + mv for all config files
+- **Atomic writes** — tmpfile + mv for all config files; `write_file_exec` for mode-700 wrappers
 - **No eval, no bash -c** — `run()` passes `"$@"` directly
 - **Colored output** — respects `NO_COLOR`
 - **Progress bar** — bottom-pinned step counter with percentage; resize-aware
@@ -124,11 +125,11 @@ bridge) is started by the container login process, not inside a running
 shell. Step 11 verification reports this as a warning and prompts a terminal
 restart. Closing and reopening the Terminal app is all that is required.
 
-**sysctl keys are partially read-only in Crostini.** `fs.inotify.max_user_watches`
-is writable and applied on first run. `vm.overcommit_memory`, `vm.max_map_count`,
-and `fs.protected_*` are blocked by the ChromeOS Termina VM namespace.
-`ry-crostini-sysctl.service` retries on each container start.
-Verify: `sysctl fs.inotify.max_user_watches vm.overcommit_memory vm.max_map_count`.
+**sysctl keys are read-only in Crostini.** All kernel tuning parameters
+(`fs.inotify.max_user_watches`, `vm.max_map_count`, `vm.overcommit_memory`,
+`vm.swappiness`, `fs.protected_*`) are blocked by the ChromeOS Termina VM
+namespace. Writing to `/etc/sysctl.d/` has no effect from inside the
+container. Step 9 no longer attempts to apply sysctl settings.
 
 **Steam is x86-only.** Community translation layers
 ([box64](https://github.com/ptitSeb/box64) /
@@ -142,11 +143,13 @@ replaces it).
 ## Gaming
 
 Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM
-soundfont, innoextract (GOG/Inno Setup extractor), unrar/unar (GOG
-multi-part RAR archives), box64 (x86\_64 DynaRec JIT),
-and qemu-user for TCG x86/x86\_64 + i386 emulation
-(skipped with `--minimal`). Default config files are written for
-RetroArch, ScummVM, box64, run-x86, and gog-extract on first install.
+soundfont, innoextract (GOG/Inno Setup extractor), unar (archive
+extraction including RAR4/RAR5 and GOG multi-part archives), box64
+(x86\_64 DynaRec JIT), and qemu-user for TCG x86/x86\_64 + i386 emulation
+(skipped with `--minimal`). `unrar` (RARLAB, non-free) is attempted
+separately; if unavailable, `unar` is used in its place. Default config
+files are written for RetroArch, ScummVM, box64, run-x86, and
+gog-extract on first install.
 
 ### Compatibility tiers
 
@@ -258,7 +261,8 @@ Step 10 installs `innoextract` and writes the `gog-extract` wrapper
 without Wine.
 
 **Windows GOG installers** (`.exe`) use Inno Setup. `innoextract` unpacks
-them natively on ARM64, including GOG Galaxy multi-part `.bin` archives:
+them natively on ARM64, including GOG Galaxy multi-part `.bin` archives
+(handled internally by `innoextract --gog` since v1.9):
 
 ```bash
 gog-extract setup_monkey_island_1.0.exe              # extracts to ./setup_monkey_island_1.0/
@@ -273,8 +277,14 @@ gog-extract gog_baldurs_gate_enhanced_edition.sh       # extracts to ./gog_baldu
 # Game files land in data/noarch/game/
 ```
 
-Multi-part GOG Windows installers with `.bin` RAR archives require
-`unrar` or `unar` (both installed by step 10).
+For standalone RAR extraction, `unar` (installed by step 10) handles
+RAR4/RAR5 including multi-part archives. `unrar` (RARLAB, non-free) is
+attempted separately; to enable it first add non-free to APT sources:
+
+```bash
+sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
+sudo apt update && sudo apt install unrar
+```
 
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
 provides Linux `.deb` releases (amd64 only — no native arm64 build; could
@@ -297,32 +307,3 @@ directly.
 | Moonlight Qt | No arm64 .deb; software decode only |
 | Parsec | No ARM64 Linux support |
 | Steam Link | No ARM64 Linux support |
-
-## Verify
-
-```bash
-glxgears                        # GPU
-vulkaninfo --summary            # Vulkan (reports version; no device on virgl)
-pactl info                      # audio
-pavucontrol                     # audio mixer (GUI)
-xdpyinfo | grep resolution      # display
-fc-match sans-serif             # fonts
-fc-match monospace              # fonts
-
-# Gaming (4.9.0+)
-glxinfo | grep -i renderer       # should say "virgl", not "zink"
-printenv MESA_NO_ERROR           # should be 1
-pw-top                           # QUANT column should show 256
-
-# x86 emulation (5.2.0+)
-run-x86 --help                   # wrapper available
-qemu-x86_64 --version            # QEMU TCG emulator
-
-# GOG extraction (5.4.0+)
-innoextract --version            # Inno Setup extractor
-gog-extract --help               # GOG installer wrapper
-```
-
-## License
-
-[MIT](LICENSE)

@@ -4,6 +4,64 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.4.1  2026-03-28
+
+  Fixes:
+  - silence three spurious step 11 verification warnings by setting
+    _TOOL_VER_FLAG entries to "" (confirmed-installed) for tools
+    whose --version output does not parse cleanly:
+    - glxinfo has no --version flag; outputs GL renderer info with
+      "name of display: :0" as first line, triggering _bad=1
+    - gnome-disks --version output triggers _bad pattern match
+    - dosbox-x --version output triggers _bad pattern match
+    all three now report ✓ (installed) and increment _verify_pass
+    instead of ⚠ (version unverified) and incrementing _verify_warn;
+    net effect: -3 warnings, +3 passes per run
+  - bump version to 7.4.1
+
+7.4.0  2026-03-28
+
+  Fixes:
+  - remove all sysctl settings: fs.inotify.max_user_watches,
+    vm.overcommit_memory, vm.max_map_count, vm.swappiness,
+    vm.vfs_cache_pressure, vm.dirty_ratio,
+    vm.dirty_background_ratio are all read-only from inside the
+    Crostini container namespace; writing them to /etc/sysctl.d/
+    had no effect and ry-crostini-sysctl.service exited 1 on
+    every boot; remove 99-ry-crostini-tuning.conf,
+    99-ry-crostini-memory.conf, SYSCTL_CONF constant,
+    linux-sysctl-defaults install, all upgrade-path sysctl
+    migration code, and all step 11 sysctl verification checks
+  - fix unrar install failure causing exit 1 on every fresh
+    Trixie run: unrar (RARLAB) is in non-free and unavailable
+    on default Crostini sources; remove from batch install;
+    attempt non-free unrar separately with non-fatal failure;
+    demote step 11 check_tool "unrar" from FAIL to WARN when
+    unar is present (unar handles RAR4/RAR5 including GOG
+    multi-part archives)
+
+  Changes:
+  - add ry-crostini-cros-pin.service (step 2): ChromeOS
+    regenerates cros.list on every container restart, creating
+    duplicate APT sources alongside the persistent cros.sources
+    written by modernize-sources; new oneshot service removes
+    stale cros.list at boot before apt-daily runs
+  - add write_file_exec helper: atomic write + chmod 700 in one
+    operation; replaces write_file_private + separate chmod 700
+    calls for run-x86 and gog-extract; eliminates misleading
+    "mode 600" log entry followed by a second log line
+  - update cleanup EXIT trap: distinguish verification failure
+    from mid-step fatal exit in the "Script exited" message;
+    verification failures now direct user to --verify rather
+    than generic checkpoint resume
+  - update step 9 banner and description: remove sysctl
+    references; step now covers locale, env, XDG, paths only
+  - update step 10 banner: replace unrar/unar with unar
+  - update gog-extract comment: innoextract --gog handles
+    multi-part .bin RAR archives internally since v1.9;
+    remove stale "needs unrar/unar in PATH" note
+  - bump version to 7.4.0
+
 7.3.0  2026-03-27
 
   Breaking:
