@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.4.2-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.5.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -71,11 +71,11 @@ bash ry-crostini.sh --                           # stop processing options
 ## Config files written
 
 Apt download tuning, GPU env (EGL, Mesa virgl override, shader cache, GTK dark
-theme), PipeWire gaming quantum + pulse overrides (user-level KVM VM override),
+theme), PipeWire gaming quantum + pulse.properties.rules VM override,
 sommelier scaling + Super key passthrough, Qt 5/6 theming,
 GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
 fontconfig, Adwaita cursor, shell env + PATH,
-/tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + pulse audio), ScummVM config (OpenGL +
+/tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + PipeWire audio), ScummVM config (OpenGL +
 pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
 run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
 x86/x86\_64 binaries), gog-extract wrapper (`~/.local/bin/gog-extract` — extracts
@@ -132,14 +132,34 @@ the Terminal app is all that is required.
 namespace. Writing to `/etc/sysctl.d/` has no effect from inside the
 container. Step 9 no longer attempts to apply sysctl settings.
 
+**WirePlumber 0.5 uses `.conf` files, not Lua scripts.** Trixie ships
+WirePlumber 0.5.8 which changed config format from Lua to JSON `.conf`
+files. Any user-created Lua configs in `~/.config/wireplumber/` will be
+silently ignored.
+
 **Steam is x86-only.** Community translation layers
 ([box64](https://github.com/ptitSeb/box64) /
 [box86](https://github.com/ptitSeb/box86)) exist but are unusable on
 4 GB RAM + virgl. Use [GeForce NOW](https://play.geforcenow.com) or
 [Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
 
-The `#crostini-multi-container` flag expires at milestone 140 (Baguette
-replaces it).
+The `#crostini-multi-container` flag is deprecated at milestone 141
+(Baguette replaces it). `#borealis-enabled` is deprecated (Borealis shut
+down 2026-01-01). `#crostini-containerless` (Baguette) is available from
+ChromeOS 143+ but is early-stage. `#crostini-gpu-support` and
+`#exo-pointer-lock` are still present and required (confirmed ChromeOS 145).
+
+**systemd v258 will break Crostini containers.** v258 refuses to run
+under cgroup v1 (exits PID 1 immediately). Crostini's Termina VM kernel
+uses cgroup v1 only with no public timeline for v2 migration. Trixie
+ships v257.9 (safe); ry-crostini pins systemd to `257.*` via apt
+preferences. Already breaking Arch Linux containers on Crostini.
+
+**Avoid Flatpak for gaming.** Triple sandbox overhead (ChromeOS → Termina
+VM → LXC → bubblewrap), Flatpak runtime Mesa 25.x compositor crashes
+(Zink regression), ~2× package size RAM during install/update, and all
+gaming targets (RetroArch, DOSBox-X, ScummVM) are available as native
+arm64 .deb.
 
 ## Gaming
 
@@ -223,6 +243,17 @@ core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
 **qemu-user** is installed automatically (skipped with `--minimal`).
 Slower than box64 but provides i386 support.
+
+**32-bit x86 alternatives** (not installed by default — 4 GB RAM
+constraint):
+
+- **box86** + armhf libs (`dpkg --add-architecture armhf`) — ARM32
+  DynaRec for i386 binaries; faster than qemu-user TCG but requires
+  armhf multilib overhead.
+- **box64 Box32 mode** (experimental, v0.3.2+) — pure 64-bit, no armhf
+  needed. Set `BOX64_BOX32=1` in `~/.box64rc` `[default]` section.
+
+The `run-x86` wrapper uses `--help` to list available backends.
 
 | Tool | Install | Performance | Notes |
 |------|---------|-------------|-------|

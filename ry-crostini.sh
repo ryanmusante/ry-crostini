@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.4.2
-# Date:    2026-03-28
+# Version: 7.5.0
+# Date:    2026-03-29
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.4.2"
+readonly SCRIPT_VERSION="7.5.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -445,7 +445,7 @@ check_tool() {
             # Some tools (java, scummvm) output version to stderr; try stdout first
             # shellcheck disable=SC2086
             ver="$(timeout 3 "$cmd" $flag 2>/dev/null | head -1)" || true
-            # Some tools (e.g. 7z i on p7zip 16.02) emit a blank first line before the version banner.
+            # Some tools (e.g. 7z i on older p7zip) emit a blank first line before the version banner.
             if [[ -z "$ver" ]]; then
                 # shellcheck disable=SC2086
                 ver="$(timeout 3 "$cmd" $flag 2>/dev/null | grep -m1 .)" || true
@@ -677,10 +677,16 @@ GALLIUM_DRIVER=virgl
 # Unset for debugging: env -u MESA_NO_ERROR <command>
 MESA_NO_ERROR=1
 
-# Shader cache: single file reduces eMMC random I/O; 512 MB cap prevents disk bloat
+# Shader cache: database backend respects MAX_SIZE (single-file Fossilize ignores it);
+# 256 MB cap appropriate for 128 GB eMMC
 MESA_SHADER_CACHE_DISABLE=false
-MESA_SHADER_CACHE_MAX_SIZE=512M
-MESA_DISK_CACHE_SINGLE_FILE=1
+MESA_SHADER_CACHE_MAX_SIZE=256M
+MESA_DISK_CACHE_DATABASE=1
+
+# [experimental] GL thread offloading — marshals GL calls on separate CPU thread;
+# Kryo 468 has 8 cores with headroom. virgl host-side remains single-threaded;
+# benefit is speculative but safe on Wayland.
+mesa_glthread=true
 EOF
 }
 
@@ -926,6 +932,23 @@ EOF
     fi
     unset APT_PARALLEL
 
+    # @@WHY: Pin systemd to v257.*. systemd v258 refuses to run under cgroup v1 (exits
+    # PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only with no public
+    # timeline for v2 migration. Already breaking Arch Linux containers on Crostini
+    # (bbs.archlinux.org/viewtopic.php?pid=2280295). Trixie ships v257.9 (safe).
+    SYSTEMD_PIN="/etc/apt/preferences.d/pin-systemd"
+    if [[ ! -f "$SYSTEMD_PIN" ]]; then
+        write_file_sudo "$SYSTEMD_PIN" <<'EOF'
+# Prevent systemd v258+ — cgroup v1 incompatible (Crostini) — managed by ry-crostini.sh
+Package: systemd systemd-sysv libsystemd0 libudev1
+Pin: version 257.*
+Pin-Priority: 1001
+EOF
+    else
+        log "systemd version pin already exists"
+    fi
+    unset SYSTEMD_PIN
+
     # 2a. Upgrade to Trixie if not already running it
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
@@ -1016,15 +1039,25 @@ EOF
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
-    # Unhold Crostini packages — restore normal apt behavior for future updates
-    if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
+    # Unhold Crostini packages — restore normal apt behavior for future updates.
+    # @@WHY: cros-guest-tools stays held permanently. Google has not published cros-im for
+    # Trixie; cros-guest-tools depends on it, so unholding breaks apt install/upgrade with
+    # unmet dependencies.
+    _CROS_UNHOLD_PKGS=()
+    for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
+        [[ "$_cpkg" == "cros-guest-tools" ]] && continue
+        _CROS_UNHOLD_PKGS+=("$_cpkg")
+    done
+    if [[ "${#_CROS_UNHOLD_PKGS[@]}" -gt 0 ]]; then
         if $DRY_RUN; then
-            log "[DRY-RUN] apt-mark unhold ${_CROS_HOLD_PKGS[*]}"
+            log "[DRY-RUN] apt-mark unhold ${_CROS_UNHOLD_PKGS[*]}"
+            log "[DRY-RUN] cros-guest-tools remains held (cros-im unavailable on Trixie)"
         else
-            run sudo apt-mark unhold "${_CROS_HOLD_PKGS[@]}" || warn "apt-mark unhold failed"
+            run sudo apt-mark unhold "${_CROS_UNHOLD_PKGS[@]}" || warn "apt-mark unhold failed"
+            log "cros-guest-tools remains held (cros-im unavailable on Trixie)"
         fi
     fi
-    unset _CROS_HOLD_PKGS
+    unset _CROS_HOLD_PKGS _CROS_UNHOLD_PKGS _cpkg
 
     # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages, which can include Crostini integration configs that other packages depend on at next boot. Plain autoremove is safer — conffiles remain for inspection.
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
@@ -1127,7 +1160,7 @@ if should_run_step 3; then
 
     CORE_PKGS=(
         # Navigation and file management
-        file tree zip unzip p7zip-full rsync rename
+        file tree zip unzip 7zip rsync rename
 
         # Text processing
         nano vim less jq
@@ -1343,8 +1376,8 @@ context.properties = {
 }
 
 context.properties.rules = [
-    {   # Explicitly override KVM VM detection that forces min-quantum=1024
-        matches = [ { cpu.vm.name = "KVM" } ]
+    {   # Explicitly override VM detection that forces min-quantum=1024
+        matches = [ { cpu.vm.name = !null } ]
         actions = {
             update-props = {
                 default.clock.min-quantum = 256
@@ -1364,15 +1397,17 @@ PWEOF
         run mkdir -p "${HOME}/.config/pipewire/pipewire-pulse.conf.d" || true
         write_file "$_PW_PULSE_GAMING" <<'PPEOF'
 # PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# vm.overrides={} disables the PulseAudio-layer VM quantum override independently
-# of the core graph override in pipewire.conf.d/.
+# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
     pulse.min.req     = 256/48000
-    pulse.default.req = 256/48000
     pulse.min.quantum = 256/48000
-    vm.overrides      = {}
 }
+pulse.properties.rules = [
+    { matches = [ { cpu.vm.name = !null } ]
+      actions = { update-props = { pulse.min.quantum = 256/48000 } }
+    }
+]
 PPEOF
     else
         log "PipeWire-Pulse gaming config already exists"
@@ -1485,10 +1520,12 @@ EOF
         log "Qt env already exists — skipping"
     fi
 
-    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme. Batch qt5ct with preferred platform theme; if qt5-gtk-platformtheme is unavailable, install_pkgs_best_effort falls back to per-package (qt5ct succeeds individually) and the || arm tries the alternative name.
+    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme.
     install_pkgs_best_effort qt5ct qt5-gtk-platformtheme || \
-        install_pkgs_best_effort qt5-style-plugins || \
-        warn "Qt GTK theme package not available — Qt apps may not follow dark theme"
+        warn "Qt5 GTK theme package not available — Qt apps may not follow dark theme"
+
+    # Adwaita-Qt — supplemental Qt5/Qt6 theme integration for apps that ignore QT_QPA_PLATFORMTHEME
+    install_pkgs_best_effort adwaita-qt adwaita-qt6 || true
 
     # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme WARNING: qt5ct conflicts with QT_QPA_PLATFORMTHEME=gtk3 (set in qt.conf above)
     install_pkgs_best_effort qt6-gtk-platformtheme || \
@@ -1744,12 +1781,12 @@ video_threaded = "true"
 video_vsync = "true"
 video_max_swapchain_images = "2"
 
-# Audio: MUST use "pulse", NOT "pipewire".
-# RetroArch's native PipeWire driver (GitHub libretro/RetroArch#17685) hard-codes
-# quantum values and ignores the latency slider. The PulseAudio driver works
-# correctly through PipeWire's compatibility layer.
-audio_driver = "pulse"
-audio_latency = "64"
+# Audio: native PipeWire driver (RetroArch 1.20+, Trixie). Eliminates PulseAudio
+# compat layer hop. Caveat: upstream issue libretro/RetroArch#17685 — PipeWire
+# driver may hardcode quantum; if stutters occur, fall back to audio_driver = "pulse".
+# Latency 96 ms prevents underruns on SC7180P under gaming load.
+audio_driver = "pipewire"
+audio_latency = "96"
 
 # Memory: disable rewind (consumes ~20 MB/min buffer on 4 GB device).
 # Run-ahead: disabled globally; enable per-core for 8/16-bit only (see README).
@@ -1775,6 +1812,8 @@ RACFG
 [scummvm]
 gfx_mode=opengl
 stretch_mode=pixel_perfect
+# Alternative: stretch_mode=even-pixels (ScummVM 2.9+) — scales width/height by
+# different integer factors for better aspect ratio approximation on 1920×1080.
 aspect_ratio=true
 filtering=false
 vsync=true
@@ -1855,14 +1894,19 @@ BOX64_LOG=0
 BOX64_DYNAREC_CALLRET=1
 # Purge stale dynarec blocks — reclaims RAM on 4 GB device
 BOX64_DYNAREC_PURGE=1
-# DynaCache — dead code recycling, reduces recompile overhead (v0.3.8+)
-BOX64_DYNACACHE=1
+# DynaRec cache — dead code recycling, reduces recompile overhead
+# (renamed from BOX64_DYNACACHE in v0.3.8+)
+BOX64_DYNAREC_CACHE=1
+# Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
+BOX64_DYNAREC_NATIVEFLAGS=1
 
 [wine]
 # 32-bit address space for Wine WoW64 mode
 BOX64_MMAP32=1
 # Strong memory model — required for Wine correctness on ARM64
 BOX64_DYNAREC_STRONGMEM=1
+# Larger dynarec blocks for Wine — improves throughput
+BOX64_DYNAREC_BIGBLOCK=3
 RCEOF
         log "Wrote ${_BOX64_RC}"
     else
@@ -2252,11 +2296,12 @@ if should_run_step 11; then
     logprintf '%bConfig files written:%b\n' "$BOLD" "$RESET"
 
     check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
+    check_config "/etc/apt/preferences.d/pin-systemd"             "systemd v257 version pin"
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
     # Step 7: Qt GTK platform themes (at least one should be present)
-    if dpkg -s qt5-gtk-platformtheme &>/dev/null || dpkg -s qt5-style-plugins &>/dev/null; then
+    if dpkg -s qt5-gtk-platformtheme &>/dev/null || dpkg -s adwaita-qt &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt5 GTK platform theme"
         ((_verify_pass++)) || true
     else

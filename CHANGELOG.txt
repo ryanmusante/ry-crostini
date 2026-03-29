@@ -4,6 +4,56 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.5.0  2026-03-29
+
+  Bugs fixed:
+  - replace p7zip-full (transitional in Trixie, 16.02+transitional.1)
+    with 7zip (25.01+dfsg-1); p7zip-full will be removed in a future
+    Debian release
+  - replace qt5-style-plugins fallback (removed from Trixie) with
+    adwaita-qt + adwaita-qt6; update step 11 verification to check
+    adwaita-qt instead of qt5-style-plugins
+  - fix Mesa shader cache silent misconfiguration: single-file Fossilize
+    backend (MESA_DISK_CACHE_SINGLE_FILE=1) ignores MAX_SIZE — cache
+    grows unbounded on 128 GB eMMC; switch to MESA_DISK_CACHE_DATABASE=1
+    and reduce cap from 512M to 256M
+  - replace deprecated vm.overrides={} in pipewire-pulse.conf.d with
+    pulse.properties.rules match-action syntax (PipeWire 1.4.x); broaden
+    KVM-only match (cpu.vm.name = "KVM") to any VM (cpu.vm.name = !null)
+  - rename BOX64_DYNACACHE=1 to BOX64_DYNAREC_CACHE=1 in .box64rc;
+    old name is aliased in Trixie's box64 0.3.4 but breaks on upstream
+    0.3.8+
+  - keep cros-guest-tools held permanently after dist-upgrade: Google
+    has not published cros-im for Trixie; unholding breaks apt with
+    unmet dependencies
+
+  Improvements:
+  - switch RetroArch audio from "pulse" to native "pipewire" driver
+    (RetroArch 1.20+, Trixie); bump audio_latency from 64 to 96 to
+    prevent underruns on SC7180P under gaming load
+  - add stretch_mode=even-pixels as documented alternative in ScummVM
+    config comment (ScummVM 2.9+)
+  - add BOX64_DYNAREC_NATIVEFLAGS=1 to [default] and
+    BOX64_DYNAREC_BIGBLOCK=3 to [wine] section in .box64rc
+  - add mesa_glthread=true to gpu.conf (experimental — offloads GL call
+    marshaling to separate CPU thread; Kryo 468 has headroom)
+  - add systemd v257.* apt pin (/etc/apt/preferences.d/pin-systemd) to
+    prevent accidental v258 upgrade; v258 refuses to run under cgroup v1
+    which breaks Crostini containers
+  - document Flatpak avoidance for gaming in README Known Limitations
+    (triple sandbox overhead, Zink regression, RAM overhead, native .deb
+    availability)
+  - document box86 and box64 Box32 mode as 32-bit x86 alternatives in
+    README x86 translation section
+  - add WirePlumber 0.5 config format migration note to README Known
+    Limitations (Lua → JSON .conf files)
+  - update ChromeOS flag deprecation status in README:
+    #crostini-multi-container deprecated at milestone 141 (was 140),
+    #borealis-enabled deprecated (Borealis shut down 2026-01-01),
+    #crostini-containerless (Baguette) new at ChromeOS 143+,
+    #crostini-gpu-support and #exo-pointer-lock confirmed through
+    ChromeOS 145
+
 7.4.2  2026-03-28
 
   Fixes:
