@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.5.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.5.1-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -65,7 +65,7 @@ bash ry-crostini.sh --                           # stop processing options
 | 7 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
 | 8 | GUI essentials (xterm, session support, fonts, icons) |
 | 9 | Container resource tuning (locale, env, XDG, paths) |
-| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unar, box64, qemu-user) |
+| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user) |
 | 11 | Summary and verification |
 
 ## Config files written
@@ -109,7 +109,7 @@ as tmpfs; step 2 caps it at 512 MB to prevent OOM.
 - **Idempotent** — config files skip if already present
 - **Concurrent-safe** — PID-based mkdir lock
 - **Atomic writes** — tmpfile + mv for all config files; `write_file_exec` for mode-700 wrappers
-- **No eval, no bash -c** — `run()` passes `"$@"` directly
+- **No eval, no bash -c in script execution** — `run()` passes `"$@"` directly (generated systemd unit uses `bash -c` for inline conditional)
 - **Colored output** — respects `NO_COLOR`
 - **Progress bar** — bottom-pinned step counter with percentage; resize-aware
 - **Full logging** — `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)

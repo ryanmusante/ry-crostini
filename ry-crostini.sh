@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.5.0
+# Version: 7.5.1
 # Date:    2026-03-29
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.5.0"
+readonly SCRIPT_VERSION="7.5.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -536,7 +536,7 @@ STEPS PERFORMED:
         Debian version, disk, GPU, network, root, sommelier, mic, USB,
         folders, ports, disk-resize; --interactive)
      2  System update (apt tuning, Trixie upgrade, cros pkg hold,
-        deb822 migration, /tmp tmpfs cap)
+        deb822 migration, /tmp tmpfs cap, cros-pin service)
      3  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
         ripgrep, fd, fzf, bat, ...)
      4  Build essentials and development headers
@@ -912,9 +912,9 @@ if should_run_step 1; then
     set_checkpoint 1
     log "Step 1 complete."
 fi
-# Step 2: System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap)
+# Step 2: System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)
 if should_run_step 2; then
-    step_banner 2 "System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap)"
+    step_banner 2 "System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
 
     # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
@@ -1075,11 +1075,13 @@ EOF
     fi
 
     # 2d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
+    # Write unconditionally: on Bookworm→Trixie upgrade, tmp.mount is inactive during install
+    # (activates on next container restart). The drop-in must be in place before that restart.
     _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
     if [[ ! -f "$_TMP_DROPIN" ]]; then
         if $DRY_RUN; then
-            log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in (if tmp.mount active)"
-        elif systemctl is-active --quiet tmp.mount 2>/dev/null; then
+            log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in"
+        else
             write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
 [Mount]
 Options=mode=1777,nosuid,nodev,size=512M
@@ -1087,8 +1089,6 @@ TMPEOF
             run sudo systemctl daemon-reload \
                 || warn "daemon-reload failed — /tmp cap takes effect on next container start"
             log "/tmp tmpfs capped at 512M (OOM mitigation)"
-        else
-            log "/tmp not mounted as tmpfs — no mitigation needed"
         fi
     else
         log "tmp.mount drop-in already exists"
@@ -2322,9 +2322,7 @@ if should_run_step 11; then
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/ry-crostini-env.sh"                "Shell env + PATH"
-    if [[ -f "/etc/systemd/system/tmp.mount.d/override.conf" ]]; then
-        check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
-    fi
+    check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"

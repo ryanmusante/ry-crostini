@@ -4,6 +4,22 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.5.1  2026-03-29
+
+  Fixes:
+  - fix tmp.mount drop-in never written on Bookworm→Trixie upgrade path:
+    remove systemctl is-active guard so drop-in is written unconditionally;
+    harmless if tmp.mount is inactive — takes effect on next container
+    restart when Trixie activates it
+  - make step 11 tmp.mount check_config unconditional to match; file count
+    is now 21 unconditional (was 20 unconditional + 1 conditional)
+  - clarify README "No eval, no bash -c" to note generated systemd unit
+    ExecStart uses bash -c for inline conditional
+  - sync step 2 description across script banner, --help, and README: add
+    "cros-pin service" (was present only in README)
+  - sync step 10 description in README: "unar" → "unrar/unar" to match
+    script banner and --help
+
 7.5.0  2026-03-29
 
   Bugs fixed:
