@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.6.0
-# Date:    2026-03-29
+# Version: 7.6.1
+# Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~65 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may initially ship Bookworm; step 2 upgrades to Trixie. Package arrays use canonical (non-transitional) names.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.6.0"
+readonly SCRIPT_VERSION="7.6.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -435,8 +435,8 @@ check_tool() {
     if command -v "$cmd" &>/dev/null; then
         local ver="" flag
         # Resolve version flag: per-tool override if present, else --version
-        if [[ -v _TOOL_VER_FLAG[$cmd] ]]; then
-            flag="${_TOOL_VER_FLAG[$cmd]}"
+        if [[ -v "_TOOL_VER_FLAG[$cmd]" ]]; then
+            flag="${_TOOL_VER_FLAG["$cmd"]}"
         else
             flag="--version"
         fi
@@ -478,7 +478,7 @@ check_tool() {
         fi
 
         if (( _bad )); then
-            if [[ -v _TOOL_VER_FLAG[$cmd] && -z "${_TOOL_VER_FLAG[$cmd]}" ]]; then
+            if [[ -v "_TOOL_VER_FLAG[$cmd]" && -z "${_TOOL_VER_FLAG["$cmd"]}" ]]; then
                 # Explicitly no version probe — tool is present and functional
                 logprintf '  %-14s %b✓%b  (installed)\n' "$name" "$GREEN" "$RESET"
                 ((_verify_pass++)) || true
@@ -659,7 +659,7 @@ _progress_init
 # Rotate old log files — keep last 7 days
 find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null || true
 
-# _gpu_conf_content: emit gpu.conf heredoc. Called by step 6 (fresh-write and upgrade-path).
+# _gpu_conf_content: emit gpu.conf heredoc. Called by step 5 (fresh-write and upgrade-path).
 _gpu_conf_content() {
     cat <<'EOF'
 # Crostini GPU acceleration environment — managed by ry-crostini.sh
@@ -986,6 +986,9 @@ EOF
                 fi
             fi
             # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
+            local _had_nullglob=false
+            shopt -q nullglob && _had_nullglob=true
+            shopt -s nullglob
             for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
                 [[ -f "$_sfile" ]] || continue
                 if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
@@ -996,7 +999,8 @@ EOF
                         || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
                 fi
             done
-            unset _sfile _sfile_bak
+            $_had_nullglob || shopt -u nullglob
+            unset _sfile _sfile_bak _had_nullglob
         fi
     elif [[ "$_cur_codename" == "trixie" ]]; then
         log "Already running Trixie — no upgrade needed"
@@ -1869,8 +1873,23 @@ RACFG
             if $DRY_RUN; then
                 log "[DRY-RUN] sed swapchain 2→3 in retroarch.cfg"
             else
-                sed -i 's/video_max_swapchain_images *= *"2"/video_max_swapchain_images = "3"/' "$_RA_CFG"
-                log "RetroArch: video_max_swapchain_images 2→3"
+                local _ra_tmp
+                _ra_tmp="$(mktemp "${_RA_CFG}.tmp_XXXXXXXX")" || { warn "Cannot create tmpfile for retroarch.cfg upgrade"; }
+                if [[ -n "${_ra_tmp:-}" ]]; then
+                    chmod 600 "$_ra_tmp" 2>/dev/null || true
+                    if sed 's/video_max_swapchain_images *= *"2"/video_max_swapchain_images = "3"/' "$_RA_CFG" > "$_ra_tmp"; then
+                        if mv -- "$_ra_tmp" "$_RA_CFG"; then
+                            log "RetroArch: video_max_swapchain_images 2→3"
+                        else
+                            rm -f -- "$_ra_tmp"
+                            warn "Cannot move retroarch.cfg upgrade into place"
+                        fi
+                    else
+                        rm -f -- "$_ra_tmp"
+                        warn "retroarch.cfg swapchain upgrade failed"
+                    fi
+                fi
+                unset _ra_tmp
             fi
         fi
         # video_frame_delay_auto: add if absent
@@ -1878,8 +1897,14 @@ RACFG
             if $DRY_RUN; then
                 log "[DRY-RUN] append video_frame_delay_auto to retroarch.cfg"
             else
-                printf 'video_frame_delay_auto = "true"\n' >> "$_RA_CFG"
-                log "RetroArch: added video_frame_delay_auto=true"
+                local _ra_content
+                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
+                if [[ -n "${_ra_content:-}" ]]; then
+                    printf '%s\nvideo_frame_delay_auto = "true"\n' "$_ra_content" \
+                        | write_file_private "$_RA_CFG"
+                    log "RetroArch: added video_frame_delay_auto=true"
+                fi
+                unset _ra_content
             fi
         fi
     fi
@@ -1911,8 +1936,14 @@ SVMCFG
             if $DRY_RUN; then
                 log "[DRY-RUN] append fluidsynth_chorus_activate=false to scummvm.ini"
             else
-                printf 'fluidsynth_chorus_activate=false\n' >> "$_SVM_CFG"
-                log "ScummVM: added fluidsynth_chorus_activate=false"
+                local _svm_content
+                _svm_content="$(cat "$_SVM_CFG")" || { warn "Cannot read scummvm.ini for upgrade"; }
+                if [[ -n "${_svm_content:-}" ]]; then
+                    printf '%s\nfluidsynth_chorus_activate=false\n' "$_svm_content" \
+                        | write_file_private "$_SVM_CFG"
+                    log "ScummVM: added fluidsynth_chorus_activate=false"
+                fi
+                unset _svm_content
             fi
         fi
     fi
@@ -2135,9 +2166,8 @@ case "$installer" in
     *.sh|*.SH)
         printf 'Extracting GOG Linux installer: %s\n' "$installer"
         mkdir -p -- "$outdir"
-        # GOG Linux installers are makeself archives
-        chmod +x -- "$installer"
-        "$installer" --noexec --target="$outdir"
+        # GOG Linux installers are makeself archives; invoke via bash to avoid modifying the original file's permissions
+        bash "$installer" --noexec --target="$outdir"
         printf 'Extracted to: %s/\n' "$outdir"
         # GOG Linux .sh contents: data/noarch/game/ contains game files
         if [[ -d "${outdir}/data/noarch/game" ]]; then

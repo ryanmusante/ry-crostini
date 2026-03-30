@@ -4,6 +4,31 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.6.1  2026-03-30
+
+  Fixes:
+  - fix header sudo count: ~65 → ~70 (actual runtime count on standard
+    Bookworm→Trixie first run; CHANGELOG 6.0.1 already audited ~70 but
+    header was never updated)
+  - fix _gpu_conf_content() comment: "Called by step 6" → "Called by
+    step 5"; function is called exclusively inside the step 5 block
+  - fix non-atomic retroarch.cfg upgrade paths: sed -i (swapchain 2→3)
+    and printf >> (video_frame_delay_auto append) replaced with atomic
+    tmpfile+mv and read+write_file_private respectively; crash mid-write
+    could previously corrupt the file
+  - fix non-atomic scummvm.ini upgrade path: printf >> (chorus append)
+    replaced with read+write_file_private atomic pattern
+  - fix gog-extract: chmod +x on user's original .sh installer replaced
+    with bash invocation (bash "$installer" --noexec); no longer mutates
+    the input file's permissions
+  - fix unquoted associative array subscripts in check_tool(): quote
+    _TOOL_VER_FLAG[$cmd] in [[ -v ]] and ${} expansion (3 sites);
+    safe in practice (tool names contain no glob chars) but inconsistent
+    with quoting discipline elsewhere
+  - fix potential failglob crash in step 2 sources.list.d glob iteration:
+    add nullglob guard around for loop over *.list *.sources; restore
+    previous nullglob state after loop
+
 7.6.0  2026-03-29
 
   Gaming optimizations (spec: ry-crostini-gaming-optimizations v1.2.0):
