@@ -47,7 +47,9 @@ containers are upgraded to Trixie automatically in step 2.
 
 ```bash
 # 1. Enable Linux (Beta): Settings → Developers → Turn On
-# 2. Enable GPU flag: chrome://flags/#crostini-gpu-support → Enabled → Reboot
+# 2. Enable flags → Reboot:
+#      chrome://flags/#crostini-gpu-support → Enabled
+#      chrome://flags/#exo-pointer-lock     → Enabled
 # 3. Run:
 bash ry-crostini.sh
 ```
@@ -86,6 +88,7 @@ bash ry-crostini.sh [OPTIONS]
 | Setting | Location | Notes |
 |---------|----------|-------|
 | GPU | `chrome://flags/#crostini-gpu-support` → Enabled → Reboot | Required for `/dev/dri/renderD128`; GPU packages install regardless |
+| Pointer lock | `chrome://flags/#exo-pointer-lock` → Enabled | Required for mouse capture in games |
 | Microphone | Settings → Developers → Linux → Microphone → On | |
 | Disk size | Settings → Developers → Linux → Disk size → 20–30 GB | Aborts below 2 GB, warns below 10 GB |
 | Shared folders | Files app → right-click folder → Share with Linux | Optional; mounts at `/mnt/chromeos/` |

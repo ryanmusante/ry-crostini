@@ -33,6 +33,15 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     script banner and --help
   - standardize changelog section headers: "Bugs fixed:" and
     "Bug fixes:" → "Fixes:" for consistency
+  - add #exo-pointer-lock to Prerequisites and Quick Start: flag was
+    documented as "Required" in Known Limitations but missing from
+    setup instructions
+  - add #exo-pointer-lock to script step 1j interactive prompt and
+    step 11 GPU verification fix hint
+
+  Style:
+  - condense 13 multiline comment blocks to single lines; no
+    semantic changes (-28 lines)
 
 7.5.0  2026-03-29
 

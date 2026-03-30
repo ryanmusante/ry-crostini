@@ -456,8 +456,7 @@ check_tool() {
                 # shellcheck disable=SC2086
                 _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
-                # Skip leading noise — e.g. unzip interprets --version as short flags and emits "caution:" before the actual version line.
-                # Also skip header-only lines like "lsof version information:" (label with no actual version data).
+                # Skip leading noise — e.g. unzip interprets --version as short flags and emits "caution:" before the actual version line. Also skip header-only lines like "lsof version information:" (label with no actual version data).
                 if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* || \
                       ( "$ver" == *[Vv]ersion* && "$ver" == *: && ! "$ver" =~ [0-9] ) ]]; then
                     _raw="${_raw#*$'\n'}"
@@ -781,15 +780,17 @@ if should_run_step 1; then
 
     unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
 
-    # 1j. GPU acceleration (ChromeOS integration)
+    # 1j. GPU acceleration + pointer lock (ChromeOS integration)
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU acceleration: ALREADY ACTIVE ✓"
+        log "Pointer lock: verify chrome://flags/#exo-pointer-lock is Enabled (required for mouse capture in games)"
     else
         log "GPU acceleration not detected."
         if ! $DRY_RUN; then
             if ! $UNATTENDED; then
                 _prompt '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
                 _prompt '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
+                _prompt '%b  → Also enable "exo-pointer-lock" (required for mouse capture in games).%b\n' "$YELLOW" "$RESET"
                 _prompt '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
                 _prompt '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
                 open_chromeos_url "chrome://flags/#crostini-gpu-support"
@@ -932,10 +933,7 @@ EOF
     fi
     unset APT_PARALLEL
 
-    # @@WHY: Pin systemd to v257.*. systemd v258 refuses to run under cgroup v1 (exits
-    # PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only with no public
-    # timeline for v2 migration. Already breaking Arch Linux containers on Crostini
-    # (bbs.archlinux.org/viewtopic.php?pid=2280295). Trixie ships v257.9 (safe).
+    # @@WHY: Pin systemd to v257.*. systemd v258 refuses to run under cgroup v1 (exits PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only with no public timeline for v2 migration. Already breaking Arch Linux containers on Crostini (bbs.archlinux.org/viewtopic.php?pid=2280295). Trixie ships v257.9 (safe).
     SYSTEMD_PIN="/etc/apt/preferences.d/pin-systemd"
     if [[ ! -f "$SYSTEMD_PIN" ]]; then
         write_file_sudo "$SYSTEMD_PIN" <<'EOF'
@@ -1039,10 +1037,7 @@ EOF
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
-    # Unhold Crostini packages — restore normal apt behavior for future updates.
-    # @@WHY: cros-guest-tools stays held permanently. Google has not published cros-im for
-    # Trixie; cros-guest-tools depends on it, so unholding breaks apt install/upgrade with
-    # unmet dependencies.
+    # Unhold Crostini packages — restore normal apt behavior for future updates. @@WHY: cros-guest-tools stays held permanently. Google has not published cros-im for Trixie; cros-guest-tools depends on it, so unholding breaks apt install/upgrade with unmet dependencies.
     _CROS_UNHOLD_PKGS=()
     for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
         [[ "$_cpkg" == "cros-guest-tools" ]] && continue
@@ -1075,8 +1070,7 @@ EOF
     fi
 
     # 2d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
-    # Write unconditionally: on Bookworm→Trixie upgrade, tmp.mount is inactive during install
-    # (activates on next container restart). The drop-in must be in place before that restart.
+    # Write unconditionally: on Bookworm→Trixie upgrade, tmp.mount is inactive during install (activates on next container restart). The drop-in must be in place before that restart.
     _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
     if [[ ! -f "$_TMP_DROPIN" ]]; then
         if $DRY_RUN; then
@@ -1117,10 +1111,7 @@ TMPEOF
     fi
 
     # 2f. Service to clean up stale cros.list after container restart
-    # ChromeOS regenerates /etc/apt/sources.list.d/cros.list on every container restart,
-    # restoring the original bookworm codename. When cros.sources (our persistent trixie
-    # version) already exists, the regenerated cros.list causes duplicate APT sources and
-    # potential version conflicts. This service removes the stale file early on each boot.
+    # ChromeOS regenerates /etc/apt/sources.list.d/cros.list on every container restart, restoring the original bookworm codename. When cros.sources (our persistent trixie version) already exists, the regenerated cros.list causes duplicate APT sources and potential version conflicts. This service removes the stale file early on each boot.
     _CROS_PIN_SVC="/etc/systemd/system/ry-crostini-cros-pin.service"
     if [[ ! -f "$_CROS_PIN_SVC" ]]; then
         write_file_sudo "$_CROS_PIN_SVC" <<'CROSEOF'
@@ -1308,8 +1299,7 @@ if should_run_step 6; then
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
     )
-    # Append libavcodec-extra here (same transaction as libasound2-plugins) so apt
-    # resolves the full dep graph at once and never installs then removes libavcodec59.
+    # Append libavcodec-extra here (same transaction as libasound2-plugins) so apt resolves the full dep graph at once and never installs then removes libavcodec59.
     if ! $MINIMAL; then
         AUDIO_PKGS+=(libavcodec-extra)
     fi
@@ -1666,10 +1656,7 @@ if should_run_step 8; then
     log "Step 8 complete."
 fi
 # Step 9: Container resource tuning (locale, env, XDG, paths)
-# NOTE: Crostini containers run in a locked-down kernel namespace; sysctl keys such as
-# fs.inotify.max_user_watches, vm.max_map_count, vm.overcommit_memory, and vm.swappiness
-# are all read-only from inside the container. Writing them to /etc/sysctl.d/ has no effect
-# and the sysctl service exits 1 on every boot. These settings have been removed.
+# NOTE: Crostini containers run in a locked-down kernel namespace; sysctl keys such as fs.inotify.max_user_watches, vm.max_map_count, vm.overcommit_memory, and vm.swappiness are all read-only from inside the container. Writing them to /etc/sysctl.d/ has no effect and the sysctl service exits 1 on every boot. These settings have been removed.
 if should_run_step 9; then
     step_banner 9 "Container resource tuning (locale, env, XDG, paths)"
 
@@ -1746,13 +1733,9 @@ fi
 if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)"
 
-    # Native ARM packages — DOSBox-X, ScummVM, FluidSynth GM, innoextract, unar.
-    # unrar (RARLAB) is in non-free and not available on default Crostini sources.
-    # unar handles RAR4/RAR5 including GOG multi-part archives — adequate replacement.
-    # innoextract --gog handles multi-part .bin extraction internally (v1.9+).
+    # Native ARM packages — DOSBox-X, ScummVM, FluidSynth GM, innoextract, unar. unrar (RARLAB) is in non-free and not available on default Crostini sources. unar handles RAR4/RAR5 including GOG multi-part archives — adequate replacement. innoextract --gog handles multi-part .bin extraction internally (v1.9+).
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
-    # Attempt non-free unrar separately; failure is non-fatal — unar covers the same use case.
-    # To enable: sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
+    # Attempt non-free unrar separately; failure is non-fatal — unar covers the same use case. To enable: sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
     if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
         log "unrar installed ✓"
     else
@@ -1857,22 +1840,14 @@ SVMCFG
 
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
-    # box64: x86_64 userspace emulator with DynaRec
-    # NOTE: binfmt-misc automatic exec requires a privileged LXC container; standard Crostini is
-    # unprivileged. Use box64 explicitly: box64 ./program
+    # box64: x86_64 userspace emulator with DynaRec NOTE: binfmt-misc automatic exec requires a privileged LXC container; standard Crostini is unprivileged. Use box64 explicitly: box64 ./program
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
         log "box64 installed ✓"
     else
         warn "box64 install failed"
     fi
 
-    # qemu-user: x86/x86_64 emulation via TCG dynamic binary translation
-    # Fills gap for i386 support (box64 is x86_64-only).
-    # NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini —
-    # must invoke explicitly: qemu-x86_64 ./program
-    # NOTE: Do NOT install qemu-user-binfmt. Its postinst triggers
-    # systemd-binfmt which fails with EPERM in unprivileged containers,
-    # leaving a failed unit in systemctl.
+    # qemu-user: x86/x86_64 emulation via TCG dynamic binary translation Fills gap for i386 support (box64 is x86_64-only). NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini — must invoke explicitly: qemu-x86_64 ./program NOTE: Do NOT install qemu-user-binfmt. Its postinst triggers systemd-binfmt which fails with EPERM in unprivileged containers, leaving a failed unit in systemctl.
     if ! $MINIMAL; then
         install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
     else
@@ -2084,8 +2059,7 @@ if should_run_step 11; then
     _verify_fail=0
     _verify_warn=0
 
-    # Inject install-time paths into current shell for accurate verification.
-    # /etc/profile.d/ry-crostini-env.sh is sourced on next login; not active here.
+    # Inject install-time paths into current shell for accurate verification. /etc/profile.d/ry-crostini-env.sh is sourced on next login; not active here.
     [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
 
     if $DRY_RUN; then
@@ -2153,6 +2127,7 @@ if should_run_step 11; then
         logprintf '  Render node:   %b✗ NOT ACTIVE%b\n' "$RED" "$RESET"
         ((_verify_fail++)) || true
         logprintf '  Fix:           chrome://flags/#crostini-gpu-support → Enabled → Reboot\n'
+        logprintf '  Also enable:   chrome://flags/#exo-pointer-lock (mouse capture in games)\n'
     fi
     logprintf '\n'
 
