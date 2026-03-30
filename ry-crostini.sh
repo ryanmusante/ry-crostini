@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.6.1
+# Version: 7.6.2
 # Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.6.1"
+readonly SCRIPT_VERSION="7.6.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -856,7 +856,7 @@ if should_run_step 1; then
 
     # 1m. Shared folders
     if [[ -d /mnt/chromeos ]]; then
-        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)" || true
+        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d -printf '.' 2>/dev/null | wc -c)" || true
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
@@ -986,7 +986,7 @@ EOF
                 fi
             fi
             # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
-            local _had_nullglob=false
+            _had_nullglob=false
             shopt -q nullglob && _had_nullglob=true
             shopt -s nullglob
             for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -1346,7 +1346,7 @@ if should_run_step 6; then
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 -printf '.' 2>/dev/null | wc -c)" || true
         log "Audio devices in /dev/snd: ${SND_DEV_COUNT} ✓"
         if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
             log "Microphone capture device: detected ✓"
@@ -1873,7 +1873,7 @@ RACFG
             if $DRY_RUN; then
                 log "[DRY-RUN] sed swapchain 2→3 in retroarch.cfg"
             else
-                local _ra_tmp
+                _ra_tmp=""
                 _ra_tmp="$(mktemp "${_RA_CFG}.tmp_XXXXXXXX")" || { warn "Cannot create tmpfile for retroarch.cfg upgrade"; }
                 if [[ -n "${_ra_tmp:-}" ]]; then
                     chmod 600 "$_ra_tmp" 2>/dev/null || true
@@ -1897,7 +1897,7 @@ RACFG
             if $DRY_RUN; then
                 log "[DRY-RUN] append video_frame_delay_auto to retroarch.cfg"
             else
-                local _ra_content
+                _ra_content=""
                 _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
                 if [[ -n "${_ra_content:-}" ]]; then
                     printf '%s\nvideo_frame_delay_auto = "true"\n' "$_ra_content" \
@@ -1936,7 +1936,7 @@ SVMCFG
             if $DRY_RUN; then
                 log "[DRY-RUN] append fluidsynth_chorus_activate=false to scummvm.ini"
             else
-                local _svm_content
+                _svm_content=""
                 _svm_content="$(cat "$_SVM_CFG")" || { warn "Cannot read scummvm.ini for upgrade"; }
                 if [[ -n "${_svm_content:-}" ]]; then
                     printf '%s\nfluidsynth_chorus_activate=false\n' "$_svm_content" \
@@ -2164,6 +2164,12 @@ case "$installer" in
         fi
         ;;
     *.sh|*.SH)
+        # Validate makeself archive signature before execution — prevents running arbitrary scripts
+        if ! head -20 -- "$installer" 2>/dev/null | grep -qi 'makeself'; then
+            printf 'gog-extract: %s does not appear to be a makeself archive (GOG Linux installer)\n' "$installer" >&2
+            printf 'Expected a GOG .sh installer (makeself archive). Aborting for safety.\n' >&2
+            exit 1
+        fi
         printf 'Extracting GOG Linux installer: %s\n' "$installer"
         mkdir -p -- "$outdir"
         # GOG Linux installers are makeself archives; invoke via bash to avoid modifying the original file's permissions
@@ -2290,7 +2296,7 @@ if should_run_step 11; then
     # Audio
     logprintf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 -printf '.' 2>/dev/null | wc -c)" || true
         logprintf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
         ((_verify_pass++)) || true
     else

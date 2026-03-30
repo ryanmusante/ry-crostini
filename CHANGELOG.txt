@@ -4,6 +4,23 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.6.2  2026-03-30
+
+  Fixes:
+  - fix 4 local-outside-function crashes introduced in 7.6.1: bash
+    rejects local outside a function (exit 1), which under set -e kills
+    the script immediately; affected Bookworm→Trixie sources.list.d
+    iteration (L989), retroarch.cfg swapchain upgrade (L1876),
+    retroarch.cfg frame-delay upgrade (L1900), and scummvm.ini chorus
+    upgrade (L1939); replaced with direct assignment + unset
+  - fix find|wc-l newline-unsafe count in 3 sites (shared folder count
+    L859, audio device count L1349 and L2293): replace with
+    find -printf '.'|wc -c which counts entries not lines
+  - harden gog-extract .sh handler: validate makeself archive signature
+    (grep -qi 'makeself' in first 20 lines) before bash invocation;
+    previously any .sh file would be executed with --noexec passed as $1
+    (a bash argument, not a makeself flag) to a non-makeself script
+
 7.6.1  2026-03-30
 
   Fixes:
