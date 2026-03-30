@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.5.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.6.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -104,10 +104,10 @@ bash ry-crostini.sh [OPTIONS]
 | 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, … |
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
-| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning |
+| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning |
 | 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor |
 | 8 | GUI | xterm, session support, fonts, icons |
-| 9 | Environment | Locale, env, XDG, paths |
+| 9 | Environment | Locale, journald volatile, env, XDG, paths |
 | 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user |
 | 11 | Verify | Summary and verification |
 
@@ -122,6 +122,7 @@ bash ry-crostini.sh [OPTIONS]
 | `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
+| `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 
 ### User
 
@@ -132,14 +133,15 @@ bash ry-crostini.sh [OPTIONS]
 | `~/.config/environment.d/qt.conf` | 7 | Qt 5/6 platform theme |
 | `~/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf` | 6 | PipeWire gaming quantum |
 | `~/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf` | 6 | PipeWire pulse VM override |
+| `~/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf` | 6 | WirePlumber ALSA tuning |
 | `~/.config/gtk-3.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
 | `~/.config/gtk-4.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
 | `~/.gtkrc-2.0` | 7 | GTK 2 dark theme |
 | `~/.Xresources` | 7 | Xft DPI 120 |
 | `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
 | `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
-| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio |
-| `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio, frame delay |
+| `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth, chorus off |
 | `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |

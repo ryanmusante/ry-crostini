@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.5.1
+# Version: 7.6.0
 # Date:    2026-03-29
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.5.1"
+readonly SCRIPT_VERSION="7.6.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -541,11 +541,12 @@ STEPS PERFORMED:
      4  Build essentials and development headers
      5  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
      6  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
-        PipeWire gaming tuning)
+        PipeWire gaming tuning, WirePlumber ALSA tuning)
      7  Display scaling and HiDPI (sommelier, Super key passthrough,
         GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
      8  GUI essentials (xterm, session support, fonts, icons)
-     9  Container resource tuning (locale, env, XDG, paths)
+     9  Container resource tuning (locale, journald volatile, env,
+        XDG, paths)
     10  Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth
         soundfont, innoextract/GOG, unrar/unar, box64,
         qemu-user)
@@ -681,6 +682,8 @@ MESA_NO_ERROR=1
 MESA_SHADER_CACHE_DISABLE=false
 MESA_SHADER_CACHE_MAX_SIZE=256M
 MESA_DISK_CACHE_DATABASE=1
+# Reduce database partition count from default 50 — less overhead on 4 GB RAM
+MESA_DISK_CACHE_DATABASE_NUM_PARTS=10
 
 # [experimental] GL thread offloading — marshals GL calls on separate CPU thread;
 # Kryo 468 has 8 cores with headroom. virgl host-side remains single-threaded;
@@ -1270,6 +1273,9 @@ if should_run_step 5; then
     elif ! grep -q 'MESA_LOADER_DRIVER_OVERRIDE' "$GPU_ENV_FILE"; then
         log "Upgrading gpu.conf: adding Mesa driver override and shader cache vars"
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
+    elif ! grep -q 'MESA_DISK_CACHE_DATABASE_NUM_PARTS' "$GPU_ENV_FILE"; then
+        log "Upgrading gpu.conf: adding database partition count"
+        _gpu_conf_content | write_file "$GPU_ENV_FILE"
     else
         log "GPU env already up to date — skipping"
     fi
@@ -1278,9 +1284,9 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
-# Step 6: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)
+# Step 6: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning)
 if should_run_step 6; then
-    step_banner 6 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning)"
+    step_banner 6 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning)"
 
     AUDIO_PKGS=(
         # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by alsa-utils and libasound2-plugins; no explicit listing needed.
@@ -1363,6 +1369,37 @@ context.properties = {
     default.clock.min-quantum   = 256
     default.clock.max-quantum   = 1024
     clock.power-of-two-quantum  = true
+    # Allow real-time memory locking for audio threads
+    mem.allow-mlock             = true
+}
+
+context.properties.rules = [
+    {   # Explicitly override VM detection that forces min-quantum=1024
+        matches = [ { cpu.vm.name = !null } ]
+        actions = {
+            update-props = {
+                default.clock.min-quantum = 256
+            }
+        }
+    }
+]
+PWEOF
+    elif ! grep -q 'mem.allow-mlock' "$_PW_GAMING"; then
+        log "Upgrading PipeWire gaming config: adding mem.allow-mlock"
+        write_file "$_PW_GAMING" <<'PWEOF'
+# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
+# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
+# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
+
+context.properties = {
+    default.clock.rate          = 48000
+    default.clock.allowed-rates = [ 48000 ]
+    default.clock.quantum       = 256
+    default.clock.min-quantum   = 256
+    default.clock.max-quantum   = 1024
+    clock.power-of-two-quantum  = true
+    # Allow real-time memory locking for audio threads
+    mem.allow-mlock             = true
 }
 
 context.properties.rules = [
@@ -1403,6 +1440,35 @@ PPEOF
         log "PipeWire-Pulse gaming config already exists"
     fi
     unset _PW_PULSE_GAMING
+
+    # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
+    _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
+    if [[ ! -f "$_WP_ALSA" ]]; then
+        run mkdir -p "${HOME}/.config/wireplumber/wireplumber.conf.d" || true
+        write_file "$_WP_ALSA" <<'WPEOF'
+# WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
+# Optimizes ALSA node buffer parameters; disables auto-suspend.
+# WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8).
+
+monitor.alsa.rules = [
+    {
+        matches = [ { node.name = "~alsa_output.*" } ]
+        actions = {
+            update-props = {
+                api.alsa.period-size              = 256
+                api.alsa.period-num               = 3
+                api.alsa.headroom                 = 256
+                api.alsa.disable-batch            = true
+                session.suspend-timeout-seconds   = 0
+            }
+        }
+    }
+]
+WPEOF
+    else
+        log "WirePlumber ALSA config already exists"
+    fi
+    unset _WP_ALSA
 
     unset AUDIO_PKGS SND_DEV_COUNT
     set_checkpoint 6
@@ -1655,10 +1721,10 @@ if should_run_step 8; then
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: Container resource tuning (locale, env, XDG, paths)
+# Step 9: Container resource tuning (locale, journald volatile, env, XDG, paths)
 # NOTE: Crostini containers run in a locked-down kernel namespace; sysctl keys such as fs.inotify.max_user_watches, vm.max_map_count, vm.overcommit_memory, and vm.swappiness are all read-only from inside the container. Writing them to /etc/sysctl.d/ has no effect and the sysctl service exits 1 on every boot. These settings have been removed.
 if should_run_step 9; then
-    step_banner 9 "Container resource tuning (locale, env, XDG, paths)"
+    step_banner 9 "Container resource tuning (locale, journald volatile, env, XDG, paths)"
 
     # 9c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
@@ -1685,7 +1751,22 @@ if should_run_step 9; then
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 9d. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 9d. Journald volatile storage — write logs to RAM only (saves eMMC I/O)
+    _JOURNALD_VOL="/etc/systemd/journald.conf.d/volatile.conf"
+    if [[ ! -f "$_JOURNALD_VOL" ]]; then
+        write_file_sudo "$_JOURNALD_VOL" <<'JDEOF'
+[Journal]
+Storage=volatile
+JDEOF
+        run sudo systemctl restart systemd-journald \
+            || warn "journald restart failed — volatile storage takes effect on next container start"
+        log "Journald set to volatile (RAM-only) storage"
+    else
+        log "Journald volatile config already exists"
+    fi
+    unset _JOURNALD_VOL
+
+    # 9e. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/ry-crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1762,11 +1843,12 @@ if should_run_step 10; then
 video_driver = "glcore"
 video_threaded = "true"
 video_vsync = "true"
-video_max_swapchain_images = "2"
+video_max_swapchain_images = "3"
+video_frame_delay_auto = "true"
 
-# Audio: native PipeWire driver (RetroArch 1.20+, Trixie). Eliminates PulseAudio
-# compat layer hop. Caveat: upstream issue libretro/RetroArch#17685 — PipeWire
-# driver may hardcode quantum; if stutters occur, fall back to audio_driver = "pulse".
+# Audio: PipeWire driver (RetroArch 1.20+, Trixie). Caveat: RA 1.20.0
+# hardcodes quantum values ignoring audio_latency (libretro/RetroArch#17685,
+# fixed in RA 1.21+). If stutters occur, switch to audio_driver = "alsa".
 # Latency 96 ms prevents underruns on SC7180P under gaming load.
 audio_driver = "pipewire"
 audio_latency = "96"
@@ -1781,7 +1863,25 @@ savestate_compression = "true"
 menu_driver = "rgui"
 RACFG
     else
-        log "RetroArch config already exists — skipping"
+        # Upgrade paths — surgical edits for existing configs (preserve user changes)
+        # video_max_swapchain_images: 2→3 (virgl serialization)
+        if grep -q 'video_max_swapchain_images *= *"2"' "$_RA_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] sed swapchain 2→3 in retroarch.cfg"
+            else
+                sed -i 's/video_max_swapchain_images *= *"2"/video_max_swapchain_images = "3"/' "$_RA_CFG"
+                log "RetroArch: video_max_swapchain_images 2→3"
+            fi
+        fi
+        # video_frame_delay_auto: add if absent
+        if ! grep -q 'video_frame_delay_auto' "$_RA_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] append video_frame_delay_auto to retroarch.cfg"
+            else
+                printf 'video_frame_delay_auto = "true"\n' >> "$_RA_CFG"
+                log "RetroArch: added video_frame_delay_auto=true"
+            fi
+        fi
     fi
     unset _RA_CFG
 
@@ -1802,9 +1902,19 @@ filtering=false
 vsync=true
 music_driver=fluidsynth
 soundfont=/usr/share/sounds/sf2/FluidR3_GM.sf2
+# Disable chorus effect — saves 5–8% CPU on SC7180P
+fluidsynth_chorus_activate=false
 SVMCFG
     else
-        log "ScummVM config already exists — skipping"
+        # Upgrade path: add fluidsynth_chorus_activate=false if absent (5–8% CPU savings)
+        if ! grep -q 'fluidsynth_chorus_activate' "$_SVM_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] append fluidsynth_chorus_activate=false to scummvm.ini"
+            else
+                printf 'fluidsynth_chorus_activate=false\n' >> "$_SVM_CFG"
+                log "ScummVM: added fluidsynth_chorus_activate=false"
+            fi
+        fi
     fi
     unset _SVM_CFG
 
@@ -2272,6 +2382,7 @@ if should_run_step 11; then
 
     check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
     check_config "/etc/apt/preferences.d/pin-systemd"             "systemd v257 version pin"
+    check_config "/etc/systemd/system/ry-crostini-cros-pin.service" "cros.list cleanup service"
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
@@ -2300,6 +2411,8 @@ if should_run_step 11; then
     check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
+    check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
+    check_config "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
     check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"

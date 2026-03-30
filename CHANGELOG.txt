@@ -4,6 +4,61 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.6.0  2026-03-29
+
+  Gaming optimizations (spec: ry-crostini-gaming-optimizations v1.2.0):
+
+  Mesa:
+  - add MESA_DISK_CACHE_DATABASE_NUM_PARTS=10 to gpu.conf; reduces
+    database partition overhead from default 50 on 4 GB RAM
+  - add upgrade path: rewrite gpu.conf if NUM_PARTS absent
+
+  PipeWire:
+  - add mem.allow-mlock=true to PipeWire core gaming config; allows
+    real-time memory locking for audio threads
+  - add upgrade path: rewrite PipeWire gaming config if
+    mem.allow-mlock absent
+  - add WirePlumber ALSA tuning config
+    (~/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf):
+    period-size=256, period-num=3, headroom=256, disable-batch=true,
+    suspend-timeout=0; WirePlumber 0.5+ JSON .conf format (Trixie)
+
+  RetroArch:
+  - change video_max_swapchain_images from 2 to 3; reduces virgl
+    serialization stalls
+  - add video_frame_delay_auto=true; dynamic safe frame delay
+    (available since RA 1.9.13)
+  - update audio_driver comment: document alsa as fallback for
+    RA#17685 (PipeWire quantum hardcoding in Trixie RA 1.20.0;
+    fixed in RA 1.21+); default remains pipewire
+  - add upgrade paths for existing retroarch.cfg: sed swapchain
+    2→3, append video_frame_delay_auto if absent
+
+  ScummVM:
+  - add fluidsynth_chorus_activate=false to scummvm.ini; saves
+    5–8% CPU on SC7180P by disabling chorus DSP effect
+  - add upgrade path for existing scummvm.ini: append
+    fluidsynth_chorus_activate=false if absent
+
+  Container:
+  - add journald volatile storage config
+    (/etc/systemd/journald.conf.d/volatile.conf): Storage=volatile;
+    writes journal to RAM only, saves eMMC I/O; step 9d
+
+  Verification:
+  - add check_config for WirePlumber ALSA tuning (step 6)
+  - add check_config for journald volatile (step 9)
+  - add check_config for ry-crostini-cros-pin.service (step 2;
+    was in README generated files table but never verified)
+
+  Documentation:
+  - update step 6 description: add WirePlumber ALSA tuning
+  - update step 9 description: add journald volatile
+  - update README generated files table: add WirePlumber ALSA and
+    journald volatile entries
+  - renumber step 9 subsections: 9d=journald, 9e=env profile,
+    9f=XDG dirs
+
 7.5.1  2026-03-29
 
   Fixes:
