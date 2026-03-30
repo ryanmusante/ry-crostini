@@ -20,9 +20,23 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
   - sync step 10 description in README: "unar" → "unrar/unar" to match
     script banner and --help
 
+  Documentation:
+  - restructure README for GitHub readability: add table of contents
+    with section anchors, quick start section, flag reference table
+    (replaces code block), prerequisites table (replaces nested
+    bullets), 3-column step table with category, generated files
+    table with exact paths and step numbers split by system/user
+    (replaces prose blob), features split into safety/UX subsections,
+    known limitations grouped by severity (blockers/constraints/info),
+    ChromeOS flags table, standalone exit codes table
+  - fix README step 5 description: "Vulkan info" → "Vulkan" to match
+    script banner and --help
+  - standardize changelog section headers: "Bugs fixed:" and
+    "Bug fixes:" → "Fixes:" for consistency
+
 7.5.0  2026-03-29
 
-  Bugs fixed:
+  Fixes:
   - replace p7zip-full (transitional in Trixie, 16.02+transitional.1)
     with 7zip (25.01+dfsg-1); p7zip-full will be removed in a future
     Debian release
@@ -291,7 +305,7 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
 5.5.0  2026-03-26
 
-  Bug fixes:
+  Fixes:
   - FIX-1: inject ~/.local/bin and ~/.cargo/bin into PATH at step 15 verify
     start so run-x86 and gog-extract resolve correctly without requiring a
     new login shell; previously both reported ✗ not found and drove exit 1

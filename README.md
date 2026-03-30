@@ -5,210 +5,289 @@
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
-(82QS0001US). Takes a fresh Debian container from zero to a fully
-configured Trixie (Debian 13) desktop environment in one unattended run.
-Bookworm containers are upgraded to Trixie automatically in step 2.
+(82QS0001US). Takes a fresh Debian container from zero to a fully configured
+Trixie (Debian 13) desktop environment in one unattended run. Bookworm
+containers are upgraded to Trixie automatically in step 2.
+
+## Table of Contents
+
+- [Hardware](#hardware)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Prerequisites](#prerequisites)
+- [Installation Steps](#installation-steps)
+- [Generated Files](#generated-files)
+- [Features](#features)
+- [Trixie Upgrade](#trixie-upgrade)
+- [Known Limitations](#known-limitations)
+- [Exit Codes](#exit-codes)
+- [Gaming](#gaming)
+  - [Compatibility Tiers](#compatibility-tiers)
+  - [Native ARM64 Emulators](#native-arm64-emulators)
+  - [RetroArch Recommended Cores](#retroarch-recommended-cores)
+  - [RetroArch CRT Shaders](#retroarch-crt-shaders)
+  - [RetroArch Run-Ahead](#retroarch-run-ahead)
+  - [x86 Translation](#x86-translation)
+  - [GOG Games](#gog-games)
+  - [Cloud Gaming](#cloud-gaming)
+- [License](#license)
 
 ## Hardware
 
-| | |
-|-|-|
+| Component | Detail |
+|-----------|--------|
 | SoC | Snapdragon 7c Gen 2 (SC7180P), aarch64 |
 | GPU | Adreno 618 → virgl (paravirtualized) |
-| RAM / Storage | 4 GB LPDDR4x / 128 GB eMMC |
-| Display | 13.3" 1920×1080 OLED |
+| RAM | 4 GB LPDDR4x |
+| Storage | 128 GB eMMC |
+| Display | 13.3″ 1920×1080 OLED |
 | Container | Debian Trixie arm64, bash |
+
+## Quick Start
+
+```bash
+# 1. Enable Linux (Beta): Settings → Developers → Turn On
+# 2. Enable GPU flag: chrome://flags/#crostini-gpu-support → Enabled → Reboot
+# 3. Run:
+bash ry-crostini.sh
+```
+
+Bookworm containers are upgraded to Trixie automatically.
 
 ## Usage
 
-```bash
-bash ry-crostini.sh                              # unattended (default, upgrades to Trixie)
-bash ry-crostini.sh --interactive                # prompt for toggles
-bash ry-crostini.sh --dry-run                    # preview, zero side effects
-bash ry-crostini.sh --minimal                    # skip heavy optional packages
-bash ry-crostini.sh --from-step=6                # resume from a specific step
-bash ry-crostini.sh --verify                     # run only summary/verification
-bash ry-crostini.sh --reset                      # clear checkpoint, start over
-bash ry-crostini.sh --help                       # show usage and step list
-bash ry-crostini.sh --version                    # show version
-bash ry-crostini.sh --                           # stop processing options
 ```
+bash ry-crostini.sh [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| *(none)* | Unattended full install (default) |
+| `--interactive` | Prompt for ChromeOS toggles |
+| `--dry-run` | Print commands without executing |
+| `--minimal` | Skip heavy optional packages (e.g. gnome-disk-utility, libavcodec-extra, qemu-user) |
+| `--from-step=N` | Start or restart from step N (1–11; N=11 is same as `--verify`) |
+| `--verify` | Run only step 11 (summary and verification) |
+| `--reset` | Clear checkpoint and lock, start from step 1 |
+| `--help` | Show usage and step list |
+| `--version` | Show version |
+| `--` | Stop processing options (remaining args ignored) |
+
+> **Note:** The script uses sudo internally. Ensure the sudo credential is
+> cached (`sudo true`) or `timestamp_timeout` is adequate.
 
 ## Prerequisites
 
 1. ChromeOS updated to latest stable
-2. Linux (Beta) enabled: Settings → Developers → Turn On
+2. Linux (Beta) enabled
 3. Terminal app open
-4. **Recommended before running** (use `--interactive` to be guided through
-   each toggle, or configure manually):
-   - **GPU**: `chrome://flags/#crostini-gpu-support` → Enabled → reboot
-     Chromebook. GPU packages install regardless; `/dev/dri/renderD128`
-     requires the flag + reboot.
-   - **Microphone**: Settings → Developers → Linux → Microphone → On
-   - **Disk size**: Settings → Developers → Linux → Disk size → 20-30 GB
-     (aborts below 2 GB, warns below 10 GB)
-   - **Shared folders** *(optional)*: Files app → right-click folder →
-     Share with Linux (appears at `/mnt/chromeos/`)
-   - **USB** *(optional)*: Settings → Developers → Linux → Manage USB devices
-   - **Ports** *(optional)*: Settings → Developers → Linux → Port forwarding
+4. Recommended settings (or use `--interactive` to be guided):
 
-## Steps
+| Setting | Location | Notes |
+|---------|----------|-------|
+| GPU | `chrome://flags/#crostini-gpu-support` → Enabled → Reboot | Required for `/dev/dri/renderD128`; GPU packages install regardless |
+| Microphone | Settings → Developers → Linux → Microphone → On | |
+| Disk size | Settings → Developers → Linux → Disk size → 20–30 GB | Aborts below 2 GB, warns below 10 GB |
+| Shared folders | Files app → right-click folder → Share with Linux | Optional; mounts at `/mnt/chromeos/` |
+| USB devices | Settings → Developers → Linux → Manage USB devices | Optional |
+| Port forwarding | Settings → Developers → Linux → Port forwarding | Optional |
 
-| # | Step |
-|---|------|
-| 1 | Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive`) |
-| 2 | System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service) |
-| 3 | Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...) |
-| 4 | Build essentials and development headers |
-| 5 | GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan) |
-| 6 | Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning) |
-| 7 | Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor) |
-| 8 | GUI essentials (xterm, session support, fonts, icons) |
-| 9 | Container resource tuning (locale, env, XDG, paths) |
-| 10 | Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user) |
-| 11 | Summary and verification |
+## Installation Steps
 
-## Config files written
+| Step | Category | Description |
+|------|----------|-------------|
+| 1 | Preflight | Arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive` |
+| 2 | System | APT tuning, Trixie upgrade, cros pkg hold, deb822 migration, `/tmp` tmpfs cap, cros-pin service |
+| 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, … |
+| 4 | Build tools | Build essentials and development headers |
+| 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
+| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning |
+| 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor |
+| 8 | GUI | xterm, session support, fonts, icons |
+| 9 | Environment | Locale, env, XDG, paths |
+| 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user |
+| 11 | Verify | Summary and verification |
 
-Apt download tuning, GPU env (EGL, Mesa virgl override, shader cache, GTK dark
-theme), PipeWire gaming quantum + pulse.properties.rules VM override,
-sommelier scaling + Super key passthrough, Qt 5/6 theming,
-GTK 2/3/4 dark theme (Noto Sans 11pt, grayscale AA for OLED), Xresources DPI 120,
-fontconfig, Adwaita cursor, shell env + PATH,
-/tmp tmpfs 512M cap (Trixie), RetroArch config (glcore + PipeWire audio), ScummVM config (OpenGL +
-pixel-perfect + FluidSynth), box64 SC7180P config (`~/.box64rc` — DynaRec + Wine tuning),
-run-x86 wrapper (`~/.local/bin/run-x86` — auto-selects box64 or qemu for
-x86/x86\_64 binaries), gog-extract wrapper (`~/.local/bin/gog-extract` — extracts
-GOG Windows .exe and Linux .sh installers without Wine).
+## Generated Files
 
-## Compatibility
+### System (requires sudo)
 
-Step 2 upgrades the container to Debian 13 (Trixie) by rewriting
-`/etc/apt/sources.list` and running `apt full-upgrade`. Crostini
-lifecycle packages (`cros-guest-tools`, `cros-sommelier`, etc.) are held
-during the upgrade and unheld afterward. Backups are saved with a
-`.pre-trixie` suffix under `/etc/apt/`. `VERSION_CODENAME` is validated
-before any rewrite. Already-Trixie containers get a normal
-update/upgrade.
+| Path | Step | Purpose |
+|------|------|---------|
+| `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
+| `/etc/apt/preferences.d/pin-systemd` | 2 | Pin systemd to `257.*` (cgroup v1 safety) |
+| `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB |
+| `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
+| `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
 
-The Crostini-managed `cros.list` is also updated but may reset on
-container restart (expected ChromeOS behavior). Step 2 installs
-`ry-crostini-cros-pin.service` to automatically remove any stale
-regenerated `cros.list` on each container start, preventing duplicate
-APT sources. After `apt modernize-sources`, any duplicate `cros.list`
-is removed if a `.sources` equivalent was created. Trixie mounts `/tmp`
-as tmpfs; step 2 caps it at 512 MB to prevent OOM.
+### User
+
+| Path | Step | Purpose |
+|------|------|---------|
+| `~/.config/environment.d/gpu.conf` | 5 | EGL, Mesa virgl override, shader cache, GTK dark theme |
+| `~/.config/environment.d/sommelier.conf` | 7 | Sommelier scaling, Super key passthrough |
+| `~/.config/environment.d/qt.conf` | 7 | Qt 5/6 platform theme |
+| `~/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf` | 6 | PipeWire gaming quantum |
+| `~/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf` | 6 | PipeWire pulse VM override |
+| `~/.config/gtk-3.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
+| `~/.config/gtk-4.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
+| `~/.gtkrc-2.0` | 7 | GTK 2 dark theme |
+| `~/.Xresources` | 7 | Xft DPI 120 |
+| `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
+| `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio |
+| `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth |
+| `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning |
+| `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
+| `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
+
+All config files are written atomically (tmpfile + mv). Existing files are
+skipped (idempotent). Wrappers in `~/.local/bin/` are installed mode 700.
 
 ## Features
 
-- **Unattended by default** — all 6 prompts auto-answered; `--interactive` restores them
-- **Checkpoint resume** — re-run to continue from last completed step; verification failures keep checkpoint at step 10 so re-run repeats only verification
-- **Exit codes** — `0` on success, `1` on verification failure or fatal error; exit message distinguishes verify-fail from mid-step fatal
+### Safety and Reliability
+
+- **Idempotent** — config files skip if already present
+- **Atomic writes** — tmpfile + mv for all config files; `write_file_exec` for mode-700 wrappers
+- **Concurrent-safe** — PID-based `mkdir` lock with stale detection
+- **Checkpoint resume** — progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step
+- **No eval, no `bash -c`** — `run()` passes `"$@"` directly (generated systemd unit uses `bash -c` for inline conditional)
+- **Signal handling** — traps INT, TERM, HUP, PIPE, QUIT; re-raises for correct 128+N exit code
+
+### User Experience
+
+- **Unattended by default** — all prompts auto-answered; `--interactive` restores them
 - **`--dry-run`** — zero side effects, zero network, zero interaction
 - **`--minimal`** — skip heavy optional packages for RAM-constrained devices
-- **Idempotent** — config files skip if already present
-- **Concurrent-safe** — PID-based mkdir lock
-- **Atomic writes** — tmpfile + mv for all config files; `write_file_exec` for mode-700 wrappers
-- **No eval, no bash -c in script execution** — `run()` passes `"$@"` directly (generated systemd unit uses `bash -c` for inline conditional)
 - **Colored output** — respects `NO_COLOR`
-- **Progress bar** — bottom-pinned step counter with percentage; resize-aware
+- **Progress bar** — bottom-pinned step counter with percentage; resize-aware (WINCH)
 - **Full logging** — `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
+- **Elapsed time** — reported at completion
 
-## Known limitations
+## Trixie Upgrade
 
-**Vulkan is unavailable.** The virgl paravirtualized GPU exposes OpenGL 4.3
+Step 2 upgrades Bookworm containers to Debian 13 (Trixie) by rewriting
+`/etc/apt/sources.list` and running `apt full-upgrade`.
+
+- Crostini lifecycle packages (`cros-guest-tools`, `cros-sommelier`, etc.) are held during upgrade and unheld afterward.
+- Backups saved with `.pre-trixie` suffix under `/etc/apt/`.
+- `VERSION_CODENAME` validated before any rewrite; already-Trixie containers receive a normal update/upgrade.
+- `ry-crostini-cros-pin.service` removes stale regenerated `cros.list` on each container start, preventing duplicate APT sources.
+- After `apt modernize-sources`, any duplicate `cros.list` is removed if a `.sources` equivalent was created.
+- Trixie mounts `/tmp` as tmpfs; step 2 caps it at 512 MB to prevent OOM.
+
+## Known Limitations
+
+### Blockers
+
+**Vulkan unavailable** — The virgl paravirtualized GPU exposes OpenGL 4.3
 only. `vulkaninfo` installs and its version is reported in verification, but
 no Vulkan device is enumerated. Vulkan-only games and apps will not run.
 
-**Sommelier is not running during install.** Sommelier (the Wayland/X11
-bridge) is started by the container login process, not inside a running
-shell. Step 1 logs this as informational; step 11 verification reports it
-as a warning only if still not running at completion. Closing and reopening
-the Terminal app is all that is required.
+**systemd v258 breaks Crostini** — v258 refuses to run under cgroup v1
+(exits PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only
+with no public timeline for v2 migration. Trixie ships v257.9 (safe);
+ry-crostini pins systemd to `257.*` via APT preferences. Already breaking
+Arch Linux containers on Crostini.
 
-**sysctl keys are read-only in Crostini.** All kernel tuning parameters
+### Constraints
+
+**sysctl keys are read-only** — All kernel tuning parameters
 (`fs.inotify.max_user_watches`, `vm.max_map_count`, `vm.overcommit_memory`,
 `vm.swappiness`, `fs.protected_*`) are blocked by the ChromeOS Termina VM
 namespace. Writing to `/etc/sysctl.d/` has no effect from inside the
-container. Step 9 no longer attempts to apply sysctl settings.
+container.
 
-**WirePlumber 0.5 uses `.conf` files, not Lua scripts.** Trixie ships
-WirePlumber 0.5.8 which changed config format from Lua to JSON `.conf`
-files. Any user-created Lua configs in `~/.config/wireplumber/` will be
-silently ignored.
+**WirePlumber 0.5 format change** — Trixie ships WirePlumber 0.5.8 which
+uses JSON `.conf` files, not Lua scripts. User-created Lua configs in
+`~/.config/wireplumber/` will be silently ignored.
 
-**Steam is x86-only.** Community translation layers
+**Steam is x86-only** — Community translation layers
 ([box64](https://github.com/ptitSeb/box64) /
-[box86](https://github.com/ptitSeb/box86)) exist but are unusable on
-4 GB RAM + virgl. Use [GeForce NOW](https://play.geforcenow.com) or
-[Xbox Cloud Gaming](https://xbox.com/play) in the ChromeOS browser.
+[box86](https://github.com/ptitSeb/box86)) exist but are unusable on 4 GB
+RAM + virgl. Use cloud gaming in the ChromeOS browser.
 
-The `#crostini-multi-container` flag is deprecated at milestone 141
-(Baguette replaces it). `#borealis-enabled` is deprecated (Borealis shut
-down 2026-01-01). `#crostini-containerless` (Baguette) is available from
-ChromeOS 143+ but is early-stage. `#crostini-gpu-support` and
-`#exo-pointer-lock` are still present and required (confirmed ChromeOS 145).
+**Avoid Flatpak for gaming** — Triple sandbox overhead (ChromeOS → Termina
+VM → LXC → bubblewrap), Flatpak runtime Mesa 25.x compositor crashes (Zink
+regression), ~2× package size RAM during install/update, and all gaming
+targets (RetroArch, DOSBox-X, ScummVM) are available as native arm64 `.deb`.
 
-**systemd v258 will break Crostini containers.** v258 refuses to run
-under cgroup v1 (exits PID 1 immediately). Crostini's Termina VM kernel
-uses cgroup v1 only with no public timeline for v2 migration. Trixie
-ships v257.9 (safe); ry-crostini pins systemd to `257.*` via apt
-preferences. Already breaking Arch Linux containers on Crostini.
+### Informational
 
-**Avoid Flatpak for gaming.** Triple sandbox overhead (ChromeOS → Termina
-VM → LXC → bubblewrap), Flatpak runtime Mesa 25.x compositor crashes
-(Zink regression), ~2× package size RAM during install/update, and all
-gaming targets (RetroArch, DOSBox-X, ScummVM) are available as native
-arm64 .deb.
+**Sommelier not running during install** — Sommelier (the Wayland/X11 bridge)
+is started by the container login process, not inside a running shell. Step 1
+logs this as informational; step 11 reports it as a warning only if still not
+running at completion. Close and reopen the Terminal app to resolve.
+
+**ChromeOS flag status (confirmed M145):**
+
+| Flag | Status |
+|------|--------|
+| `#crostini-gpu-support` | Required |
+| `#exo-pointer-lock` | Required |
+| `#crostini-multi-container` | Deprecated at M141 (Baguette replaces) |
+| `#borealis-enabled` | Deprecated (Borealis shut down 2026-01-01) |
+| `#crostini-containerless` | Available M143+ (Baguette, early-stage) |
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success — all verification checks passed |
+| `1` | Verification failure or fatal error |
+
+Exit message distinguishes verification failure from mid-step fatal.
+Verification failures keep the checkpoint at step 10 so re-run repeats only
+step 11 (verification).
 
 ## Gaming
 
-Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM
-soundfont, innoextract (GOG/Inno Setup extractor), unar (archive
-extraction including RAR4/RAR5 and GOG multi-part archives), box64
-(x86\_64 DynaRec JIT), and qemu-user for TCG x86/x86\_64 + i386 emulation
-(skipped with `--minimal`). `unrar` (RARLAB, non-free) is attempted
-separately; if unavailable, `unar` is used in its place. Default config
-files are written for RetroArch, ScummVM, box64, run-x86, and
-gog-extract on first install.
+Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
+innoextract (GOG/Inno Setup extractor), unar (archive extraction including
+RAR4/RAR5 and multi-part archives), box64 (x86\_64 DynaRec JIT), and
+qemu-user for TCG x86/x86\_64 + i386 emulation (skipped with `--minimal`).
+`unrar` (RARLAB, non-free) is attempted separately; if unavailable, `unar`
+is used in its place. Default config files are written for RetroArch,
+ScummVM, box64, run-x86, and gog-extract on first install.
 
-### Compatibility tiers
+### Compatibility Tiers
 
-| Tier | What runs | RAM | Examples |
+| Tier | What Runs | RAM | Examples |
 |------|-----------|-----|---------|
 | Excellent | ScummVM, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
-| Fair | RetroArch PSX/PSP | 300-500 MB | PS1 catalog, lighter PSP titles |
-| Marginal | RetroArch N64, box64+Wine 2D | 500 MB-2 GB | May lag or OOM |
+| Fair | RetroArch PSX/PSP | 300–500 MB | PS1 catalog, lighter PSP titles |
+| Marginal | RetroArch N64, box64+Wine 2D | 500 MB–2 GB | May lag or OOM |
 | No-go | Vulkan / D3D10+ / Steam | N/A | Use cloud gaming |
 
-### Native ARM64 (installed by step 10)
+### Native ARM64 Emulators
 
-**DOSBox-X** — comprehensive DOS emulator with save-states, PC-98, MT-32,
+**DOSBox-X** — Comprehensive DOS emulator with save-states, PC-98, MT-32,
 and CJK support.
 
 **ScummVM** — 200+ native engine reimplementations. Config at
 `~/.config/scummvm/scummvm.ini` with OpenGL, pixel-perfect scaling, and
 FluidSynth.
 
-**RetroArch** — multi-system emulator (native arm64 Debian package).
-Config at `~/.config/retroarch/retroarch.cfg`.
+**RetroArch** — Multi-system emulator (native arm64 Debian package). Config
+at `~/.config/retroarch/retroarch.cfg`.
 
-### RetroArch recommended cores
+### RetroArch Recommended Cores
 
-| System | Recommended | Type | Notes |
-|--------|-------------|------|-------|
-| NES | FCEUmm | Core | Lightweight, accurate for 99% of titles |
-| SNES | snes9x | Core | Best performance-to-accuracy ratio on ARM64 |
-| Genesis / Mega CD / SMS / GG | Genesis Plus GX | Core | Single core covers four systems |
-| GBA | mGBA | Core | ARM64-optimized |
-| PSX | pcsx_rearmed | Core | ARM NEON dynarec, software renderer (avoids virgl overhead) |
-| N64 | mupen64plus-next | Core | GLideN64 with GLES renderer; may struggle at 4 GB |
-| PSP | PPSSPP | Core | Install via RetroArch Online Updater |
-| DS | melonDS DS | Core | ARM64 builds confirmed (v1.1.8+) |
-| Dreamcast | Flycast | Core | ARM64 JIT; lighter titles at full speed |
+| System | Core | Notes |
+|--------|------|-------|
+| NES | FCEUmm | Lightweight, accurate for 99% of titles |
+| SNES | snes9x | Best performance-to-accuracy ratio on ARM64 |
+| Genesis / Mega CD / SMS / GG | Genesis Plus GX | Single core covers four systems |
+| GBA | mGBA | ARM64-optimized |
+| PSX | pcsx\_rearmed | ARM NEON dynarec, software renderer (avoids virgl overhead) |
+| N64 | mupen64plus-next | GLideN64 with GLES renderer; may struggle at 4 GB |
+| PSP | PPSSPP | Install via RetroArch Online Updater |
+| DS | melonDS DS | ARM64 builds confirmed (v1.1.8+) |
+| Dreamcast | Flycast | ARM64 JIT; lighter titles at full speed |
 
-### RetroArch CRT shaders
+### RetroArch CRT Shaders
 
 Virgl's GLES profile limits shader complexity. Tested slang shaders:
 
@@ -219,9 +298,10 @@ Virgl's GLES profile limits shader complexity. Tested slang shaders:
 | CRT-Easymode | Good flat-display CRT simulation | Low |
 | FakeLottes | CRT-Lottes tuned for weak GPUs | Low |
 
-Avoid CRT-Royale and Mega Bezel presets entirely — they require desktop GPU power.
+Avoid CRT-Royale and Mega Bezel presets entirely — they require desktop GPU
+power.
 
-### RetroArch run-ahead
+### RetroArch Run-Ahead
 
 Enable per-core overrides for 8-bit and 16-bit systems only. Create a core
 override (Quick Menu → Overrides → Save Core Override) with:
@@ -235,43 +315,46 @@ run_ahead_secondary_instance = "false"
 Never enable two-instance run-ahead on this hardware (doubles RAM usage per
 core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 
-### x86 translation (step 10)
+### x86 Translation
 
-> **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game loads. Not recommended for RAM-intensive titles.
+> **Warning:** x86 translation overhead consumes 500 MB–1 GB before the game
+> loads. Not recommended for RAM-intensive titles.
 
-**box64** is installed automatically (official Debian package). A tuned `~/.box64rc` is written by step 10.
+| Tool | Installed By | Performance | Notes |
+|------|-------------|-------------|-------|
+| box64 | Step 10 | Fast — ARM64 DynaRec | x86\_64 only |
+| qemu-user | Step 10 (`--minimal` skips) | Slow — TCG JIT (~5–10× slower than box64) | Also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
 
-**qemu-user** is installed automatically (skipped with `--minimal`).
-Slower than box64 but provides i386 support.
+**box64** is installed automatically (official Debian package). A tuned
+`~/.box64rc` is written by step 10.
 
-**32-bit x86 alternatives** (not installed by default — 4 GB RAM
-constraint):
+**qemu-user** is installed automatically (skipped with `--minimal`). Slower
+than box64 but provides i386 support.
 
-- **box86** + armhf libs (`dpkg --add-architecture armhf`) — ARM32
-  DynaRec for i386 binaries; faster than qemu-user TCG but requires
-  armhf multilib overhead.
+**`run-x86`** wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
+and dispatches to box64 (preferred) or qemu as appropriate. Use `run-x86
+--help` to list available backends.
+
+#### 32-bit x86 Alternatives
+
+Not installed by default due to the 4 GB RAM constraint:
+
+- **box86** + armhf libs (`dpkg --add-architecture armhf`) — ARM32 DynaRec
+  for i386 binaries; faster than qemu-user TCG but requires armhf multilib
+  overhead.
 - **box64 Box32 mode** (experimental, v0.3.2+) — pure 64-bit, no armhf
   needed. Set `BOX64_BOX32=1` in `~/.box64rc` `[default]` section.
 
-The `run-x86` wrapper uses `--help` to list available backends.
+**FEX-Emu:** Requires a mandatory x86-64 RootFS image and is not in Debian
+repos — setup complexity not warranted for 4 GB Crostini.
 
-| Tool | Install | Performance | Notes |
-|------|---------|-------------|-------|
-| box64 | Step 10 | Fast — ARM64 DynaRec | x86\_64 only |
-| qemu-user | Step 10 | Slow — TCG JIT via IR (~5-10x slower than box64) | Use `run-x86 ./program`; `qemu-x86_64`; also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
-
-`run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
-and dispatches to box64 (preferred) or qemu as appropriate.
-
-**FEX-Emu:** requires a mandatory x86-64 RootFS image and is not in Debian repos — setup complexity not warranted for 4 GB Crostini.
-
-### Transparent execution (privileged container)
+#### Transparent Execution (Privileged Container)
 
 Standard Crostini containers are unprivileged and cannot register
 binfmt\_misc interpreters. To get transparent `./x86_program` execution,
 create a privileged container:
 
-1. Open crosh: `ctrl+alt+t` → type `shell`
+1. Open crosh: `Ctrl+Alt+T` → type `shell`
 2. Create privileged container:
    ```
    vmc container termina x86 --privileged true
@@ -283,10 +366,10 @@ create a privileged container:
    ```
 4. Verify: `ls /proc/sys/fs/binfmt_misc/qemu-*`
 
-> **Warning:** Privileged containers have reduced security isolation.
-> The default `penguin` container remains unprivileged and unaffected.
+> **Warning:** Privileged containers have reduced security isolation. The
+> default `penguin` container remains unprivileged and unaffected.
 
-### GOG games
+### GOG Games
 
 Step 10 installs `innoextract` and writes the `gog-extract` wrapper
 (`~/.local/bin/gog-extract`) for extracting GOG game installers on Linux
@@ -319,12 +402,13 @@ sudo apt update && sudo apt install unrar
 ```
 
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
-provides Linux `.deb` releases (amd64 only — no native arm64 build; could
-run under box64 on Trixie but is untested on 4 GB RAM).
-Alternative: download GOG `.sh` installers from [gog.com](https://www.gog.com)
-directly.
+provides Linux `.deb` releases (amd64 only — no native arm64 build; could run
+under box64 on Trixie but is untested on 4 GB RAM). Alternative: download GOG
+`.sh` installers from [gog.com](https://www.gog.com) directly.
 
-### Cloud gaming (recommended for AAA)
+### Cloud Gaming
+
+Recommended for AAA titles:
 
 | Priority | Client | Notes |
 |----------|--------|-------|
@@ -336,6 +420,10 @@ directly.
 
 | Client | Issue |
 |--------|-------|
-| Moonlight Qt | No arm64 .deb; software decode only |
+| Moonlight Qt | No arm64 `.deb`; software decode only |
 | Parsec | No ARM64 Linux support |
 | Steam Link | No ARM64 Linux support |
+
+## License
+
+[MIT](LICENSE)
