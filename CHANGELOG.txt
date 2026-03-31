@@ -4,6 +4,14 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.7.0  2026-03-30
+
+  Breaking:
+  - remove --minimal flag: gnome-disk-utility, libavcodec-extra, and
+    qemu-user are now always installed; MINIMAL variable, argument
+    parsing, conditional guards, and step 11 verification guards all
+    removed
+
 7.6.4  2026-03-30
 
   Changes:

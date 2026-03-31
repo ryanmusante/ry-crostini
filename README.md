@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.6.4-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.7.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -67,7 +67,6 @@ bash ry-crostini.sh [OPTIONS]
 | *(none)* | Unattended full install (default) |
 | `--interactive` | Prompt for ChromeOS toggles |
 | `--dry-run` | Print commands without executing |
-| `--minimal` | Skip heavy optional packages (e.g. gnome-disk-utility, libavcodec-extra, qemu-user) |
 | `--from-step=N` | Start or restart from step N (1–11; N=11 is same as `--verify`) |
 | `--verify` | Run only step 11 (summary and verification) |
 | `--reset` | Clear checkpoint and lock, start from step 1 |
@@ -163,7 +162,6 @@ skipped (idempotent). Wrappers in `~/.local/bin/` are installed mode 700.
 
 - **Unattended by default** — all prompts auto-answered; `--interactive` restores them
 - **`--dry-run`** — zero side effects, zero network, zero interaction
-- **`--minimal`** — skip heavy optional packages for RAM-constrained devices
 - **Colored output** — respects `NO_COLOR`
 - **Progress bar** — bottom-pinned step counter with percentage; resize-aware (WINCH)
 - **Full logging** — `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days)
@@ -244,7 +242,7 @@ step 11 (verification).
 Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
 innoextract (GOG/Inno Setup extractor), unar (archive extraction including
 RAR4/RAR5 and multi-part archives), box64 (x86\_64 DynaRec JIT), and
-qemu-user for TCG x86/x86\_64 + i386 emulation (skipped with `--minimal`).
+qemu-user for TCG x86/x86\_64 + i386 emulation.
 `unrar` (RARLAB, non-free) is attempted separately; if unavailable, `unar`
 is used in its place. Default config files are written for RetroArch,
 ScummVM, box64, run-x86, and gog-extract on first install.
@@ -321,12 +319,12 @@ core). Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast cores.
 | Tool | Installed By | Performance | Notes |
 |------|-------------|-------------|-------|
 | box64 | Step 10 | Fast — ARM64 DynaRec | x86\_64 only |
-| qemu-user | Step 10 (`--minimal` skips) | Slow — TCG JIT (~5–10× slower than box64) | Also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
+| qemu-user | Step 10 | Slow — TCG JIT (~5–10× slower than box64) | Also provides i386; binfmt transparent exec blocked in unprivileged Crostini |
 
 **box64** is installed automatically (official Debian package). A tuned
 `~/.box64rc` is written by step 10.
 
-**qemu-user** is installed automatically (skipped with `--minimal`). Slower
+**qemu-user** is installed automatically. Slower
 than box64 but provides i386 support.
 
 **`run-x86`** wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture

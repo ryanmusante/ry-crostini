@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.6.4
+# Version: 7.7.0
 # Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
-# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--minimal] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
+# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.6.4"
+readonly SCRIPT_VERSION="7.7.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -36,7 +36,6 @@ fi
 
 DRY_RUN=false
 UNATTENDED=true
-MINIMAL=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
@@ -524,7 +523,6 @@ OPTIONS:
     --interactive  Prompt for ChromeOS toggles (default: unattended)
     --from-step=N  Start (or restart) from step N (1-11; N=11 is same as --verify)
     --verify       Run only step 11 (summary and verification)
-    --minimal      Skip heavy optional packages (e.g. gnome-disk-utility, libavcodec-extra, qemu-user)
     --help         Show this help message
     --version      Show version
     --reset        Clear checkpoint and start from step 1
@@ -590,7 +588,6 @@ for arg in "$@"; do
             _DEFERRED_CHECKPOINT="10"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only."
             ;;
-        --minimal) MINIMAL=true ;;
         --help)    rm -f -- "$LOG_FILE" 2>/dev/null; usage ;;
         --version) rm -f -- "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
         --reset)
@@ -1326,10 +1323,8 @@ if should_run_step 6; then
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
     )
-    # Append libavcodec-extra here (same transaction as libasound2-plugins) so apt resolves the full dep graph at once and never installs then removes libavcodec59.
-    if ! $MINIMAL; then
-        AUDIO_PKGS+=(libavcodec-extra)
-    fi
+    # Append libavcodec-extra (same transaction as libasound2-plugins) so apt resolves the full dep graph at once and never installs then removes libavcodec59.
+    AUDIO_PKGS+=(libavcodec-extra)
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
@@ -1673,13 +1668,9 @@ if should_run_step 8; then
 
     install_pkgs_best_effort "${GUI_PKGS[@]}" || warn "Some GUI packages unavailable — non-fatal"
 
-    # gnome-disk-utility has heavy GNOME deps — skip with --minimal
-    if ! $MINIMAL; then
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-disk-utility \
-            || warn "gnome-disk-utility install failed"
-    else
-        log "Skipping gnome-disk-utility (--minimal mode)"
-    fi
+    # gnome-disk-utility — heavy GNOME deps but useful for disk management
+    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-disk-utility \
+        || warn "gnome-disk-utility install failed"
 
     # Ensure desktop applications directory exists (garcon integration)
     if run mkdir -p "${HOME}/.local/share/applications"; then
@@ -1956,11 +1947,7 @@ SVMCFG
     fi
 
     # qemu-user: x86/x86_64 emulation via TCG dynamic binary translation Fills gap for i386 support (box64 is x86_64-only). NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini — must invoke explicitly: qemu-x86_64 ./program NOTE: Do NOT install qemu-user-binfmt. Its postinst triggers systemd-binfmt which fails with EPERM in unprivileged containers, leaving a failed unit in systemctl.
-    if ! $MINIMAL; then
-        install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
-    else
-        log "Skipping qemu-user (--minimal)"
-    fi
+    install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
 
     # Write ~/.box64rc with SC7180P-tuned defaults
     _BOX64_RC="${HOME}/.box64rc"
@@ -2359,9 +2346,7 @@ if should_run_step 11; then
     check_tool "pavucontrol" pavucontrol
     # Step 8: GUI essentials
     check_tool "xterm"       xterm
-    if ! $MINIMAL; then
-        check_tool "gnome-disks" gnome-disks
-    fi
+    check_tool "gnome-disks" gnome-disks
     # Step 10: gaming
     check_tool "dosbox-x"    dosbox-x
     check_tool "scummvm"     scummvm
@@ -2381,9 +2366,7 @@ if should_run_step 11; then
     check_tool "unar"        unar
     check_tool "box64"       box64
     # Step 10: qemu-user
-    if ! $MINIMAL; then
-        check_tool "qemu-x86_64" qemu-x86_64
-    fi
+    check_tool "qemu-x86_64" qemu-x86_64
     check_tool "run-x86" run-x86
     check_tool "gog-extract" gog-extract
     logprintf '\n'
