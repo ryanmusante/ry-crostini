@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.7.0
+# Version: 7.7.1
 # Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.7.0"
+readonly SCRIPT_VERSION="7.7.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -56,7 +56,7 @@ cleanup() {
     set +e
     # Restore terminal scroll region before any output
     _progress_cleanup
-    # Strip ANSI escape codes from the log file in a single pass. This replaces the previous per-line sed approach (via process substitution) which was racy — the background sed could be killed before flushing.
+    # Strip ANSI escape codes from log file (single-pass; replaces racy per-line sed)
     _strip_log_ansi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
@@ -78,7 +78,7 @@ cleanup() {
     fi
     exit "$rc"
 }
-# Progress bar state — initialized before traps to prevent unbound-variable exit under set -u on early signal
+# Progress bar state — initialized before traps to prevent unbound-variable exit under set -u
 _PROGRESS_ENABLED=false
 _PROGRESS_STEP=0
 trap cleanup EXIT
@@ -112,14 +112,14 @@ _progress_init() {
     rows="$(tput lines 2>/dev/null)" || return 0
     [[ "$rows" -ge 5 ]] || return 0
     _PROGRESS_ENABLED=true
-    # Scroll region: rows 1..(N-1); bottom line reserved for progress bar. DECSTBM resets cursor to origin on xterm/VTE per VT100 spec; omit explicit [1;1H to avoid forced jump on non-standard terminals.
+    # Scroll region: rows 1..(N-1); bottom line reserved for progress bar
     printf '\033[1;%dr' "$((rows - 1))"
     local ckpt
     ckpt="$(get_checkpoint)"
     _progress_draw "$ckpt"
 }
 
-# _progress_draw: render progress bar on the reserved bottom line. Writes to stdout only (not LOG_FILE).
+# _progress_draw: render progress bar on the reserved bottom line (stdout only)
 # shellcheck disable=SC2317
 _progress_draw() {
     $_PROGRESS_ENABLED || return 0
@@ -165,7 +165,7 @@ _progress_cleanup() {
     _PROGRESS_ENABLED=false
     local rows
     rows="$(tput lines 2>/dev/null)" || rows=24
-    # Save cursor → reset scroll region → clear bar line → restore cursor. DECSC/DECRC keeps cursor at normal output position so cleanup messages appear inline, not at the bottom.
+    # Save cursor → reset scroll region → clear bar line → restore cursor
     printf '\0337\033[r\033[%d;1H\033[2K\0338' "$rows"
 }
 
@@ -190,7 +190,7 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
-# logprintf: printf to stdout and log. MUST be defined before step_banner. Callers MUST use literal format strings — never pass variables as $1.
+# logprintf: printf to stdout and log. Callers MUST use literal format strings.
 logprintf() {
     # shellcheck disable=SC2059
     printf "$@"
@@ -198,7 +198,7 @@ logprintf() {
     printf "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
-# _prompt: interactive prompt to stderr + log. All "Press Enter" lines route here. Callers MUST use literal format strings — never pass variables as $1.
+# _prompt: interactive prompt to stderr + log. Callers MUST use literal format strings.
 _prompt() {
     # shellcheck disable=SC2059
     printf "$@" >&2
@@ -237,7 +237,7 @@ step_banner() {
 
 # Checkpoint system
 get_checkpoint() {
-    # In-memory override: set by --from-step/--verify so should_run_step works in --dry-run mode (where set_checkpoint is a no-op).
+    # In-memory override for --from-step/--verify (set_checkpoint is a no-op in --dry-run)
     if [[ -n "$_CHECKPOINT_OVERRIDE" ]]; then
         echo "$_CHECKPOINT_OVERRIDE"
         return 0
@@ -292,14 +292,14 @@ run() {
     # Save caller's shell option state before disabling
     [[ "$-" == *e* ]] && _prev_e=true
     shopt -qo pipefail 2>/dev/null && _prev_pf=true
-    # Temporarily disable errexit+pipefail so: 1) set -e doesn't kill us on pipeline failure 2) PIPESTATUS is not reset by an || guard
+    # Temporarily disable errexit+pipefail so PIPESTATUS is not reset by an || guard
     set +eo pipefail
     "$@" 2>&1 | _tee_log
     # Capture PIPESTATUS atomically — any subsequent command resets it
     local _ps=("${PIPESTATUS[@]}")
     rc=${_ps[0]}
     local _tee_rc=${_ps[1]:-0}
-    # Restore caller's shell options — never force-enable what wasn't set. Restore pipefail BEFORE errexit (see CHANGELOG 3.8.0): if pipefail was off, the old `false && set -o pipefail` returned 1, which killed the script under the just-restored set -e.  Using if/then avoids the non-zero exit code from a false && short-circuit entirely.
+    # Restore caller's shell options; pipefail BEFORE errexit (see CHANGELOG 3.8.0)
     if $_prev_pf; then set -o pipefail; fi
     if $_prev_e; then set -e; fi
     if [[ "$_tee_rc" -ne 0 ]]; then
@@ -330,7 +330,7 @@ write_file() {
     log "Wrote $dest"
 }
 
-# write_file_private: atomic write stdin to path, mode 600. For user-only configs that don't need world-readable.
+# write_file_private: atomic write stdin to path, mode 600
 write_file_private() {
     local dest="$1"
     if $DRY_RUN; then
@@ -417,7 +417,7 @@ open_chromeos_url() {
     fi
 }
 
-# check_tool: verify a CLI tool exists and print its version. Modifies globals: _verify_pass, _verify_fail, _verify_warn. Per-tool version flag overrides — [cmd]="flag"; empty string = skip version probe, report installed only.
+# check_tool: verify a CLI tool exists and print its version. Per-tool flag overrides in _TOOL_VER_FLAG.
 declare -gA _TOOL_VER_FLAG=(
     [lsof]="-v"
     [dig]="-v"
@@ -455,7 +455,7 @@ check_tool() {
                 # shellcheck disable=SC2086
                 _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
-                # Skip leading noise — e.g. unzip interprets --version as short flags and emits "caution:" before the actual version line. Also skip header-only lines like "lsof version information:" (label with no actual version data).
+                # Skip leading noise (e.g. unzip "caution:" or label-only version lines)
                 if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* || \
                       ( "$ver" == *[Vv]ersion* && "$ver" == *: && ! "$ver" =~ [0-9] ) ]]; then
                     _raw="${_raw#*$'\n'}"
@@ -495,7 +495,7 @@ check_tool() {
     fi
 }
 
-# check_config: verify a config file exists and is non-empty. Modifies globals: _verify_pass, _verify_fail, _verify_warn.
+# check_config: verify a config file exists and is non-empty
 check_config() {
     local path="$1" desc="$2"
     if [[ -s "$path" ]]; then
@@ -640,14 +640,14 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock to avoid race with concurrent instances)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
-    # In-memory override ensures should_run_step works even in --dry-run (where set_checkpoint is a no-op and the file is never written).
+    # In-memory override ensures should_run_step works in --dry-run
     _CHECKPOINT_OVERRIDE="$_DEFERRED_CHECKPOINT"
     set_checkpoint "$_DEFERRED_CHECKPOINT" || die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
-# Set noninteractive for any direct (non-sudo) dpkg/apt invocations. NOTE: sudo strips this (env_reset); all sudo apt-get calls pass it explicitly.
+# Set noninteractive for direct dpkg/apt invocations (sudo strips this via env_reset)
 export DEBIAN_FRONTEND=noninteractive
 
 # Initialize progress bar (requires terminal, checkpoint, and color globals)
@@ -689,7 +689,7 @@ mesa_glthread=true
 EOF
 }
 
-# _pw_gaming_content: emit PipeWire gaming config heredoc. Called by step 6 (fresh-write and upgrade-path).
+# _pw_gaming_content: emit PipeWire gaming config heredoc (fresh-write and upgrade-path)
 _pw_gaming_content() {
     cat <<'PWEOF'
 # PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
@@ -720,7 +720,7 @@ context.properties.rules = [
 PWEOF
 }
 
-# Step 1: Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)
+# Step 1: Preflight + ChromeOS integration
 if should_run_step 1; then
     step_banner 1 "Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)"
 
@@ -944,11 +944,11 @@ if should_run_step 1; then
     set_checkpoint 1
     log "Step 1 complete."
 fi
-# Step 2: System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)
+# Step 2: System update
 if should_run_step 2; then
     step_banner 2 "System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
 
-    # Enable HTTP pipelining — sends multiple requests per TCP connection. Queue-Mode "access" allows parallel connections across URIs. Pipeline-Depth 4 balances throughput vs. 4 GB RAM constraint. NOTE: Pipeline-Depth applies to HTTP only; HTTPS repos (Debian default) benefit from Queue-Mode parallelism but not HTTP pipelining.
+    # Enable parallel downloads and HTTP pipelining (Pipeline-Depth applies to HTTP only)
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -988,7 +988,7 @@ EOF
                 die "Trixie upgrade aborted"
             fi
             log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
-            # Also update cros-packages repo if present (Crostini-managed) NOTE: cros.list may reset on container restart; this handles the current session so the full-upgrade resolves all dependencies.
+            # Also update cros-packages repo if present (resets on container restart)
             if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
                 run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
                 if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
@@ -999,7 +999,7 @@ EOF
                     warn "cros.list rewrite failed — continuing (non-fatal)"
                 fi
             fi
-            # Also handle -security and -updates sources if in separate files Handle both legacy .list format and deb822 .sources format Backups stored in /etc/apt/ (not sources.list.d/) to avoid APT "Ignoring file" warnings on unrecognized extensions.
+            # Also handle additional .list/.sources files; backups in /etc/apt/ (not sources.list.d/)
             _had_nullglob=false
             shopt -q nullglob && _had_nullglob=true
             shopt -s nullglob
@@ -1023,8 +1023,7 @@ EOF
     fi
     unset _cur_codename
 
-    # 2b. Update and upgrade
-    # @@WHY: Hold Crostini lifecycle packages during dist-upgrade. ChromeOS manages cros-guest-tools/sommelier via the Termina VM; upgrading them to Trixie versions can break the container lifecycle contract (garcon, vshd, maitred), causing the container to crash on next boot.
+    # 2b. Update and upgrade — hold cros-* during dist-upgrade to prevent lifecycle breakage
     _CROS_HOLD_PKGS=()
     for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
                  cros-sftp cros-sommelier cros-sommelier-config \
@@ -1045,11 +1044,11 @@ EOF
     unset _cpkg
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
-        # --force-confdef --force-confold: accept package maintainer defaults for new conffiles, keep existing modified conffiles. Without these, dpkg can prompt interactively during upgrades even with DEBIAN_FRONTEND=noninteractive (which sudo strips via env_reset unless sudoers has env_keep).
+        # --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
         run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt upgrade had issues"
-        # NOTE: During Bookworm→Trixie, dpkg emits ~31 warnings like "unable to delete old directory '/lib/...': Directory not empty". These are harmless artifacts of the UsrMerge transition (/lib → /usr/lib symlink conversion). dpkg handles the conversion correctly; the warnings indicate leftover empty dirs that dpkg cannot remove because other packages still reference them temporarily.
+        # NOTE: dpkg /lib/* "Directory not empty" warnings during Trixie upgrade are harmless (UsrMerge)
         log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
         run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
@@ -1058,7 +1057,7 @@ EOF
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
-    # Unhold Crostini packages — restore normal apt behavior for future updates. @@WHY: cros-guest-tools stays held permanently. Google has not published cros-im for Trixie; cros-guest-tools depends on it, so unholding breaks apt install/upgrade with unmet dependencies.
+    # @@WHY: cros-guest-tools stays held permanently (cros-im unavailable on Trixie)
     _CROS_UNHOLD_PKGS=()
     for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
         [[ "$_cpkg" == "cros-guest-tools" ]] && continue
@@ -1075,7 +1074,7 @@ EOF
     fi
     unset _CROS_HOLD_PKGS _CROS_UNHOLD_PKGS _cpkg
 
-    # @@WHY: No --purge. autoremove --purge deletes conffiles of removed packages, which can include Crostini integration configs that other packages depend on at next boot. Plain autoremove is safer — conffiles remain for inspection.
+    # @@WHY: No --purge — conffiles may be needed by Crostini packages at next boot
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     # 2c. Verify upgrade landed on Trixie
@@ -1090,8 +1089,7 @@ EOF
         unset _post_codename
     fi
 
-    # 2d. Mitigate /tmp tmpfs OOM — Trixie mounts /tmp as RAM-backed tmpfs; on 4 GB this risks OOM during large builds or downloads. Cap at 512M.
-    # Write unconditionally: on Bookworm→Trixie upgrade, tmp.mount is inactive during install (activates on next container restart). The drop-in must be in place before that restart.
+    # 2d. Cap /tmp tmpfs at 512M (OOM mitigation for 4 GB RAM; write before first Trixie restart)
     _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
     if [[ ! -f "$_TMP_DROPIN" ]]; then
         if $DRY_RUN; then
@@ -1131,8 +1129,7 @@ TMPEOF
         warn "apt modernize-sources not available — apt may need upgrading"
     fi
 
-    # 2f. Service to clean up stale cros.list after container restart
-    # ChromeOS regenerates /etc/apt/sources.list.d/cros.list on every container restart, restoring the original bookworm codename. When cros.sources (our persistent trixie version) already exists, the regenerated cros.list causes duplicate APT sources and potential version conflicts. This service removes the stale file early on each boot.
+    # 2f. Service to remove stale cros.list (ChromeOS regenerates it with old codename on restart)
     _CROS_PIN_SVC="/etc/systemd/system/ry-crostini-cros-pin.service"
     if [[ ! -f "$_CROS_PIN_SVC" ]]; then
         write_file_sudo "$_CROS_PIN_SVC" <<'CROSEOF'
@@ -1239,7 +1236,7 @@ fi
 if should_run_step 5; then
     step_banner 5 "GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)"
 
-    # Stable packages — canonical names (resolve on both Bookworm and Trixie arm64) libegl1/libgles2 are the real packages; the -mesa transitionals depend on them
+    # Stable packages — canonical names for Bookworm and Trixie arm64
     GPU_STABLE_PKGS=(
         mesa-utils
         libgl1-mesa-dri
@@ -1256,7 +1253,7 @@ if should_run_step 5; then
 
     install_pkgs_best_effort "${GPU_STABLE_PKGS[@]}" || warn "Some GPU packages unavailable — non-fatal"
 
-    # Volatile packages — names may differ across Debian versions libgl1 replaces the transitional libgl1-mesa-glx
+    # Volatile packages — names may differ across Debian versions
     GPU_VOLATILE_PKGS=(
         mesa-vulkan-drivers
         libgl1
@@ -1302,33 +1299,33 @@ if should_run_step 5; then
     set_checkpoint 5
     log "Step 5 complete."
 fi
-# Step 6: Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning)
+# Step 6: Audio stack
 if should_run_step 6; then
     step_banner 6 "Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning)"
 
     AUDIO_PKGS=(
-        # ALSA — libasound2 (Bookworm) / libasound2t64 (Trixie) pulled in by alsa-utils and libasound2-plugins; no explicit listing needed.
+        # ALSA — libasound2/libasound2t64 pulled in by alsa-utils
         alsa-utils
         libasound2-plugins
 
-        # PipeWire audio — Crostini uses PipeWire since Bullseye. pipewire-audio metapackage: pipewire + wireplumber + pipewire-pulse + pipewire-alsa
+        # PipeWire audio metapackage (pipewire + wireplumber + pipewire-pulse + pipewire-alsa)
         pipewire-audio
 
         # PulseAudio client utilities + GUI mixer
         pulseaudio-utils
         pavucontrol
 
-        # GStreamer codecs and media support gstreamer1.0-pulseaudio was removed; its PulseAudio plugin is in gstreamer1.0-plugins-good.
+        # GStreamer codecs (gstreamer1.0-pulseaudio removed; plugin is in -plugins-good)
         gstreamer1.0-plugins-base
         gstreamer1.0-plugins-good
         gstreamer1.0-alsa
     )
-    # Append libavcodec-extra (same transaction as libasound2-plugins) so apt resolves the full dep graph at once and never installs then removes libavcodec59.
+    # Append in same transaction so apt resolves the full dep graph at once
     AUDIO_PKGS+=(libavcodec-extra)
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
-    # Mask legacy PulseAudio daemon if present (conflicts with PipeWire) Ensure PipeWire audio chain is active
+    # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
         if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
             if run systemctl --user mask --now pulseaudio.service && \
@@ -1369,7 +1366,7 @@ if should_run_step 6; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
-    # PipeWire user-level gaming overrides — counteract KVM VM auto-detection that forces min-quantum=1024 (21.3 ms).
+    # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
@@ -1438,7 +1435,7 @@ WPEOF
     set_checkpoint 6
     log "Step 6 complete."
 fi
-# Step 7: Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
+# Step 7: Display scaling and HiDPI
 if should_run_step 7; then
     step_banner 7 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)"
 
@@ -1540,9 +1537,7 @@ EOF
         log "Qt env already exists — skipping"
     fi
 
-    # Install Qt5/Qt6 GTK platform theme plugins so Qt apps follow GTK dark theme.
-    # NOTE: Do NOT install qt5ct — it requires QT_QPA_PLATFORMTHEME=qt5ct to activate,
-    # which conflicts with =gtk3 set in qt.conf above.
+    # Qt GTK platform theme plugins (do NOT install qt5ct — conflicts with =gtk3 in qt.conf)
     install_pkgs_best_effort qt5-gtk-platformtheme || \
         warn "Qt5 GTK theme package not available — Qt5 apps may not follow dark theme"
 
@@ -1646,7 +1641,7 @@ if should_run_step 8; then
     GUI_PKGS=(
         xdg-utils
 
-        # Session support: D-Bus for X11, accessibility (suppresses GTK warnings), desktop notifications (notify-send)
+        # Session support: D-Bus, accessibility, desktop notifications
         dbus-x11
         at-spi2-core
         libnotify-bin
@@ -1683,14 +1678,13 @@ if should_run_step 8; then
     set_checkpoint 8
     log "Step 8 complete."
 fi
-# Step 9: Container resource tuning (locale, journald volatile, env, XDG, paths)
-# NOTE: Crostini containers run in a locked-down kernel namespace; sysctl keys such as fs.inotify.max_user_watches, vm.max_map_count, vm.overcommit_memory, and vm.swappiness are all read-only from inside the container. Writing them to /etc/sysctl.d/ has no effect and the sysctl service exits 1 on every boot. These settings have been removed.
+# Step 9: Container resource tuning (sysctl keys are read-only in Crostini — removed)
 if should_run_step 9; then
     step_banner 9 "Container resource tuning (locale, journald volatile, env, XDG, paths)"
 
     # 9c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
-        # @@WHY: Gate sed on successful backup — if cp fails (disk full), proceeding to sed -i risks corrupting locale.gen with no rollback.
+        # @@WHY: Gate sed on successful backup — cp failure means no rollback
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^# *en_US\.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
@@ -1772,13 +1766,13 @@ ENVEOF
     set_checkpoint 9
     log "Step 9 complete."
 fi
-# Step 10: Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)
+# Step 10: Gaming packages
 if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)"
 
-    # Native ARM packages — DOSBox-X, ScummVM, FluidSynth GM, innoextract, unar. unrar (RARLAB) is in non-free and not available on default Crostini sources. unar handles RAR4/RAR5 including GOG multi-part archives — adequate replacement. innoextract --gog handles multi-part .bin extraction internally (v1.9+).
+    # Native ARM packages — unrar is non-free; unar handles RAR4/RAR5 as adequate replacement
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
-    # Attempt non-free unrar separately; failure is non-fatal — unar covers the same use case. To enable: sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
+    # Attempt non-free unrar separately; failure is non-fatal
     if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
         log "unrar installed ✓"
     else
@@ -1826,7 +1820,6 @@ menu_driver = "rgui"
 RACFG
     else
         # Upgrade paths — surgical edits for existing configs (preserve user changes)
-        # video_max_swapchain_images: 2→3 (virgl serialization)
         if grep -q 'video_max_swapchain_images *= *"2"' "$_RA_CFG"; then
             if $DRY_RUN; then
                 log "[DRY-RUN] sed swapchain 2→3 in retroarch.cfg"
@@ -1939,14 +1932,14 @@ SVMCFG
 
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
-    # box64: x86_64 userspace emulator with DynaRec NOTE: binfmt-misc automatic exec requires a privileged LXC container; standard Crostini is unprivileged. Use box64 explicitly: box64 ./program
+    # box64: x86_64 DynaRec emulator (binfmt blocked in unprivileged Crostini; invoke explicitly)
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
         log "box64 installed ✓"
     else
         warn "box64 install failed"
     fi
 
-    # qemu-user: x86/x86_64 emulation via TCG dynamic binary translation Fills gap for i386 support (box64 is x86_64-only). NOTE: binfmt-misc transparent exec blocked in unprivileged Crostini — must invoke explicitly: qemu-x86_64 ./program NOTE: Do NOT install qemu-user-binfmt. Its postinst triggers systemd-binfmt which fails with EPERM in unprivileged containers, leaving a failed unit in systemctl.
+    # qemu-user: TCG x86/i386 emulation (do NOT install qemu-user-binfmt — EPERM in unprivileged)
     install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
 
     # Write ~/.box64rc with SC7180P-tuned defaults
@@ -2071,7 +2064,7 @@ WRAPPER
     fi
     unset _RUN_X86
 
-    # gog-extract: convenience wrapper — extracts GOG Windows .exe (Inno Setup) or Linux .sh (makeself) installers
+    # gog-extract: wrapper to extract GOG .exe (Inno Setup) and .sh (makeself) installers
     _GOG_EXTRACT="${HOME}/.local/bin/gog-extract"
     if [[ ! -f "$_GOG_EXTRACT" ]]; then
         write_file_exec "$_GOG_EXTRACT" <<'GOGWRAP'
@@ -2167,7 +2160,7 @@ if should_run_step 11; then
     _verify_fail=0
     _verify_warn=0
 
-    # Inject install-time paths into current shell for accurate verification. /etc/profile.d/ry-crostini-env.sh is sourced on next login; not active here.
+    # Inject install-time paths (profile.d not yet sourced in current shell)
     [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
 
     if $DRY_RUN; then
