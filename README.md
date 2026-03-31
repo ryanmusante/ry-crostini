@@ -1,5 +1,9 @@
 # ry-crostini
 
+![version](https://img.shields.io/badge/version-7.8.1-blue?style=flat-square)
+![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
+
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Takes a fresh Debian container from zero to a fully configured
 Trixie (Debian 13) desktop environment in one unattended run. Bookworm
