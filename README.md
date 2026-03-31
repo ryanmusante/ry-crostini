@@ -1,9 +1,5 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.8.0-blue?style=flat-square)
-![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
-
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Takes a fresh Debian container from zero to a fully configured
 Trixie (Debian 13) desktop environment in one unattended run. Bookworm
@@ -74,8 +70,8 @@ bash ry-crostini.sh [OPTIONS]
 | `--version` | Show version |
 | `--` | Stop processing options (remaining args ignored) |
 
-> **Note:** The script uses sudo internally. Ensure the sudo credential is
-> cached (`sudo true`) or `timestamp_timeout` is adequate.
+> **Note:** The script uses sudo internally. A background keepalive renews
+> credentials every 60 s; run `sudo true` first to cache the initial credential.
 
 ## Prerequisites
 
@@ -159,6 +155,7 @@ skipped (idempotent). Wrappers in `~/.local/bin/` are installed mode 700.
 - **Checkpoint resume** — progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step
 - **No eval, no `bash -c`** — `run()` passes `"$@"` directly (generated systemd unit uses `bash -c` for inline conditional)
 - **Signal handling** — traps INT, TERM, HUP, PIPE, QUIT; re-raises for correct 128+N exit code
+- **Sudo keepalive** — background `sudo -v` loop every 60 s prevents credential timeout during long operations; killed in cleanup
 
 ### User Experience
 
@@ -172,8 +169,9 @@ skipped (idempotent). Wrappers in `~/.local/bin/` are installed mode 700.
 ## Trixie Upgrade
 
 Step 2 upgrades Bookworm containers to Debian 13 (Trixie) by rewriting
-`/etc/apt/sources.list` and running `apt full-upgrade`.
+codename references in `/etc/apt/sources.list` and running `apt full-upgrade`.
 
+- Codename replacement is line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved.
 - Crostini lifecycle packages (`cros-sommelier`, etc.) are held during upgrade and unheld afterward. `cros-guest-tools` stays held permanently (`cros-im` unavailable on Trixie).
 - Backups saved with `.pre-trixie` suffix under `/etc/apt/`.
 - `VERSION_CODENAME` validated before any rewrite; already-Trixie containers receive a normal update/upgrade.

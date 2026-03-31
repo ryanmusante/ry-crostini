@@ -1,8 +1,13 @@
-CHANGELOG
-=========
+7.8.1  2026-03-31
 
-ry-crostini.sh -- Crostini post-install bootstrap
-Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
+  Changes:
+  - add sudo credential keepalive: background sudo -v loop every 60 s
+    after lock acquisition prevents credential timeout during long apt
+    operations (e.g. Trixie dist-upgrade); skipped in --dry-run; killed
+    in cleanup()
+  - scope Trixie codename sed to repo lines only: /^deb/ for .list
+    files, /^Suites:/ for deb822 .sources files; comments and non-repo
+    content are no longer rewritten
 
 7.8.0  2026-03-31
 

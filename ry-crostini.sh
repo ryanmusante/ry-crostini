@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.8.0
+# Version: 7.8.1
 # Date:    2026-03-31
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
-# NOTE: Script uses sudo internally (~70 calls). Ensure sudo credential is cached (run `sudo true` first) or timestamp_timeout is adequate.
+# NOTE: Script uses sudo internally (~70 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
 # NOTE: Crostini may initially ship Bookworm; step 2 upgrades to Trixie. Package arrays use canonical (non-transitional) names.
 # NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.8.0"
+readonly SCRIPT_VERSION="7.8.1"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -41,6 +41,7 @@ _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
 _LOCK_ACQUIRED=false
 _received_signal=""
+_SUDO_KEEPALIVE_PID=""
 
 # Signal handler — stores signal name, triggers EXIT trap via exit
 # shellcheck disable=SC2317,SC2329
@@ -58,6 +59,10 @@ cleanup() {
     _progress_cleanup
     # Strip ANSI escape codes from log file (single-pass; replaces racy per-line sed)
     _strip_log_ansi
+    # Stop sudo credential keepalive (disowned — kill by raw PID)
+    if [[ -n "${_SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$_SUDO_KEEPALIVE_PID" 2>/dev/null; then
+        kill "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         # Remove all files (pid + any orphaned tmpfiles from crash)
@@ -652,6 +657,14 @@ unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 # Set noninteractive for direct dpkg/apt invocations (sudo strips this via env_reset)
 export DEBIAN_FRONTEND=noninteractive
 
+# Sudo credential keepalive — renew every 60 s to prevent timeout during long apt operations.
+# Skipped in --dry-run (no sudo calls). Killed in cleanup().
+if ! $DRY_RUN; then
+    (while true; do sudo -v 2>/dev/null || true; sleep 60; done) &
+    _SUDO_KEEPALIVE_PID=$!
+    disown "$_SUDO_KEEPALIVE_PID"
+fi
+
 # Initialize progress bar (requires terminal, checkpoint, and color globals)
 _progress_init
 
@@ -975,15 +988,15 @@ EOF
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         if $DRY_RUN; then
             log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' /etc/apt/sources.list"
-            log "[DRY-RUN] sed -i 's/${_cur_codename}/trixie/g' on cros.list and additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
+            log "[DRY-RUN] sed -i on deb/deb-src lines: ${_cur_codename} → trixie in /etc/apt/sources.list"
+            log "[DRY-RUN] sed -i on repo lines: ${_cur_codename} → trixie in cros.list and additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
         else
             # Back up sources before rewriting
             if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
                 die "Cannot back up /etc/apt/sources.list — aborting upgrade"
             fi
-            # Rewrite: bookworm → trixie (also handles bullseye or any older codename)
-            if ! run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+            # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
+            if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
                 warn "sources.list rewrite failed — restoring backup"
                 run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
                     || die "Cannot restore sources.list backup — manual fix required"
@@ -993,7 +1006,7 @@ EOF
             # Also update cros-packages repo if present (resets on container restart)
             if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
                 run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
-                if run sudo sed -i "s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+                if run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
                     log "Rewrote cros.list: ${_cur_codename} → trixie"
                     log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
                     log "Debian repos in sources.list are permanent — only cros-packages affected"
@@ -1011,8 +1024,14 @@ EOF
                     _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
                     run sudo cp -- "$_sfile" "$_sfile_bak" \
                         || { warn "Cannot back up ${_sfile} — skipping"; continue; }
-                    run sudo sed -i "s/${_cur_codename}/trixie/g" "$_sfile" \
-                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                    # .list format: replace on deb/deb-src lines; .sources (deb822): replace on Suites: lines
+                    if [[ "$_sfile" == *.sources ]]; then
+                        run sudo sed -i "/^Suites:/s/${_cur_codename}/trixie/g" "$_sfile" \
+                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                    else
+                        run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" "$_sfile" \
+                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                    fi
                 fi
             done
             $_had_nullglob || shopt -u nullglob
