@@ -1,3 +1,14 @@
+7.8.2  2026-03-31
+
+  Changes:
+  - restructure README for professional tone, visual hierarchy, and
+    information density: reorder sections (Quick Start first, Prerequisites
+    before Usage), merge Exit Codes into Usage, rename Features→Design and
+    Gaming→Gaming Reference, convert prose blocks to tables (Trixie Upgrade,
+    Known Limitations, Design), add file counts to Generated Files
+    subheadings (5 system, 17 user), normalize casual phrasing, eliminate
+    redundant Bookworm-to-Trixie note after Quick Start
+
 7.8.1  2026-03-31
 
   Changes:
