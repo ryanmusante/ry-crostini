@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.8.2
+# Version: 7.8.3
 # Date:    2026-03-31
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.8.2"
+readonly SCRIPT_VERSION="7.8.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -1794,7 +1794,9 @@ if should_run_step 10; then
     # Native ARM packages — unrar is non-free; unar handles RAR4/RAR5 as adequate replacement
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
     # Attempt non-free unrar separately; failure is non-fatal
-    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
+    if $DRY_RUN; then
+        log "[DRY-RUN] sudo apt-get install -y unrar"
+    elif sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
         log "unrar installed ✓"
     else
         log "unrar not available (non-free not enabled) — unar will be used for RAR archives ✓"
@@ -2479,13 +2481,19 @@ if should_run_step 13; then
 
     # Print result banner — only claim success after verification passes
     _had_failures="$_verify_fail"
-    if [[ "$_had_failures" -eq 0 ]]; then
+    if [[ $((_verify_pass + _verify_fail + _verify_warn)) -eq 0 ]]; then
+        logprintf '\n%bNO CHECKS RAN%b — use --verify for full verification\n' "$YELLOW" "$RESET"
+    elif [[ "$_had_failures" -eq 0 ]]; then
         logprintf '\n%bRY-CROSTINI COMPLETE%b\n' "$GREEN" "$RESET"
     else
         logprintf '\n%bRY-CROSTINI FINISHED WITH %s FAILURE(S)%b\n' "$RED" "$_had_failures" "$RESET"
     fi
 
-    if [[ "$_had_failures" -eq 0 ]]; then
+    if [[ $((_verify_pass + _verify_fail + _verify_warn)) -eq 0 ]]; then
+        # No checks ran (e.g. --from-step=13) — mark step complete but keep checkpoint
+        set_checkpoint 13
+        log "Summary step complete. No verification checks were executed — use --verify to validate."
+    elif [[ "$_had_failures" -eq 0 ]]; then
         # All checks passed — mark step 13 complete and remove checkpoint
         set_checkpoint 13
         if $DRY_RUN; then

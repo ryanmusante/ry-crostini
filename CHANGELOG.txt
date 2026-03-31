@@ -1,3 +1,15 @@
+7.8.3  2026-03-31
+
+  Fixes:
+  - fix --dry-run contract violation: bare sudo apt-get install -y
+    unrar bypassed DRY_RUN guard; wrapped in if $DRY_RUN check
+    matching all other install calls (install_pkgs_best_effort and
+    run() both gate on DRY_RUN)
+  - fix --from-step=13 false success: step 13 printed
+    "RY-CROSTINI COMPLETE" and deleted checkpoint when no checks
+    actually ran (counters all zero); now prints "NO CHECKS RAN"
+    banner and preserves checkpoint file
+
 7.8.2  2026-03-31
 
   Changes:
