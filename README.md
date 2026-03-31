@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.6.3-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.6.4-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -174,7 +174,7 @@ skipped (idempotent). Wrappers in `~/.local/bin/` are installed mode 700.
 Step 2 upgrades Bookworm containers to Debian 13 (Trixie) by rewriting
 `/etc/apt/sources.list` and running `apt full-upgrade`.
 
-- Crostini lifecycle packages (`cros-guest-tools`, `cros-sommelier`, etc.) are held during upgrade and unheld afterward.
+- Crostini lifecycle packages (`cros-sommelier`, etc.) are held during upgrade and unheld afterward. `cros-guest-tools` stays held permanently (`cros-im` unavailable on Trixie).
 - Backups saved with `.pre-trixie` suffix under `/etc/apt/`.
 - `VERSION_CODENAME` validated before any rewrite; already-Trixie containers receive a normal update/upgrade.
 - `ry-crostini-cros-pin.service` removes stale regenerated `cros.list` on each container start, preventing duplicate APT sources.

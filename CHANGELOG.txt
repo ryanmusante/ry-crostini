@@ -4,6 +4,21 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.6.4  2026-03-30
+
+  Changes:
+  - remove qt5ct from install: conflicts with QT_QPA_PLATFORMTHEME=gtk3
+    set in qt.conf; qt5-gtk-platformtheme (the actual plugin) retained
+  - extract _pw_gaming_content() function for PipeWire gaming config
+    heredoc, eliminating 26-line duplication between fresh-write and
+    upgrade-path (matches existing _gpu_conf_content pattern)
+  - update --minimal description in usage() to list all three skipped
+    packages (gnome-disk-utility, libavcodec-extra, qemu-user),
+    matching README
+  - clarify README Trixie Upgrade section: cros-guest-tools stays held
+    permanently (cros-im unavailable on Trixie), not just during
+    upgrade like other cros-* packages
+
 7.6.3  2026-03-30
 
   Changes:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.6.3
+# Version: 7.6.4
 # Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.6.3"
+readonly SCRIPT_VERSION="7.6.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -524,7 +524,7 @@ OPTIONS:
     --interactive  Prompt for ChromeOS toggles (default: unattended)
     --from-step=N  Start (or restart) from step N (1-11; N=11 is same as --verify)
     --verify       Run only step 11 (summary and verification)
-    --minimal      Skip heavy optional packages (e.g. gnome-disk-utility)
+    --minimal      Skip heavy optional packages (e.g. gnome-disk-utility, libavcodec-extra, qemu-user)
     --help         Show this help message
     --version      Show version
     --reset        Clear checkpoint and start from step 1
@@ -690,6 +690,37 @@ MESA_DISK_CACHE_DATABASE_NUM_PARTS=10
 # benefit is speculative but safe on Wayland.
 mesa_glthread=true
 EOF
+}
+
+# _pw_gaming_content: emit PipeWire gaming config heredoc. Called by step 6 (fresh-write and upgrade-path).
+_pw_gaming_content() {
+    cat <<'PWEOF'
+# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
+# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
+# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
+
+context.properties = {
+    default.clock.rate          = 48000
+    default.clock.allowed-rates = [ 48000 ]
+    default.clock.quantum       = 256
+    default.clock.min-quantum   = 256
+    default.clock.max-quantum   = 1024
+    clock.power-of-two-quantum  = true
+    # Allow real-time memory locking for audio threads
+    mem.allow-mlock             = true
+}
+
+context.properties.rules = [
+    {   # Explicitly override VM detection that forces min-quantum=1024
+        matches = [ { cpu.vm.name = !null } ]
+        actions = {
+            update-props = {
+                default.clock.min-quantum = 256
+            }
+        }
+    }
+]
+PWEOF
 }
 
 # Step 1: Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)
@@ -1347,62 +1378,10 @@ if should_run_step 6; then
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
-        write_file "$_PW_GAMING" <<'PWEOF'
-# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
-# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
-
-context.properties = {
-    default.clock.rate          = 48000
-    default.clock.allowed-rates = [ 48000 ]
-    default.clock.quantum       = 256
-    default.clock.min-quantum   = 256
-    default.clock.max-quantum   = 1024
-    clock.power-of-two-quantum  = true
-    # Allow real-time memory locking for audio threads
-    mem.allow-mlock             = true
-}
-
-context.properties.rules = [
-    {   # Explicitly override VM detection that forces min-quantum=1024
-        matches = [ { cpu.vm.name = !null } ]
-        actions = {
-            update-props = {
-                default.clock.min-quantum = 256
-            }
-        }
-    }
-]
-PWEOF
+        _pw_gaming_content | write_file "$_PW_GAMING"
     elif ! grep -q 'mem.allow-mlock' "$_PW_GAMING"; then
         log "Upgrading PipeWire gaming config: adding mem.allow-mlock"
-        write_file "$_PW_GAMING" <<'PWEOF'
-# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
-# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
-
-context.properties = {
-    default.clock.rate          = 48000
-    default.clock.allowed-rates = [ 48000 ]
-    default.clock.quantum       = 256
-    default.clock.min-quantum   = 256
-    default.clock.max-quantum   = 1024
-    clock.power-of-two-quantum  = true
-    # Allow real-time memory locking for audio threads
-    mem.allow-mlock             = true
-}
-
-context.properties.rules = [
-    {   # Explicitly override VM detection that forces min-quantum=1024
-        matches = [ { cpu.vm.name = !null } ]
-        actions = {
-            update-props = {
-                default.clock.min-quantum = 256
-            }
-        }
-    }
-]
-PWEOF
+        _pw_gaming_content | write_file "$_PW_GAMING"
     else
         log "PipeWire gaming config already exists"
     fi
@@ -1566,14 +1545,16 @@ EOF
         log "Qt env already exists — skipping"
     fi
 
-    # Install Qt5 GTK platform theme so Qt apps follow GTK dark theme.
-    install_pkgs_best_effort qt5ct qt5-gtk-platformtheme || \
-        warn "Qt5 GTK theme package not available — Qt apps may not follow dark theme"
+    # Install Qt5/Qt6 GTK platform theme plugins so Qt apps follow GTK dark theme.
+    # NOTE: Do NOT install qt5ct — it requires QT_QPA_PLATFORMTHEME=qt5ct to activate,
+    # which conflicts with =gtk3 set in qt.conf above.
+    install_pkgs_best_effort qt5-gtk-platformtheme || \
+        warn "Qt5 GTK theme package not available — Qt5 apps may not follow dark theme"
 
-    # Adwaita-Qt — supplemental Qt5/Qt6 theme integration for apps that ignore QT_QPA_PLATFORMTHEME
+    # Adwaita-Qt — supplemental Qt5/Qt6 style for apps that ignore QT_QPA_PLATFORMTHEME
     install_pkgs_best_effort adwaita-qt adwaita-qt6 || true
 
-    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme WARNING: qt5ct conflicts with QT_QPA_PLATFORMTHEME=gtk3 (set in qt.conf above)
+    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme
     install_pkgs_best_effort qt6-gtk-platformtheme || \
         warn "qt6-gtk-platformtheme not available — Qt6 apps may not follow dark theme"
 
