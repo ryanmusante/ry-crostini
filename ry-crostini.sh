@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.6.2
+# Version: 7.6.3
 # Date:    2026-03-30
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.6.2"
+readonly SCRIPT_VERSION="7.6.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -935,20 +935,6 @@ EOF
         log "Parallel apt config already exists"
     fi
     unset APT_PARALLEL
-
-    # @@WHY: Pin systemd to v257.*. systemd v258 refuses to run under cgroup v1 (exits PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only with no public timeline for v2 migration. Already breaking Arch Linux containers on Crostini (bbs.archlinux.org/viewtopic.php?pid=2280295). Trixie ships v257.9 (safe).
-    SYSTEMD_PIN="/etc/apt/preferences.d/pin-systemd"
-    if [[ ! -f "$SYSTEMD_PIN" ]]; then
-        write_file_sudo "$SYSTEMD_PIN" <<'EOF'
-# Prevent systemd v258+ — cgroup v1 incompatible (Crostini) — managed by ry-crostini.sh
-Package: systemd systemd-sysv libsystemd0 libudev1
-Pin: version 257.*
-Pin-Priority: 1001
-EOF
-    else
-        log "systemd version pin already exists"
-    fi
-    unset SYSTEMD_PIN
 
     # 2a. Upgrade to Trixie if not already running it
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
@@ -2045,7 +2031,7 @@ set -euo pipefail
 
 case "${1:-}" in
     --help)    printf 'Usage: run-x86 <program> [args...]\nAuto-detects ELF arch; prefers box64 (x86_64), falls back to qemu.\n'; exit 0 ;;
-    --version) printf 'run-x86 from ry-crostini.sh\n'; exit 0 ;;
+    --version) printf 'run-x86 @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
 esac
 
 if [[ $# -lt 1 ]]; then
@@ -2108,6 +2094,10 @@ printf 'run-x86: no suitable emulator found for %s (arch=%s)\n' "$prog" "${arch:
 printf 'Install: sudo apt install qemu-user\n' >&2
 exit 1
 WRAPPER
+        # Bake version into generated wrapper (heredoc is single-quoted, no expansion)
+        if ! $DRY_RUN; then
+            sed -i "s/@@VERSION@@/v${SCRIPT_VERSION}/" "$_RUN_X86"
+        fi
     else
         log "run-x86 wrapper already exists — skipping"
     fi
@@ -2127,7 +2117,7 @@ set -euo pipefail
 
 case "${1:-}" in
     --help)    printf 'Usage: gog-extract <installer> [output-dir]\nExtracts GOG Windows .exe or Linux .sh installers.\n'; exit 0 ;;
-    --version) printf 'gog-extract from ry-crostini.sh\n'; exit 0 ;;
+    --version) printf 'gog-extract @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
 esac
 
 if [[ $# -lt 1 ]]; then
@@ -2187,6 +2177,10 @@ case "$installer" in
         ;;
 esac
 GOGWRAP
+        # Bake version into generated wrapper (heredoc is single-quoted, no expansion)
+        if ! $DRY_RUN; then
+            sed -i "s/@@VERSION@@/v${SCRIPT_VERSION}/" "$_GOG_EXTRACT"
+        fi
     else
         log "gog-extract wrapper already exists — skipping"
     fi
@@ -2417,7 +2411,6 @@ if should_run_step 11; then
     logprintf '%bConfig files written:%b\n' "$BOLD" "$RESET"
 
     check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
-    check_config "/etc/apt/preferences.d/pin-systemd"             "systemd v257 version pin"
     check_config "/etc/systemd/system/ry-crostini-cros-pin.service" "cros.list cleanup service"
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"

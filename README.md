@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.6.2-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.6.3-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -118,7 +118,6 @@ bash ry-crostini.sh [OPTIONS]
 | Path | Step | Purpose |
 |------|------|---------|
 | `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
-| `/etc/apt/preferences.d/pin-systemd` | 2 | Pin systemd to `257.*` (cgroup v1 safety) |
 | `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
@@ -189,12 +188,6 @@ Step 2 upgrades Bookworm containers to Debian 13 (Trixie) by rewriting
 **Vulkan unavailable** — The virgl paravirtualized GPU exposes OpenGL 4.3
 only. `vulkaninfo` installs and its version is reported in verification, but
 no Vulkan device is enumerated. Vulkan-only games and apps will not run.
-
-**systemd v258 breaks Crostini** — v258 refuses to run under cgroup v1
-(exits PID 1 immediately). Crostini's Termina VM kernel uses cgroup v1 only
-with no public timeline for v2 migration. Trixie ships v257.9 (safe);
-ry-crostini pins systemd to `257.*` via APT preferences. Already breaking
-Arch Linux containers on Crostini.
 
 ### Constraints
 

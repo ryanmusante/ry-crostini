@@ -4,6 +4,18 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.6.3  2026-03-30
+
+  Changes:
+  - remove systemd v257.* APT version pin
+    (/etc/apt/preferences.d/pin-systemd): systemd upgrades are no
+    longer blocked; pin was originally added to prevent v258 cgroup v1
+    incompatibility but is no longer desired
+  - add version number to run-x86 --version and gog-extract --version
+    output; version is baked in at generation time via @@VERSION@@
+    placeholder sed replacement (single-quoted heredoc prevents direct
+    shell expansion)
+
 7.6.2  2026-03-30
 
   Fixes:
@@ -105,859 +117,91 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
   Fixes:
   - fix tmp.mount drop-in never written on Bookworm→Trixie upgrade path:
-    remove systemctl is-active guard so drop-in is written unconditionally;
-    harmless if tmp.mount is inactive — takes effect on next container
-    restart when Trixie activates it
-  - make step 11 tmp.mount check_config unconditional to match; file count
-    is now 21 unconditional (was 20 unconditional + 1 conditional)
-  - clarify README "No eval, no bash -c" to note generated systemd unit
-    ExecStart uses bash -c for inline conditional
-  - sync step 2 description across script banner, --help, and README: add
-    "cros-pin service" (was present only in README)
-  - sync step 10 description in README: "unar" → "unrar/unar" to match
-    script banner and --help
+    remove systemctl is-active guard so drop-in is written unconditionally
+  - sync step descriptions across script banner, --help, and README
 
   Documentation:
-  - restructure README for GitHub readability: add table of contents
-    with section anchors, quick start section, flag reference table
-    (replaces code block), prerequisites table (replaces nested
-    bullets), 3-column step table with category, generated files
-    table with exact paths and step numbers split by system/user
-    (replaces prose blob), features split into safety/UX subsections,
-    known limitations grouped by severity (blockers/constraints/info),
-    ChromeOS flags table, standalone exit codes table
-  - fix README step 5 description: "Vulkan info" → "Vulkan" to match
-    script banner and --help
-  - standardize changelog section headers: "Bugs fixed:" and
-    "Bug fixes:" → "Fixes:" for consistency
-  - add #exo-pointer-lock to Prerequisites and Quick Start: flag was
-    documented as "Required" in Known Limitations but missing from
-    setup instructions
-  - add #exo-pointer-lock to script step 1j interactive prompt and
-    step 11 GPU verification fix hint
-
-  Style:
-  - condense 13 multiline comment blocks to single lines; no
-    semantic changes (-28 lines)
+  - restructure README for GitHub readability: table of contents,
+    flag/prerequisites/step tables, generated files split by system/user,
+    features split into safety/UX, known limitations grouped by severity
+  - add #exo-pointer-lock to Prerequisites, Quick Start, step 1j, step 11
 
 7.5.0  2026-03-29
 
   Fixes:
-  - replace p7zip-full (transitional in Trixie, 16.02+transitional.1)
-    with 7zip (25.01+dfsg-1); p7zip-full will be removed in a future
-    Debian release
-  - replace qt5-style-plugins fallback (removed from Trixie) with
-    adwaita-qt + adwaita-qt6; update step 11 verification to check
-    adwaita-qt instead of qt5-style-plugins
-  - fix Mesa shader cache silent misconfiguration: single-file Fossilize
-    backend (MESA_DISK_CACHE_SINGLE_FILE=1) ignores MAX_SIZE — cache
-    grows unbounded on 128 GB eMMC; switch to MESA_DISK_CACHE_DATABASE=1
-    and reduce cap from 512M to 256M
-  - replace deprecated vm.overrides={} in pipewire-pulse.conf.d with
-    pulse.properties.rules match-action syntax (PipeWire 1.4.x); broaden
-    KVM-only match (cpu.vm.name = "KVM") to any VM (cpu.vm.name = !null)
-  - rename BOX64_DYNACACHE=1 to BOX64_DYNAREC_CACHE=1 in .box64rc;
-    old name is aliased in Trixie's box64 0.3.4 but breaks on upstream
-    0.3.8+
-  - keep cros-guest-tools held permanently after dist-upgrade: Google
-    has not published cros-im for Trixie; unholding breaks apt with
-    unmet dependencies
+  - replace p7zip-full (transitional in Trixie) with 7zip
+  - replace qt5-style-plugins (removed from Trixie) with adwaita-qt
+  - fix Mesa shader cache: switch to MESA_DISK_CACHE_DATABASE=1
+  - replace deprecated vm.overrides={} in pipewire-pulse.conf.d
+  - rename BOX64_DYNACACHE→BOX64_DYNAREC_CACHE in .box64rc
+  - keep cros-guest-tools held permanently (cros-im unavailable)
 
   Improvements:
-  - switch RetroArch audio from "pulse" to native "pipewire" driver
-    (RetroArch 1.20+, Trixie); bump audio_latency from 64 to 96 to
-    prevent underruns on SC7180P under gaming load
-  - add stretch_mode=even-pixels as documented alternative in ScummVM
-    config comment (ScummVM 2.9+)
-  - add BOX64_DYNAREC_NATIVEFLAGS=1 to [default] and
-    BOX64_DYNAREC_BIGBLOCK=3 to [wine] section in .box64rc
-  - add mesa_glthread=true to gpu.conf (experimental — offloads GL call
-    marshaling to separate CPU thread; Kryo 468 has headroom)
-  - add systemd v257.* apt pin (/etc/apt/preferences.d/pin-systemd) to
-    prevent accidental v258 upgrade; v258 refuses to run under cgroup v1
-    which breaks Crostini containers
-  - document Flatpak avoidance for gaming in README Known Limitations
-    (triple sandbox overhead, Zink regression, RAM overhead, native .deb
-    availability)
-  - document box86 and box64 Box32 mode as 32-bit x86 alternatives in
-    README x86 translation section
-  - add WirePlumber 0.5 config format migration note to README Known
-    Limitations (Lua → JSON .conf files)
-  - update ChromeOS flag deprecation status in README:
-    #crostini-multi-container deprecated at milestone 141 (was 140),
-    #borealis-enabled deprecated (Borealis shut down 2026-01-01),
-    #crostini-containerless (Baguette) new at ChromeOS 143+,
-    #crostini-gpu-support and #exo-pointer-lock confirmed through
-    ChromeOS 145
+  - switch RetroArch audio to native pipewire driver; bump latency
+  - add mesa_glthread=true, BOX64_DYNAREC_NATIVEFLAGS=1
+  - document Flatpak avoidance, box86/Box32, WirePlumber 0.5, M145 flags
 
-7.4.2  2026-03-28
+7.4.0 - 7.4.2  2026-03-28
 
   Fixes:
-  - downgrade Sommelier preflight from warn() to log(): process is
-    not running during install by design (started by container login,
-    not by the running shell); message updated to "not yet active —
-    will start on terminal restart ✓"
-  - downgrade two cros.list NOTE messages from warn() to log():
-    "cros.list resets on container restart" and "Debian repos in
-    sources.list are permanent" are informational context, not errors
-  - suppress spurious "Command exited 100" warn for unrar install:
-    unrar (non-free) is unavailable on default Crostini sources and
-    the failure is fully expected; replace run() call with a direct
-    subshell that logs success or logs the fallback message without
-    routing through run()'s generic non-zero-exit warn path
-  - downgrade unrar step 11 check from ⚠/_verify_warn to
-    ✓/_verify_pass when unar is present: unar handles RAR4/RAR5
-    and GOG multi-part archives; absence of unrar is intentional
-    and not a degraded state
-  - fix dosbox-x emitting ⚠ "version unverified": remove dosbox-x
-    from _TOOL_VER_FLAG empty-flag map; --version produces a parseable
-    version string and the empty-flag workaround was never needed
-  - fix glxinfo and gnome-disks emitting ⚠ "version unverified":
-    both remain in _TOOL_VER_FLAG with flag=""; update check_tool()
-    to treat an explicit empty flag entry as "installed, no version
-    probe" and report ✓ (installed) / _verify_pass++ instead of
-    ⚠ (version unverified) / _verify_warn++; preserves the ability
-    to deliberately opt out of version probing for tools that have
-    no usable version flag
-  - net effect on a standard run: 0 [WARN] lines during execution
-    (was 5); verification totals: ~75 passed / 1 warning (only the
-    runtime Sommelier state check in step 11 summary, which is
-    correct until terminal restart)
-  - bump version to 7.4.2
-
-7.4.1  2026-03-28
-
-  Fixes:
-  - silence three spurious step 11 verification warnings by setting
-    _TOOL_VER_FLAG entries to "" (confirmed-installed) for tools
-    whose --version output does not parse cleanly:
-    - glxinfo has no --version flag; outputs GL renderer info with
-      "name of display: :0" as first line, triggering _bad=1
-    - gnome-disks --version output triggers _bad pattern match
-    - dosbox-x --version output triggers _bad pattern match
-    all three now report ✓ (installed) and increment _verify_pass
-    instead of ⚠ (version unverified) and incrementing _verify_warn;
-    net effect: -3 warnings, +3 passes per run
-  - bump version to 7.4.1
-
-7.4.0  2026-03-28
-
-  Fixes:
-  - remove all sysctl settings: fs.inotify.max_user_watches,
-    vm.overcommit_memory, vm.max_map_count, vm.swappiness,
-    vm.vfs_cache_pressure, vm.dirty_ratio,
-    vm.dirty_background_ratio are all read-only from inside the
-    Crostini container namespace; writing them to /etc/sysctl.d/
-    had no effect and ry-crostini-sysctl.service exited 1 on
-    every boot; remove 99-ry-crostini-tuning.conf,
-    99-ry-crostini-memory.conf, SYSCTL_CONF constant,
-    linux-sysctl-defaults install, all upgrade-path sysctl
-    migration code, and all step 11 sysctl verification checks
-  - fix unrar install failure causing exit 1 on every fresh
-    Trixie run: unrar (RARLAB) is in non-free and unavailable
-    on default Crostini sources; remove from batch install;
-    attempt non-free unrar separately with non-fatal failure;
-    demote step 11 check_tool "unrar" from FAIL to WARN when
-    unar is present (unar handles RAR4/RAR5 including GOG
-    multi-part archives)
+  - remove all sysctl settings: read-only from inside Crostini namespace
+  - fix unrar install failure causing exit 1 on fresh Trixie
+  - suppress 5 spurious warn/verification messages
 
   Changes:
-  - add ry-crostini-cros-pin.service (step 2): ChromeOS
-    regenerates cros.list on every container restart, creating
-    duplicate APT sources alongside the persistent cros.sources
-    written by modernize-sources; new oneshot service removes
-    stale cros.list at boot before apt-daily runs
-  - add write_file_exec helper: atomic write + chmod 700 in one
-    operation; replaces write_file_private + separate chmod 700
-    calls for run-x86 and gog-extract; eliminates misleading
-    "mode 600" log entry followed by a second log line
-  - update cleanup EXIT trap: distinguish verification failure
-    from mid-step fatal exit in the "Script exited" message;
-    verification failures now direct user to --verify rather
-    than generic checkpoint resume
-  - update step 9 banner and description: remove sysctl
-    references; step now covers locale, env, XDG, paths only
-  - update step 10 banner: replace unrar/unar with unar
-  - update gog-extract comment: innoextract --gog handles
-    multi-part .bin RAR archives internally since v1.9;
-    remove stale "needs unrar/unar in PATH" note
-  - bump version to 7.4.0
+  - add ry-crostini-cros-pin.service: removes stale cros.list at boot
+  - add write_file_exec helper: atomic write + chmod 700
 
 7.3.0  2026-03-27
 
   Breaking:
-  - make Trixie upgrade mandatory; remove --trixie flag and
-    UPGRADE_TRIXIE variable; step 2 now always upgrades Bookworm
-    (or any pre-Trixie release) to Trixie with full-upgrade
-  - remove all Bookworm fallback paths: dosbox (replaced by
-    dosbox-x), qemu-user-static (replaced by qemu-user),
-    conditional box64/sysctl/deb822 codename checks
-  - remove Bookworm references from run-x86 wrapper
-    (qemu-x86_64-static, qemu-i386-static); wrapper now uses
-    qemu-x86_64 and qemu-i386 exclusively
-
-  Changes:
-  - simplify step 2: unconditional cros pkg hold/unhold, always
-    run full-upgrade, always run modernize-sources; remove
-    codename-conditional branches
-  - simplify step 9a: always install linux-sysctl-defaults
-    (no longer gated on Trixie codename check)
-  - simplify step 10: dosbox-x installed directly (no dosbox
-    fallback); box64 installed unconditionally; qemu-user
-    installed unconditionally (no codename switch)
-  - simplify step 11: direct check_tool calls for dosbox-x,
-    box64, qemu-x86_64 (no conditional logic or fallback probes)
-  - update README: mandatory Trixie in intro, hardware table,
-    usage examples, step table, compatibility section, gaming
-    section, x86 translation table, verify commands; remove all
-    Bookworm-specific language and --trixie references
+  - make Trixie upgrade mandatory; remove --trixie flag
+  - remove all Bookworm fallback paths
 
 7.2.0  2026-03-27
 
   Changes:
-  - add unrar and unar to step 10 gaming packages; required by
-    innoextract --gog for multi-part GOG Windows installers with
-    .bin RAR archives; previously documented as manual install
-  - add unrar and unar to step 11 verification (check_tool)
-  - fix README: Heroic Games Launcher does not publish arm64 .deb;
-    correct to "amd64 only" with box64 caveat
+  - add unrar and unar to step 10 gaming packages and verification
 
 7.1.0  2026-03-27
 
   Changes:
-  - replace DOSBox 0.74 with DOSBox-X (save-states, PC-98, MT-32,
-    CJK, Windows 3.x/9x support); Trixie arm64 package; Bookworm
-    falls back to classic DOSBox automatically
-  - add dosbox-x to _TOOL_VER_FLAG; step 10 verification and step 11
-    check_tool prefer dosbox-x, fall back to dosbox
-  - update step 10 banner, usage(), README step table, gaming section,
-    compatibility tiers, and verify commands for DOSBox-X
-
-  Fixes (from 7.0.1):
-  - fix stale comment label: "# 11b2." → "# 9b2." inside step 9
-    (leftover from pre-7.0 15-step layout)
-  - add undocumented subsection 1o (disk-resize advisory) to step 1
-    banner, usage(), and README step table
-  - harden run-x86 and gog-extract file permissions: write_file (644)
-    → write_file_private (600) + chmod 700; eliminates brief
-    world-readable non-executable window during atomic write
+  - replace DOSBox 0.74 with DOSBox-X (save-states, PC-98, MT-32, CJK)
+  - harden run-x86/gog-extract permissions: write_file_private + chmod 700
 
 7.0.0  2026-03-27
 
   Breaking:
-  - consolidate 15 steps to 11; checkpoint files from ≤6.0.1 are
-    incompatible — run --reset before upgrading
-  - merge step 1 (preflight) and step 2 (ChromeOS integration) into
-    single step 1; subsections relabeled 1a–1n
-  - remove step 10 (Rust stable via rustup): rustup installer, SHA-256
-    verification, EXIT trap cleanup (_rustup_tmp, _rustup_sha),
-    embedded profile ~/.cargo/bin PATH and CARGO_BUILD_JOBS=2,
-    verify PATH injection, check_tool rustc/cargo
-  - remove step 12 (Flatpak + Flathub): flatpak package install,
-    system/user Flathub remote, Freedesktop Platform 24.08 pin,
-    check_tool flatpak, runtime pin verification
-  - remove step 14 (Container backup): interactive backup prompt,
-    chrome://os-settings/crostini/exportImport open
-  - switch RetroArch from Flatpak (org.libretro.RetroArch) to native
-    arm64 Debian package (retroarch + retroarch-assets); config path
-    changed: ~/.var/app/org.libretro.RetroArch/config/retroarch/
-    → ~/.config/retroarch/; Flatpak Mesa virgl overrides removed
-    (native package inherits host environment)
-  - remove GUI apps: thunar, thunar-archive-plugin, tumbler, evince,
-    eog, file-roller; remove all MIME default associations (file
-    manager, PDF viewer, image viewer); ChromeOS handles these
-    natively via /mnt/chromeos shared folders
-  - step 8 renamed: "GUI applications" → "GUI essentials (xterm,
-    session support, fonts, icons)"
-
-  Renumbering (old → new):
-  - 1+2→1, 3→2, 4→3, 5→4, 6→5, 7→6, 8→7, 9→8, 11→9, 13→10, 15→11
-  - steps 10 (Rust), 12 (Flatpak), 14 (backup) removed
-
-  Updated:
-  - _PROGRESS_TOTAL 15→11
-  - --from-step bounds 1-15 → 1-11
-  - --verify deferred checkpoint 14→10
-  - verify comment refs: "step 15"→"step 11", "step 14"→"step 10"
-  - verify tool ordering comment updated to new numbering
-  - Flatpak reminder line removed from summary
-  - header NOTE: remove rustup tmpfs reference
-  - README: step table, version badge, config files written, prompt
-    count 7→6, compatibility section step refs, gaming section step
-    refs, known limitations step refs, Moonlight Flatpak ref removed,
-    PPSSPP Flatpak install hint removed
-
-6.0.1  2026-03-26
-
-  Documentation:
-  - remove version-specific "Changes:" header line (line 5); release note
-    for the 6.0.0 rename belongs in CHANGELOG only, not in the permanent
-    file header
-  - update header sudo count ~66 → ~70; audit found 66 grep matches but
-    ~9 are comments/log strings; runtime count on first Trixie run is ~70
-    (30 from write_file_sudo internals + ~40 direct); ~66 undercounted
-    the standard path
-
-6.0.0  2026-03-26
-
-  Breaking:
-  - rename project crostini-setup-duet5 → ry-crostini; script filename,
-    log files, checkpoint, lock, and all managed system config paths
-    changed; existing checkpoint/lock files from ≤5.5.0 are not
-    recognized — run --reset on old version before upgrading, or
-    delete manually:
-      rm -f ~/.crostini-setup-checkpoint
-      rm -rf ~/.crostini-setup.lock
-
-5.5.0  2026-03-26
-
-  Fixes:
-  - FIX-1: inject ~/.local/bin and ~/.cargo/bin into PATH at step 15 verify
-    start so run-x86 and gog-extract resolve correctly without requiring a
-    new login shell; previously both reported ✗ not found and drove exit 1
-  - FIX-2: stop gating sysctl read-back on sysctl -e --system exit code;
-    ChromeOS kernel exits 1 even with -e when namespace-restricted keys are
-    denied; fs.inotify.max_user_watches IS writable and must be read back
-    unconditionally; eliminates spurious 'sysctl apply failed' warn and
-    'inotify unreadable' verify warning
-  - FIX-3: move libavcodec-extra into AUDIO_PKGS array so it installs in
-    the same apt transaction as libasound2-plugins; eliminates dpkg forced-
-    removal warning (libavcodec59 conflict) by letting apt resolve the full
-    dep graph at once; MINIMAL flag behaviour preserved via AUDIO_PKGS+=
-  - FIX-4a: add grep -m1 . fallback in check_tool stdout capture; 7z i on
-    p7zip 16.02 emits a blank first line before the version banner causing
-    head -1 to return empty and reporting version unverified
-  - FIX-4b: add --version flag for glxinfo, gnome-disks, dosbox, vulkaninfo
-    in _TOOL_VER_FLAG; empty entry caused check_tool to skip version probe
-    entirely and report version unverified for all four tools
-  - FIX-5: demote sommelier not-running from _verify_fail to _verify_warn;
-    sommelier starts on next container login, never during install session;
-    counting it as a failure drove exit 1 and FINISHED WITH N FAILURE(S)
-    on every clean first run
-
-5.4.1  2026-03-26
-
-  Correctness:
-  - add --proto '=https' --tlsv1.2 to preflight network check curl
-    (step 1); all other curl calls (rustup download, SHA-256 fetch)
-    already had both flags; the preflight check fetched Release.gpg
-    over HTTPS but did not enforce protocol or TLS floor
-  - escape literal dot in locale.gen sed regex: 's/^# *en_US.UTF-8/'
-    matched en_US.UTF-8 correctly but also en_USxUTF-8 (any char);
-    changed to 's/^# *en_US\.UTF-8/' for exact match; RHS unchanged
-    (replacement string, not regex)
-
-5.4.0  2026-03-25
-
-  Features:
-  - install innoextract in step 13 for extracting GOG Windows .exe
-    installers (Inno Setup format) on ARM64 Linux without Wine; supports
-    GOG Galaxy multi-part .bin archives with --gog flag; available in
-    Debian repos for both Bookworm (1.9) and Trixie (1.9)
-  - write ~/.local/bin/gog-extract convenience wrapper: auto-detects
-    installer type (.exe → innoextract --gog --exclude-temp, .sh →
-    makeself --noexec); optional output directory argument; prints game
-    file location (app/ for Windows, data/noarch/game/ for Linux)
-  - add innoextract and gog-extract to step 15 verification
-    (check_tool + check_config)
-  - add innoextract to step 13 inline post-install verification log
-
-  Documentation:
-  - sync step 13 description across all four locations (comment, banner,
-    --help, README): add innoextract/GOG
-  - README: expand GOG games subsection with gog-extract usage examples
-    for Windows .exe and Linux .sh installers; add multi-part .bin note
-  - README: add GOG extraction verify commands (5.4.0+)
-  - README: update config files written and Gaming intro paragraphs
-
-5.3.3  2026-03-25
-
-  Correctness:
-  - add -- to all 27 rm -f calls (cleanup, write_file, write_file_private,
-    write_file_sudo, set_checkpoint, --help, --version, PID lock, rustup
-    temp files, locale.gen backup, checkpoint removal); previously only
-    --reset handler (L589) used --; all mv/cp calls already had it
-  - add file existence guard to run-x86 wrapper before od/ELF detection;
-    missing file previously fell through to "no suitable emulator found"
-    instead of the clearer "file not found" with exit 2
-
-5.3.2  2026-03-25
-
-  Correctness:
-  - fix unbound variable $ver under set -u in check_tool() when
-    _TOOL_VER_FLAG entry is empty string (glxinfo, gnome-disks, dosbox,
-    vulkaninfo); `local ver` declared without default skipped the
-    assignment block, then `[[ -z "$ver" ]]` crashed
-  - move "CROSTINI SETUP COMPLETE" banner from before verification to
-    after verification totals; gate on _verify_fail — prints failure
-    count if any checks failed instead of unconditional success
-  - exit non-zero (exit 1) when verification has failures; previously
-    exit 0 was unconditional, making verification result invisible to
-    callers and CI
-  - on verification failure, keep checkpoint at step 14 (not 15) and
-    preserve checkpoint file; re-run repeats only step 15 (verification)
-    instead of restarting all steps from scratch
-  - add [tmux]="-V" to _TOOL_VER_FLAG: tmux uses -V, not --version;
-    --version error was caught by bad-output filter → "version unverified"
-  - add [ssh]="-V" to _TOOL_VER_FLAG: ssh -V writes to stderr; default
-    --version triggered "unknown option" error caught by bad-output filter
-  - extend noise-skip pattern in check_tool stderr fallback to skip
-    header-only label lines (e.g. "lsof version information:") that
-    contain no digits; advances to next stderr line for revision string
-
-5.3.1  2026-03-25
-
-  Correctness:
-  - fix --from-step octal interpretation: leading-zero inputs (08, 09, 010)
-    caused wrong step or bash errors because [[ -lt ]] and $(( )) treat
-    leading zeros as octal; use 10# prefix to force decimal in all four
-    arithmetic sites (validation, deferred checkpoint, deferred message)
-  - fix _cleanup_warn duplicate elapsed time: message body contained
-    "after ${_elapsed}s" while _cleanup_warn prefix already prints
-    "${SECONDS}s"; removed redundant body timestamp
-  - extend _strip_log_ansi regex: add ST-terminated OSC (\033]...\033\\)
-    and bare ESC+char (DECSC \0337, DECRC \0338) patterns; previous regex
-    only handled CSI and BEL-terminated OSC
-  - use mode 600 (write_file_private) for user-only game configs:
-    .box64rc, retroarch.cfg, scummvm.ini; write_file (644) retained for
-    GTK/fontconfig/Qt configs that toolkits expect world-readable
-  - add log rotation: remove ~/crostini-setup-*.log files older than
-    7 days on each run (after progress bar init, before step 1)
-
-5.3.0  2026-03-25
-
-  Features:
-  - add bottom-pinned progress bar: tracks completion across all 15 steps
-    with percentage display; uses ANSI scroll region to isolate the bar on
-    the terminal's last line — normal output scrolls above it without
-    overlap or flicker
-  - progress bar initializes from current checkpoint (--from-step and
-    --verify resume at the correct percentage)
-  - respects NO_COLOR (switches to ASCII # / - bar) and non-TTY (disabled
-    when stdout is not a terminal, e.g. piped to file)
-  - SIGWINCH handler re-sizes scroll region on terminal resize
-  - cleanup trap restores full scroll region before any exit output
-  - set_checkpoint() updates the bar on both live and --dry-run paths
-
-5.2.3  2026-03-25
-
-  Documentation:
-  - sync step 2 description across all four locations (comment, banner,
-    --help, README): --help had extra wording "opens ChromeOS settings
-    pages for each toggle" not present in comment/banner/README; all four
-    now read "ChromeOS integration (GPU, mic, USB, folders, ports, disk;
-    --interactive)"
-  - fix README Gaming section: qemu package is qemu-user-static on
-    Bookworm and qemu-user (dynamically linked) on Trixie; intro paragraph,
-    x86 translation table, and standalone paragraph all said
-    "qemu-user-static" on "both releases"
-  - fix README x86 table binary names: Bookworm provides qemu-x86_64-static
-    and qemu-i386-static; Trixie provides qemu-x86_64 and qemu-i386
-
-5.2.2  2026-03-25
-
-  Correctness:
-  - sync step 14 description across all four locations (comment, banner,
-    --help, README): comment had trailing sentence "Opens ChromeOS backup
-    page when run with --interactive" not present in banner/README; --help
-    had different wording "opens ChromeOS backup page with --interactive";
-    all four now read "Container backup (--interactive)"
-  - update sudo count ~65 to ~66 in header NOTE (actual: 66 on standard
-    Trixie path without cros.list; matches CHANGELOG 5.2.1 audit)
-  - add --help and --version handling to run-x86 wrapper; previously
-    run-x86 --help passed "--help" as the program argument, causing od
-    to fail and the wrapper to exec box64 --help or emit a confusing error
-  - add -- to od call in run-x86 _detect_arch(); filenames starting with
-    "-" were misinterpreted as od flags (non-breaking: 2>/dev/null caught
-    the error, but detection silently fell through to unknown-arch path)
-  - fix SC2088: replace tilde with \$HOME in log string (cosmetic;
-    shellcheck warning only, tilde was display-only)
-
-5.2.1  2026-03-25
-
-  Verification:
-  - fix step 15 false failure: gate box64 check_tool on Trixie codename;
-    on Bookworm, box64 is not installed (Trixie-only package) but
-    check_tool ran unconditionally, incrementing _verify_fail
-  - fix step 15 false failure: gate qemu-x86_64 check_tool on
-    ! $MINIMAL; with --minimal, qemu-user-static is intentionally
-    skipped but verification still reported it as failed
-  - add virgl vs Zink validation after GL renderer display; the Mesa
-    override strategy (gpu.conf, flatpak overrides, Freedesktop Platform
-    24.08 pin) exists to prevent Zink, but verification never checked
-    the active renderer — now emits pass for virgl, warn for Zink
-
-  Correctness:
-  - update header sudo count ~60 to ~65 (actual: 66)
-
-5.2.0  2026-03-24
-
-  Features:
-  - install qemu-user-static in step 13 for x86/x86_64 emulation on
-    both Bookworm (qemu-user-static) and Trixie (qemu-user);
-    complements box64 (Trixie-only DynaRec JIT) with TCG dynamic binary
-    translation and adds i386 support
-  - binfmt registration packages (binfmt-support, qemu-user-binfmt)
-    deliberately omitted — postinst fails with EPERM in unprivileged
-    Crostini, leaving failed systemd units
-  - write ~/.local/bin/run-x86 convenience wrapper: auto-detects ELF arch,
-    prefers box64 for x86_64 when available, falls back to qemu-user-static;
-    handles both x86_64 and i386 binaries
-  - gate qemu-user-static install on ! --minimal (~150 MB disk)
-  - add qemu-x86_64-static and run-x86 to step 15 verification
-  - NOTE: binfmt-misc transparent exec remains blocked in unprivileged
-    Crostini; use run-x86 or invoke emulator explicitly
-
-  Documentation:
-  - README: update step 13 description, config files written, x86 translation
-    table; add privileged container section for transparent binfmt execution
-  - update step 13 description across all four locations (comment, banner,
-    --help, README)
-
-5.1.6  2026-03-24
-
-  Documentation:
-  - sync step 13 description across all four locations (comment, banner,
-    --help, README): add missing [Trixie only] qualifier to comment and
-    step_banner (--help and README already had it)
-  - fix 8 future-dated changelog entries: versions 4.10.6 through 5.1.0
-    were dated 2026-03-25 (one day ahead); corrected to 2026-03-24
-
-5.1.5  2026-03-24
-
-  Documentation:
-  - README: remove .box64rc configuration ini block and cmake build flags
-    from x86 translation section (config written by script; flags not needed)
-  - README: add qemu-user-static as Bookworm x86 alternative
-    (apt install, in Bookworm official repos; no JIT; binfmt-misc blocked
-    in unprivileged Crostini; use qemu-x86_64-static ./program explicitly)
-  - README: fix FEX-Emu note — incompatible not because of FEAT_FLAGM
-    (SC7180P is ARMv8.2, FEX requires ARMv8.0+) but because FEX requires
-    a mandatory x86-64 RootFS image and is not packaged in Debian repos
-
-5.1.4  2026-03-24
-
-  Features:
-  - add box64 install to step 13 (Trixie only — official Debian package
-    box64 0.3.0+dfsg-1; not in Bookworm; logs INFO skip with source URL)
-  - write ~/.box64rc on first install with SC7180P-tuned DynaRec defaults:
-    BOX64_DYNAREC_CALLRET=1, BOX64_DYNAREC_PURGE=1, BOX64_DYNACACHE=1,
-    and Wine section with BOX64_MMAP32=1 + BOX64_DYNAREC_STRONGMEM=1
-  - NOTE: binfmt-misc automatic x86_64 exec requires privileged LXC container;
-    standard Crostini is unprivileged — use box64 explicitly: box64 ./program
-  - add check_tool "box64" to step 15 verification
-  - add check_config ~/.box64rc to step 15 verification
-  - update step 13 banner, --help, README steps table, Gaming section,
-    Config files written, and x86 translation section
-
-5.1.3  2026-03-24
-
-  Correctness:
-  - gate linux-sysctl-defaults install on Trixie codename; on Bookworm the
-    package does not exist and the unconditional attempt produced a false WARN
-    on every run; now logs INFO skip on non-Trixie
-  - gate apt modernize-sources on Trixie codename; modernize-sources ships in
-    apt 2.9.26 (Trixie); running it on Bookworm (apt 2.6.x) always fails;
-    retain help-text guard as secondary check in case apt is upgraded in place;
-    now logs INFO skip on non-Trixie; warn only if subcommand missing on Trixie
-
-5.1.2  2026-03-24
-
-  Correctness:
-  - fix apt modernize-sources guard: `apt modernize-sources --help` exits 0
-    on Bookworm's apt 2.6.x (returns generic help, not subcommand-specific),
-    causing the guard to pass and the command to run, producing
-    E: Invalid operation modernize-sources; replaced with
-    `apt --help | grep -q modernize-sources` which is reliable across versions
-  - modernize-sources was introduced in apt 2.9.26 (2025-02-03); Bookworm
-    ships apt 2.6.x; the subcommand is Trixie-only as documented
-
-5.1.1  2026-03-24
-
-  Verification:
-  - fix check_tool() false-pass on tools that reject --version or produce
-    no output: lsof (-v), dig (-v), 7z (i), xterm (-v), glxinfo (no flag),
-    gnome-disks (no flag), dosbox (no flag), vulkaninfo (no flag)
-  - add _TOOL_VER_FLAG associative array for per-tool version flag overrides;
-    default remains --version for all other tools
-  - set vulkaninfo flag to "" (installed-only); GPU block in step 15 already
-    runs vulkaninfo --summary with proper VK_GPU/VK_API parsing; check_tool
-    would false-pass with ERROR: [Loader Message] output on no-Vulkan systems
-  - detect error strings masquerading as version output: illegal option,
-    Invalid option, Unknown option, bad command line, unrecognized option,
-    invalid option, ERROR:/error: prefix, usage:/Usage: prefix;
-    emit ⚠ version unverified (installed) and increment _verify_warn
-    instead of silently marking pass
-  - check_tool() now modifies _verify_warn in addition to _verify_pass/_verify_fail
-
-  Style:
-  - collapse all multi-line comment blocks to single lines (36 lines removed)
-  - heredoc content, file header, and shellcheck directives unchanged
-
-5.1.0  2026-03-24
-
-  Removed:
-  - remove PPSSPP: Flatpak install, Mesa override application (4 env
-    vars), --minimal guard, step 15 check_tool + override verification,
-    step 13/--help/comment descriptions, README steps table, Gaming
-    section (standalone paragraph, compatibility tier), recommended
-    cores table (standalone→core with manual install note)
-  - remove mgba-qt: package install, --minimal guard, step 15
-    check_tool, step 13/--help/comment descriptions, README steps
-    table, Gaming section (standalone paragraph)
-  - step 13 description now: DOSBox, ScummVM, RetroArch, FluidSynth
-    soundfont
-
-  Verification:
-  - add gnome-disks check_tool (step 9 installs gnome-disk-utility
-    under ! $MINIMAL but step 15 never verified it)
-  - add PPSSPP Mesa virgl override verification (step 13 applied 4 env
-    vars but step 15 only checked app existence, not overrides; parity
-    with RetroArch override check) — then removed with PPSSPP above
-  - reorder step 15 check_tool calls to match installation order
-    (4→5→6→7→9→10→12→13); previously step 9 GUI apps were wedged
-    between step 13 gaming tools and step 5 build essentials included
-    step 10 Rust binaries
-
-  Correctness:
-  - fix bad substitution in step 3 cros package unhold guard:
-    ${#_CROS_HOLD_PKGS[@]:-0} is invalid bash (cannot use :- with
-    array length operator); crashed --trixie runs; removed :-0 default
-    (array is always initialized when $UPGRADE_TRIXIE is true)
-
-  Documentation:
-  - add --trixie and -- to header Usage line (line 7); all other
-    locations (--help, README, arg parsing) already had both
-  - sync step descriptions across all four locations (comment, banner,
-    --help, README table) for steps 1, 2, 3, 4, 14; comment/banner
-    were missing detail that --help/README already had (4.10.7
-    regression from later changes)
-
-5.0.0  2026-03-24
-
-  Breaking:
-  - Trixie upgrade is no longer automatic; step 3 now runs apt update +
-    apt upgrade on the current release (Bookworm) by default
-  - add --trixie flag to opt in to Bookworm→Trixie upgrade; gates
-    sources.list rewrite, cros pkg hold/unhold, apt full-upgrade,
-    and post-upgrade verification behind the flag
-  - step 3 description now: System update (apt tuning; --trixie
-    upgrades Bookworm to Trixie)
-  - apt tuning, /tmp tmpfs cap, and deb822 migration remain ungated
-    (runtime-detected)
-
-4.12.0  2026-03-24
-
-  Removed:
-  - remove Firefox ESR: package install, default browser
-    update-alternatives, step 15 check_tool, step descriptions
-  - remove Chromium: package install, --minimal guard, step 15
-    check_tool, step descriptions
-  - remove gnome-calculator: package install, step 15 check_tool,
-    step descriptions
-  - remove gnome-screenshot: package install, step 15 check_tool,
-    step descriptions
-  - remove glmark2-wayland and glmark2-es2-wayland: package install,
-    step 15 check_tool, step 6 descriptions, quick-test commands
-  - remove README Browsers section (Brave/Chrome ARM64 references)
-  - remove README Known Issues Firefox ESR bullet
-  - step 6 description now: Mesa, Virgl, Wayland, X11, Vulkan
-  - step 9 description now: Thunar, Evince, Eye of GNOME, file-roller,
-    xterm, fonts, MIME defaults
-
-4.11.0  2026-03-24
-
-  Removed:
-  - remove DOSBox-X: package install, default config file write
-    (~/.config/dosbox-x/dosbox-x.conf), step 13 inline verification,
-    step 15 check_tool and check_config, --help/banner/comment
-    descriptions, README steps table, compatibility tiers, Native ARM64
-    section, Config files written section, and Verify section
-  - step 13 description now: DOSBox, ScummVM, RetroArch, PPSSPP,
-    mgba-qt, FluidSynth soundfont
-
-4.10.9  2026-03-24
-
-  Verification:
-  - add check_tool for gnome-calculator (step 9 GUI app was unverified
-    in step 15)
-
-4.10.8  2026-03-24
-
-  Verification:
-  - add check_tool calls for gcc, g++, make, cmake, pkg-config (step 5
-    dev toolchain was unverified in step 15)
-  - add RetroArch Flatpak Mesa virgl override verification; previously
-    only checked app existence, not env var overrides
-  - add Freedesktop Platform 24.08 runtime pin verification (step 12)
-  - add Qt5 and Qt6 GTK platform theme package verification (step 8)
-
-  Maintainability:
-  - move _gpu_conf_content() from between steps 5 and 6 to utility
-    function section (before step 1); all helper functions now grouped
-    together
-  - add docstring comment to _gpu_conf_content()
-
-4.10.7  2026-03-24
-
-  Documentation:
-  - sync step descriptions across all four locations (comment, banner,
-    --help, README table); previously several steps omitted components
-    actually installed by the script
-  - step 1: add bash >=5.0, Debian version, GPU to description
-  - step 3: add apt tuning, cros pkg hold, deb822 migration, /tmp
-    tmpfs cap to description
-  - step 7: add PipeWire gaming tuning to description
-  - step 8: Qt -> Qt platform themes in description
-  - step 9: add Eye of GNOME, gnome-calculator, file-roller to
-    description
-  - step 11: add sysctl persistence service to description
-  - step 12: add Freedesktop Platform 24.08 pinned to description
-  - step 13: add PPSSPP, mgba-qt, FluidSynth soundfont to description
-
-4.10.6  2026-03-24
-
-  Correctness:
-  - validate _os_codename with regex in step 1 before curl URL
-    interpolation (L563); previously validated only in step 3 (L751);
-    malformed VERSION_CODENAME now falls back to "bookworm" with warning
-  - add error guard to chmod +x on rustup-init binary; failure now
-    reports "Cannot make rustup-init executable (noexec mount?)" instead
-    of misleading "Rustup installer failed" from run()
-  - add timeout 120 to locale-gen (can hang on broken dpkg state)
-  - add timeout 60 to fc-cache -f (can take 30+ seconds on first run)
-  - add -- to rm -f in --reset handler; consistent with L155, L198,
-    L262, L279, L485
-
-  Maintainability:
-  - deduplicate gpu.conf heredoc: extract _gpu_conf_content() function
-    called by both fresh-write and upgrade-path blocks; eliminates
-    19-line duplication between L1049-1067 and L1072-1090
-
-4.10.5  2026-03-24
-
-  Correctness:
-  - change vm.swappiness from 10 to 60 in 99-crostini-memory.conf;
-    aggressive anti-swap on 4 GB with no dedicated swap starves page
-    reclaim and triggers OOM-killer on container lifecycle daemons
-  - change vm.overcommit_memory from 1 to 0 in 99-crostini-tuning.conf;
-    mode 1 (always overcommit) on 4 GB RAM with no swap leads to OOM-
-    killer killing garcon/sommelier on container boot
-  - add -e flag to crostini-sysctl.service ExecStart; suppresses
-    "Invalid argument" / "Read-only file system" errors from container-
-    unsupported keys (net.ipv4.ping_group_range, kernel.unprivileged_
-    userns_clone) that caused systemd to log the service as failed
-  - add upgrade paths for all three changes with $ anchors to prevent
-    matching unrelated values (e.g. vm.swappiness=100)
-
-4.10.4  2026-03-24
-
-  Documentation:
-  - add SAFETY comment to logprintf() and _prompt(): callers must use
-    literal (single-quoted) format strings to prevent format-string
-    injection via SC2059-disabled printf "$@"
-  - add global-contract comments to check_tool() and check_config():
-    document _verify_pass/_verify_fail/_verify_warn modification
-
-4.10.3  2026-03-24
-
-  Correctness:
-  - fix same-file read→write pipeline in step 11 sysctl upgrade path
-    (vm.max_map_count append): capture content into variable before
-    piping to write_file_sudo; cat failure now triggers die() instead
-    of producing an empty file
-  - fix same-file read→write pipeline in step 11 memory tuning upgrade
-    path (vfs_cache_pressure 150→50): same variable-capture pattern
-  - fix check_tool version display for unzip: skip leading "caution:"
-    noise line in stderr fallback; now shows "UnZip 6.00 ..." instead
-    of the diagnostic warning
-
-4.10.2  2026-03-24
-
-  Correctness:
-  - guard 8 flatpak override calls (step 13, RetroArch + PPSSPP) with
-    || true; run() restores set -e before return "$rc", so an unguarded
-    non-zero exit kills the script before checkpoint 13 is written
-
-4.10.1  2026-03-24
-
-  Correctness:
-  - handle unreadable checkpoint file in get_checkpoint(): cat failure
-    under set -e killed the script with no error message; now warns and
-    falls back to step 0
-  - replace non-atomic sudo sed -i for vfs_cache_pressure upgrade path
-    (step 11) with atomic sed | write_file_sudo pattern
-  - update header sudo count ~65 to ~70
-
-4.10.0  2026-03-23
-
-  Correctness:
-  - remove redundant system-level PipeWire quantum config; user-level
-    10-crostini-gaming.conf wins per PipeWire precedence
-  - replace non-atomic tee -a append to SYSCTL_CONF with atomic
-    cat + write_file_sudo pattern (step 11 vm.max_map_count upgrade)
-  - fix step 15 fd/bat verification: check both symlink and Debian name
-  - remove no-op audio.conf placeholder
-
-  Consistency:
-  - reorder CORE_PKGS: standard utilities first, Rust CLI alternatives
-    last; sync across usage help, README, and step 15
-
-4.9.0 - 4.9.1  2026-03-22
-  Gaming and performance optimizations (SPEC v2.0.0):
-  - Mesa: add MESA_LOADER_DRIVER_OVERRIDE=virgl, MESA_NO_ERROR=1, shader
-    cache vars to gpu.conf; upgrade-path rewrites if override absent
-  - PipeWire: user-level quantum 256 override for KVM VM auto-detection;
-    disable pulse-layer VM quantum override
-  - Sysctl: add vm.max_map_count=262144; change vfs_cache_pressure 150->50
-  - Gaming (step 13): promote DOSBox-X; add fluid-soundfont-gm; write
-    default configs for DOSBox-X, RetroArch, ScummVM; add PPSSPP + mgba-qt;
-    apply Flatpak Mesa overrides to RetroArch and standalone emulators
-  - route flatpak override calls through run(); add shellcheck SC2043 disable
-  - add Gaming quick-test line to step 15; add check_config for new files
-  - README: add RetroArch core/shader/run-ahead tables, box64 v0.4.0 guide,
-    streaming client table
-
-4.8.0 - 4.8.4  2026-03-21
-  OOM mitigation, GPU/audio polish, verification expansion:
-  - add /tmp tmpfs 512M cap (step 3); vm.overcommit_memory=1 (step 11);
-    CARGO_BUILD_JOBS=2 (step 11); fix SC7180 -> SC7180P
-  - remove GDK_BACKEND from gpu.conf; add GTK_THEME=Adwaita:dark
-  - pin Flatpak Freedesktop Platform 24.08 (Zink crash mitigation)
-  - add qt6-gtk-platformtheme; add crostini-sysctl.service
-  - guard apt modernize-sources duplicate cros.list/.sources
-  - add --now to systemctl mask pulseaudio; guard rustup SHA-256 mktemp
-  - add 17 missing check_tool entries; add check_config for new files
-
-4.7.0 - 4.7.7  2026-03-20
-  - fix RetroArch Flatpak: system -> user install (polkit blocked)
-  - fix Rust guard: add ~/.rustup check + cargo/env source fallback
-  - gate GPU warning on /dev/dri/renderD128 absence
-  - move .pre-trixie backups to /etc/apt/; remove software-properties-common
-  - add bash 5.0 guard; add "--" to all mv calls; trim docstrings
-
-4.0.0 - 4.6.0  2026-03-19 - 2026-03-20
-  BREAKING: dual-target Bookworm/Trixie with canonical package names.
-  - Trixie auto-upgrade (step 3) with backup/rollback
-  - deb822 .sources handling + apt modernize-sources
-  - linux-sysctl-defaults for Trixie ping permissions
-  - remove Python, Node.js, VS Code steps; renumber 12-18 -> 10-15
-  - PipeWire-native audio; mask legacy PulseAudio
-  - add Chromium (optional), dosbox-x, Flatpak Mesa Zink warning
+  - consolidate 15 steps to 11; checkpoint files from ≤6.0.1 incompatible
+  - merge preflight and ChromeOS integration into single step 1
+  - remove Rust (rustup), Flatpak (Flathub), container backup steps
+  - switch RetroArch from Flatpak to native arm64 .deb
+  - remove GUI apps (thunar, evince, eog, file-roller)
+
+6.0.0 - 6.0.1  2026-03-26
+  Breaking: rename crostini-setup-duet5 → ry-crostini; all managed
+  paths changed.
+
+5.0.0 - 5.5.0  2026-03-24 - 2026-03-26
+  Progress bar, qemu-user x86 emulation, run-x86/gog-extract wrappers,
+  innoextract GOG support, box64 DynaRec, --trixie opt-in flag,
+  check_tool version probing with _TOOL_VER_FLAG overrides, atomic
+  writes for all upgrade paths, log rotation.
+
+4.0.0 - 4.12.0  2026-03-19 - 2026-03-24
+  Dual-target Bookworm/Trixie, Trixie auto-upgrade with backup/rollback,
+  deb822 migration, PipeWire-native audio, gaming step with
+  DOSBox-X/ScummVM/RetroArch/FluidSynth, Mesa virgl override, shader
+  cache, PipeWire gaming quantum.
 
 3.0.0 - 3.22.0  2026-03-15 - 2026-03-19
-  Execution safety and unattended operation:
-  - CRITICAL: fix set -e/pipefail restore order crash in run()
-  - CRITICAL: fix PIPESTATUS race; eliminate run_shell()/bash -c
-  - CRITICAL: fix cleanup lock/recursion/signal exit codes (128+N)
-  - gate locale.gen sed -i on backup; chmod 644 in writers
-  - all sudo apt-get passes DEBIAN_FRONTEND explicitly
-  - add gaming step, --from-step=N, --verify, --reset, stale PID
-  - single-pass ANSI strip; _prompt() log trail; verification counters
+  Execution safety: fix set -e/pipefail restore in run(), fix PIPESTATUS
+  race, fix cleanup lock/recursion/signal exit codes, --from-step,
+  --verify, --reset, stale PID detection.
 
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
-  Full rewrite: 19-step automated setup with checkpoint resume,
-  --dry-run, --interactive, --minimal, atomic helpers, PID lock.
+  Full rewrite: automated setup with checkpoint resume, --dry-run,
+  --interactive, --minimal, atomic helpers, PID lock.
 
 1.0.0 - 1.1.0  2026-03-08
   Initial release.
