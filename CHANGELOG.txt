@@ -16,192 +16,47 @@ Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
     placeholder sed replacement (single-quoted heredoc prevents direct
     shell expansion)
 
-7.6.2  2026-03-30
+7.6.0 - 7.6.2  2026-03-29 - 2026-03-30
+  Gaming optimizations: Mesa shader cache partitioning, PipeWire
+  mem.allow-mlock + WirePlumber ALSA tuning, RetroArch swapchain 3 +
+  frame delay auto, ScummVM chorus off, journald volatile storage.
+  Fixes: local-outside-function crashes, find|wc-l newline safety,
+  gog-extract makeself validation, non-atomic config upgrade paths,
+  nullglob guard for sources.list.d glob.
 
-  Fixes:
-  - fix 4 local-outside-function crashes introduced in 7.6.1: bash
-    rejects local outside a function (exit 1), which under set -e kills
-    the script immediately; affected Bookworm→Trixie sources.list.d
-    iteration (L989), retroarch.cfg swapchain upgrade (L1876),
-    retroarch.cfg frame-delay upgrade (L1900), and scummvm.ini chorus
-    upgrade (L1939); replaced with direct assignment + unset
-  - fix find|wc-l newline-unsafe count in 3 sites (shared folder count
-    L859, audio device count L1349 and L2293): replace with
-    find -printf '.'|wc -c which counts entries not lines
-  - harden gog-extract .sh handler: validate makeself archive signature
-    (grep -qi 'makeself' in first 20 lines) before bash invocation;
-    previously any .sh file would be executed with --noexec passed as $1
-    (a bash argument, not a makeself flag) to a non-makeself script
-
-7.6.1  2026-03-30
-
-  Fixes:
-  - fix header sudo count: ~65 → ~70 (actual runtime count on standard
-    Bookworm→Trixie first run; CHANGELOG 6.0.1 already audited ~70 but
-    header was never updated)
-  - fix _gpu_conf_content() comment: "Called by step 6" → "Called by
-    step 5"; function is called exclusively inside the step 5 block
-  - fix non-atomic retroarch.cfg upgrade paths: sed -i (swapchain 2→3)
-    and printf >> (video_frame_delay_auto append) replaced with atomic
-    tmpfile+mv and read+write_file_private respectively; crash mid-write
-    could previously corrupt the file
-  - fix non-atomic scummvm.ini upgrade path: printf >> (chorus append)
-    replaced with read+write_file_private atomic pattern
-  - fix gog-extract: chmod +x on user's original .sh installer replaced
-    with bash invocation (bash "$installer" --noexec); no longer mutates
-    the input file's permissions
-  - fix unquoted associative array subscripts in check_tool(): quote
-    _TOOL_VER_FLAG[$cmd] in [[ -v ]] and ${} expansion (3 sites);
-    safe in practice (tool names contain no glob chars) but inconsistent
-    with quoting discipline elsewhere
-  - fix potential failglob crash in step 2 sources.list.d glob iteration:
-    add nullglob guard around for loop over *.list *.sources; restore
-    previous nullglob state after loop
-
-7.6.0  2026-03-29
-
-  Gaming optimizations (spec: ry-crostini-gaming-optimizations v1.2.0):
-
-  Mesa:
-  - add MESA_DISK_CACHE_DATABASE_NUM_PARTS=10 to gpu.conf; reduces
-    database partition overhead from default 50 on 4 GB RAM
-  - add upgrade path: rewrite gpu.conf if NUM_PARTS absent
-
-  PipeWire:
-  - add mem.allow-mlock=true to PipeWire core gaming config; allows
-    real-time memory locking for audio threads
-  - add upgrade path: rewrite PipeWire gaming config if
-    mem.allow-mlock absent
-  - add WirePlumber ALSA tuning config
-    (~/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf):
-    period-size=256, period-num=3, headroom=256, disable-batch=true,
-    suspend-timeout=0; WirePlumber 0.5+ JSON .conf format (Trixie)
-
-  RetroArch:
-  - change video_max_swapchain_images from 2 to 3; reduces virgl
-    serialization stalls
-  - add video_frame_delay_auto=true; dynamic safe frame delay
-    (available since RA 1.9.13)
-  - update audio_driver comment: document alsa as fallback for
-    RA#17685 (PipeWire quantum hardcoding in Trixie RA 1.20.0;
-    fixed in RA 1.21+); default remains pipewire
-  - add upgrade paths for existing retroarch.cfg: sed swapchain
-    2→3, append video_frame_delay_auto if absent
-
-  ScummVM:
-  - add fluidsynth_chorus_activate=false to scummvm.ini; saves
-    5–8% CPU on SC7180P by disabling chorus DSP effect
-  - add upgrade path for existing scummvm.ini: append
-    fluidsynth_chorus_activate=false if absent
-
-  Container:
-  - add journald volatile storage config
-    (/etc/systemd/journald.conf.d/volatile.conf): Storage=volatile;
-    writes journal to RAM only, saves eMMC I/O; step 9d
-
-  Verification:
-  - add check_config for WirePlumber ALSA tuning (step 6)
-  - add check_config for journald volatile (step 9)
-  - add check_config for ry-crostini-cros-pin.service (step 2;
-    was in README generated files table but never verified)
-
-  Documentation:
-  - update step 6 description: add WirePlumber ALSA tuning
-  - update step 9 description: add journald volatile
-  - update README generated files table: add WirePlumber ALSA and
-    journald volatile entries
-  - renumber step 9 subsections: 9d=journald, 9e=env profile,
-    9f=XDG dirs
-
-7.5.1  2026-03-29
-
-  Fixes:
-  - fix tmp.mount drop-in never written on Bookworm→Trixie upgrade path:
-    remove systemctl is-active guard so drop-in is written unconditionally
-  - sync step descriptions across script banner, --help, and README
-
-  Documentation:
-  - restructure README for GitHub readability: table of contents,
-    flag/prerequisites/step tables, generated files split by system/user,
-    features split into safety/UX, known limitations grouped by severity
-  - add #exo-pointer-lock to Prerequisites, Quick Start, step 1j, step 11
-
-7.5.0  2026-03-29
-
-  Fixes:
-  - replace p7zip-full (transitional in Trixie) with 7zip
-  - replace qt5-style-plugins (removed from Trixie) with adwaita-qt
-  - fix Mesa shader cache: switch to MESA_DISK_CACHE_DATABASE=1
-  - replace deprecated vm.overrides={} in pipewire-pulse.conf.d
-  - rename BOX64_DYNACACHE→BOX64_DYNAREC_CACHE in .box64rc
-  - keep cros-guest-tools held permanently (cros-im unavailable)
-
-  Improvements:
-  - switch RetroArch audio to native pipewire driver; bump latency
-  - add mesa_glthread=true, BOX64_DYNAREC_NATIVEFLAGS=1
-  - document Flatpak avoidance, box86/Box32, WirePlumber 0.5, M145 flags
+7.5.0 - 7.5.1  2026-03-29
+  README restructured for GitHub readability. Trixie package fixes:
+  7zip replaces p7zip-full, adwaita-qt replaces qt5-style-plugins.
+  Mesa DISK_CACHE_DATABASE, pipewire-pulse rules syntax, BOX64_DYNAREC
+  renames. RetroArch native pipewire driver. #exo-pointer-lock added.
 
 7.4.0 - 7.4.2  2026-03-28
+  Remove all sysctl settings (read-only in Crostini namespace).
+  Add ry-crostini-cros-pin.service, write_file_exec helper. Fix unrar
+  exit 1, suppress 5 spurious warnings.
 
-  Fixes:
-  - remove all sysctl settings: read-only from inside Crostini namespace
-  - fix unrar install failure causing exit 1 on fresh Trixie
-  - suppress 5 spurious warn/verification messages
-
-  Changes:
-  - add ry-crostini-cros-pin.service: removes stale cros.list at boot
-  - add write_file_exec helper: atomic write + chmod 700
-
-7.3.0  2026-03-27
-
-  Breaking:
-  - make Trixie upgrade mandatory; remove --trixie flag
-  - remove all Bookworm fallback paths
-
-7.2.0  2026-03-27
-
-  Changes:
-  - add unrar and unar to step 10 gaming packages and verification
-
-7.1.0  2026-03-27
-
-  Changes:
-  - replace DOSBox 0.74 with DOSBox-X (save-states, PC-98, MT-32, CJK)
-  - harden run-x86/gog-extract permissions: write_file_private + chmod 700
-
-7.0.0  2026-03-27
-
-  Breaking:
-  - consolidate 15 steps to 11; checkpoint files from ≤6.0.1 incompatible
-  - merge preflight and ChromeOS integration into single step 1
-  - remove Rust (rustup), Flatpak (Flathub), container backup steps
-  - switch RetroArch from Flatpak to native arm64 .deb
-  - remove GUI apps (thunar, evince, eog, file-roller)
+7.0.0 - 7.3.0  2026-03-27
+  Breaking: consolidate 15→11 steps, mandatory Trixie, remove Rust/
+  Flatpak/backup steps, switch RetroArch to native .deb, remove GUI
+  apps. Add DOSBox-X, unrar/unar.
 
 6.0.0 - 6.0.1  2026-03-26
-  Breaking: rename crostini-setup-duet5 → ry-crostini; all managed
-  paths changed.
+  Breaking: rename crostini-setup-duet5 → ry-crostini.
 
 5.0.0 - 5.5.0  2026-03-24 - 2026-03-26
-  Progress bar, qemu-user x86 emulation, run-x86/gog-extract wrappers,
-  innoextract GOG support, box64 DynaRec, --trixie opt-in flag,
-  check_tool version probing with _TOOL_VER_FLAG overrides, atomic
-  writes for all upgrade paths, log rotation.
+  Progress bar, qemu-user, run-x86/gog-extract wrappers, box64,
+  check_tool version probing, log rotation.
 
 4.0.0 - 4.12.0  2026-03-19 - 2026-03-24
-  Dual-target Bookworm/Trixie, Trixie auto-upgrade with backup/rollback,
-  deb822 migration, PipeWire-native audio, gaming step with
-  DOSBox-X/ScummVM/RetroArch/FluidSynth, Mesa virgl override, shader
-  cache, PipeWire gaming quantum.
+  Dual-target Bookworm/Trixie, deb822 migration, PipeWire audio,
+  gaming step, Mesa virgl override.
 
 3.0.0 - 3.22.0  2026-03-15 - 2026-03-19
-  Execution safety: fix set -e/pipefail restore in run(), fix PIPESTATUS
-  race, fix cleanup lock/recursion/signal exit codes, --from-step,
-  --verify, --reset, stale PID detection.
+  Execution safety: run() pipefail fix, PIPESTATUS race, signal
+  handling, --from-step, --verify, --reset.
 
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
-  Full rewrite: automated setup with checkpoint resume, --dry-run,
-  --interactive, --minimal, atomic helpers, PID lock.
+  Full rewrite: checkpoint resume, --dry-run, --interactive, --minimal.
 
 1.0.0 - 1.1.0  2026-03-08
   Initial release.
