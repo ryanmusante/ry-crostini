@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.7.2
-# Date:    2026-03-30
+# Version: 7.8.0
+# Date:    2026-03-31
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.7.2"
+readonly SCRIPT_VERSION="7.8.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -102,7 +102,7 @@ fi
 readonly RED GREEN YELLOW BOLD RESET
 
 # Progress bar — pinned to bottom of terminal via scroll region
-readonly _PROGRESS_TOTAL=11
+readonly _PROGRESS_TOTAL=13
 
 # _progress_init: reserve bottom terminal line, draw initial bar. Called once after lock+checkpoint.
 # shellcheck disable=SC2317
@@ -521,8 +521,8 @@ USAGE:
 OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
-    --from-step=N  Start (or restart) from step N (1-11; N=11 is same as --verify)
-    --verify       Run only step 11 (summary and verification)
+    --from-step=N  Start (or restart) from step N (1-13; N=11 is same as --verify)
+    --verify       Run only steps 11-13 (verification and summary)
     --help         Show this help message
     --version      Show version
     --reset        Clear checkpoint and start from step 1
@@ -548,7 +548,9 @@ STEPS PERFORMED:
     10  Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth
         soundfont, innoextract/GOG, unrar/unar, box64,
         qemu-user)
-    11  Summary and verification
+    11  Verification — tools and config files
+    12  Verification — scripts and assets
+    13  Verification summary
 
 CHECKPOINT:
     Progress is saved after each step to ${STEP_FILE}.
@@ -572,8 +574,8 @@ for arg in "$@"; do
                 die "Cannot specify --from-step more than once, or combine with --verify"
             fi
             _from="${arg#*=}"
-            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$((10#$_from))" -lt 1 ]] || [[ "$((10#$_from))" -gt 11 ]]; then
-                die "--from-step requires a number 1-11 (got '${_from}')"
+            if [[ ! "$_from" =~ ^[0-9]+$ ]] || [[ "$((10#$_from))" -lt 1 ]] || [[ "$((10#$_from))" -gt 13 ]]; then
+                die "--from-step requires a number 1-13 (got '${_from}')"
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="$((10#$_from - 1))"
@@ -586,7 +588,7 @@ for arg in "$@"; do
             fi
             # Defer checkpoint write until after lock acquisition (avoids race)
             _DEFERRED_CHECKPOINT="10"
-            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only."
+            _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only (steps 11-13)."
             ;;
         --help)    rm -f -- "$LOG_FILE" 2>/dev/null; usage ;;
         --version) rm -f -- "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
@@ -2150,22 +2152,23 @@ GOGWRAP
     set_checkpoint 10
     log "Step 10 complete."
 fi
-# Step 11: Summary and verification
+# Steps 11-13: Verification
+# Counters and state span all three steps; initialized here so --from-step=12/13 works.
 _had_failures=0
+_verify_pass=0
+_verify_fail=0
+_verify_warn=0
+
+# Inject install-time paths (profile.d not yet sourced in current shell)
+[[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
+
+if $DRY_RUN; then
+    log "[DRY-RUN] Verification runs live (all checks are read-only)"
+fi
+
+# Step 11: Verification — tools and config files
 if should_run_step 11; then
-    step_banner 11 "Summary and verification"
-
-    # Verification counters (used by check_tool / check_config below)
-    _verify_pass=0
-    _verify_fail=0
-    _verify_warn=0
-
-    # Inject install-time paths (profile.d not yet sourced in current shell)
-    [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
-
-    if $DRY_RUN; then
-        log "[DRY-RUN] Verification runs live (all checks are read-only)"
-    fi
+    step_banner 11 "Verification — tools and config files"
 
     logprintf '\n%bVerification results:%b\n\n' "$BOLD" "$RESET"
 
@@ -2399,12 +2402,9 @@ if should_run_step 11; then
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
     check_config "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
-    check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
     check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
-    check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
-    check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
     # PipeWire audio chain verification
     if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
@@ -2414,6 +2414,28 @@ if should_run_step 11; then
         ((_verify_warn++)) || true
     fi
     logprintf '\n'
+
+    set_checkpoint 11
+    log "Step 11 complete."
+fi
+# Step 12: Verification — scripts and assets
+if should_run_step 12; then
+    step_banner 12 "Verification — scripts and assets"
+
+    logprintf '%bScripts and assets:%b\n' "$BOLD" "$RESET"
+
+    check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
+    check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
+    check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
+    logprintf '\n'
+
+    set_checkpoint 12
+    log "Step 12 complete."
+fi
+# Step 13: Verification summary
+if should_run_step 13; then
+    step_banner 13 "Verification summary"
+
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU/Audio:   glxgears / vulkaninfo --summary / pactl info\n'
     logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
@@ -2445,8 +2467,8 @@ if should_run_step 11; then
     fi
 
     if [[ "$_had_failures" -eq 0 ]]; then
-        # All checks passed — mark step 11 complete and remove checkpoint
-        set_checkpoint 11
+        # All checks passed — mark step 13 complete and remove checkpoint
+        set_checkpoint 13
         if $DRY_RUN; then
             log "[DRY-RUN] would remove checkpoint file"
         else
@@ -2454,11 +2476,11 @@ if should_run_step 11; then
             log "Checkpoint file removed. Setup fully complete."
         fi
     else
-        # Verification failed — keep checkpoint at 10 so re-run repeats step 11 only
+        # Verification failed — keep checkpoint at 12 so re-run repeats step 13 only
         log "Verification failures detected. Fix issues, then re-run or use --verify to re-check."
     fi
 
-    # Clean up step 11 variables
+    # Clean up verification variables
     unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
     unset _verify_pass _verify_fail _verify_warn
 
@@ -2473,7 +2495,7 @@ if should_run_step 11; then
     unset _now_epoch _elapsed
 
     logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
-    log "Step 11 complete."
+    log "Step 13 complete."
 fi
 
 if [[ "$_had_failures" -gt 0 ]]; then

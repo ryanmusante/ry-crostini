@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.7.2-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.8.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -67,8 +67,8 @@ bash ry-crostini.sh [OPTIONS]
 | *(none)* | Unattended full install (default) |
 | `--interactive` | Prompt for ChromeOS toggles |
 | `--dry-run` | Print commands without executing |
-| `--from-step=N` | Start or restart from step N (1–11; N=11 is same as `--verify`) |
-| `--verify` | Run only step 11 (summary and verification) |
+| `--from-step=N` | Start or restart from step N (1–13; N=11 is same as `--verify`) |
+| `--verify` | Run only steps 11–13 (verification and summary) |
 | `--reset` | Clear checkpoint and lock, start from step 1 |
 | `--help` | Show usage and step list |
 | `--version` | Show version |
@@ -108,7 +108,9 @@ bash ry-crostini.sh [OPTIONS]
 | 8 | GUI | xterm, session support, fonts, icons |
 | 9 | Environment | Locale, journald volatile, env, XDG, paths |
 | 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user |
-| 11 | Verify | Summary and verification |
+| 11 | Verify | Tools and config files |
+| 12 | Verify | Scripts and assets |
+| 13 | Summary | Verification summary |
 
 ## Generated Files
 
@@ -231,8 +233,8 @@ running at completion. Close and reopen the Terminal app to resolve.
 | `1` | Verification failure or fatal error |
 
 Exit message distinguishes verification failure from mid-step fatal.
-Verification failures keep the checkpoint at step 10 so re-run repeats only
-step 11 (verification).
+Verification failures keep the checkpoint at step 12 so re-run repeats only
+step 13 (verification summary).
 
 ## Gaming
 

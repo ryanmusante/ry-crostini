@@ -4,6 +4,20 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.8.0  2026-03-31
+
+  Changes:
+  - split verification into three steps: step 11 (tools and config
+    files), step 12 (scripts and assets), step 13 (verification
+    summary with totals, elapsed time, and result banner)
+  - move FluidR3_GM.sf2, run-x86, and gog-extract from "Config files
+    written" section to new "Scripts and assets" section (step 12);
+    these are not config files
+  - _PROGRESS_TOTAL 12→13; --from-step range 1-12→1-13; --verify
+    now runs steps 11-13
+  - verification counters span steps 11-13; initialized before step 11
+    so --from-step=12 or --from-step=13 works correctly
+
 7.7.2  2026-03-30
 
   Changes:
