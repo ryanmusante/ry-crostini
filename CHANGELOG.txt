@@ -4,6 +4,14 @@ CHANGELOG
 ry-crostini.sh -- Crostini post-install bootstrap
 Lenovo IdeaPad Duet 5 Chromebook (82QS0001US / 13Q7C6)
 
+7.7.2  2026-03-30
+
+  Changes:
+  - remove deprecated and experimental ChromeOS flags from README
+    flag status table: #crostini-multi-container (deprecated M141),
+    #borealis-enabled (shut down 2026-01-01), #crostini-containerless
+    (early-stage); table now lists only the two required flags
+
 7.7.1  2026-03-30
 
   Changes:

@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.7.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.7.2-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -222,9 +222,6 @@ running at completion. Close and reopen the Terminal app to resolve.
 |------|--------|
 | `#crostini-gpu-support` | Required |
 | `#exo-pointer-lock` | Required |
-| `#crostini-multi-container` | Deprecated at M141 (Baguette replaces) |
-| `#borealis-enabled` | Deprecated (Borealis shut down 2026-01-01) |
-| `#crostini-containerless` | Available M143+ (Baguette, early-stage) |
 
 ## Exit Codes
 
