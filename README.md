@@ -95,8 +95,8 @@ bash ry-crostini.sh [OPTIONS]
 | `1` | Verification failure or fatal error |
 
 The exit message distinguishes verification failures from mid-step fatal
-errors. Verification failures preserve the checkpoint at step 12 so a re-run
-repeats only the summary (step 13).
+errors. Verification failures preserve the checkpoint so that
+`--verify` re-runs all checks (steps 11–13).
 
 > **Note:** The script invokes `sudo` internally. A background keepalive
 > renews credentials every 60 s. Run `sudo true` before execution to cache

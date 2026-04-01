@@ -1794,9 +1794,7 @@ if should_run_step 10; then
     # Native ARM packages — unrar is non-free; unar handles RAR4/RAR5 as adequate replacement
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
     # Attempt non-free unrar separately; failure is non-fatal
-    if $DRY_RUN; then
-        log "[DRY-RUN] sudo apt-get install -y unrar"
-    elif sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar &>/dev/null; then
+    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
         log "unrar installed ✓"
     else
         log "unrar not available (non-free not enabled) — unar will be used for RAR archives ✓"
@@ -2490,9 +2488,8 @@ if should_run_step 13; then
     fi
 
     if [[ $((_verify_pass + _verify_fail + _verify_warn)) -eq 0 ]]; then
-        # No checks ran (e.g. --from-step=13) — mark step complete but keep checkpoint
-        set_checkpoint 13
-        log "Summary step complete. No verification checks were executed — use --verify to validate."
+        # No checks ran (e.g. --from-step=13) — do not advance checkpoint
+        log "No verification checks were executed — use --verify to validate."
     elif [[ "$_had_failures" -eq 0 ]]; then
         # All checks passed — mark step 13 complete and remove checkpoint
         set_checkpoint 13
@@ -2503,8 +2500,8 @@ if should_run_step 13; then
             log "Checkpoint file removed. Setup fully complete."
         fi
     else
-        # Verification failed — keep checkpoint at 12 so re-run repeats step 13 only
-        log "Verification failures detected. Fix issues, then re-run or use --verify to re-check."
+        # Verification failed — do not advance checkpoint; --verify re-runs steps 11-13
+        log "Verification failures detected. Fix issues above, then run: bash ry-crostini.sh --verify"
     fi
 
     # Clean up verification variables

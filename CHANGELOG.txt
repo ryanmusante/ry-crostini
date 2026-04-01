@@ -2,13 +2,16 @@
 
   Fixes:
   - fix --dry-run contract violation: bare sudo apt-get install -y
-    unrar bypassed DRY_RUN guard; wrapped in if $DRY_RUN check
-    matching all other install calls (install_pkgs_best_effort and
-    run() both gate on DRY_RUN)
+    unrar bypassed DRY_RUN guard and swallowed all output via
+    &>/dev/null; routed through run() matching box64 install pattern
+    (DRY_RUN guard, log capture, error visibility)
   - fix --from-step=13 false success: step 13 printed
     "RY-CROSTINI COMPLETE" and deleted checkpoint when no checks
     actually ran (counters all zero); now prints "NO CHECKS RAN"
     banner and preserves checkpoint file
+  - fix verification failure guidance: log message said "re-run or
+    use --verify" but bare re-run skips checks (steps 11-12);
+    now directs user to --verify only; README updated to match
 
 7.8.2  2026-03-31
 
