@@ -17,9 +17,16 @@ containers are upgraded to Trixie automatically during installation.
 - [Usage](#usage)
 - [Installation Steps](#installation-steps)
 - [Generated Files](#generated-files)
+  - [System (5 files, requires sudo)](#system-5-files-requires-sudo)
+  - [User (17 files)](#user-17-files)
 - [Trixie Upgrade](#trixie-upgrade)
 - [Design](#design)
+  - [Safety and Reliability](#safety-and-reliability)
+  - [User Experience](#user-experience)
 - [Known Limitations](#known-limitations)
+  - [Blockers](#blockers)
+  - [Constraints](#constraints)
+  - [Informational](#informational)
 - [Gaming Reference](#gaming-reference)
   - [Compatibility Tiers](#compatibility-tiers)
   - [Native ARM64 Emulators](#native-arm64-emulators)
@@ -27,6 +34,8 @@ containers are upgraded to Trixie automatically during installation.
   - [RetroArch CRT Shaders](#retroarch-crt-shaders)
   - [RetroArch Run-Ahead](#retroarch-run-ahead)
   - [x86 Translation](#x86-translation)
+    - [32-bit x86 Alternatives](#32-bit-x86-alternatives)
+    - [Transparent Execution (Privileged Container)](#transparent-execution-privileged-container)
   - [GOG Games](#gog-games)
   - [Cloud Gaming](#cloud-gaming)
 - [License](#license)
@@ -221,8 +230,6 @@ codename references in APT sources and running `apt full-upgrade`.
 |------|--------|
 | Sommelier not running during install | Sommelier (Wayland/X11 bridge) is started by the container login process, not inside a running shell. Step 1 logs this as informational; step 11 reports it as a warning only if still absent at completion. Close and reopen the Terminal to resolve. |
 | ChromeOS flag status (confirmed M145) | `#crostini-gpu-support`: Required. `#exo-pointer-lock`: Required. |
-
----
 
 ## Gaming Reference
 
