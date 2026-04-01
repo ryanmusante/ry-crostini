@@ -1,3 +1,51 @@
+7.9.0  2026-03-31
+
+  Changes (performance & gaming optimization audit):
+  - retroarch.cfg: video_threaded true→false; eliminates frame pacing
+    interference with video_frame_delay_auto (Libretro docs)
+  - retroarch.cfg: remove video_max_swapchain_images (Vulkan/KMS
+    setting, inert on glcore/virgl; eliminates swapchain 2→3 upgrade)
+  - retroarch.cfg: add input_poll_type_behavior=2 (late input polling)
+  - retroarch.cfg: add preempt_enable=false (per-core override for
+    8/16-bit; lower-overhead alternative to Run-Ahead)
+  - gpu.conf: remove mesa_glthread=true; virgl serializes all GL
+    through virtio-gpu making glthread overhead-only
+  - PipeWire quantum 256→512, min-quantum 256→512; prevents xruns
+    from emulation cores with variable audio rates (N64, PSX)
+  - PipeWire-Pulse quantum 256→512 to match core config
+  - new dosbox-x.conf: ARM64 dynamic recompiler (core=dynamic_rec),
+    GPU-accelerated rendering (output=openglnb, glshader=sharp),
+    cycle tuning (auto 5000 70% limit 30000), memsize=16
+  - .box64rc: add DYNAREC_FORWARD=512 (larger blocks, 30%+ speedup),
+    DYNAREC_PAUSE=1 (YIELD for spinlocks), ALIGNED_ATOMICS and
+    SAFEFLAGS documented as per-game only (commented out)
+  - earlyoom installed and enabled: userspace OOM killer for 4 GB RAM
+    (systemd-oomd requires cgroup v2; Crostini uses v1)
+  - man-db auto-update trigger disabled (30-60 s on ARM64 per apt)
+  - apt-daily, apt-daily-upgrade, fstrim, e2scrub_all, man-db timers
+    disabled/masked (no-ops or counterproductive in Crostini)
+  - fontconfig: add embeddedbitmap=false (prevents bitmap font
+    substitution at 166 PPI OLED)
+  - new run-game wrapper: pins to Cortex-A76 big cores (6-7) with
+    elevated nice/ionice priority and MALLOC_ARENA_MAX=2; graceful
+    fallback if unprivileged or non-SC7180P hardware
+  - verification: earlyoom service, apt-daily.timer, video_threaded,
+    dosbox-x.conf, run-game
+  - user file count 17→19 (dosbox-x.conf, run-game)
+  - README: Preemptive Frames documentation, run-game launcher
+    section, DOSBox-X config reference, ALIGNED_ATOMICS constraint,
+    mupen64plus-next and PPSSPP core option guidance
+
+  Cleanup (redundant defaults removed):
+  - gpu.conf: remove GALLIUM_DRIVER=virgl (redundant with
+    MESA_LOADER_DRIVER_OVERRIDE on Mesa 19+; Trixie ships 25.x)
+  - gpu.conf: remove MESA_SHADER_CACHE_DISABLE=false (Mesa default)
+  - GTK3 settings.ini: remove gtk-overlay-scrolling=1 (GTK3 default)
+  - dosbox-x.conf: remove memsize=16 (DOSBox-X default; comment was
+    misleading — 16 MB is not a reduction)
+  - retroarch.cfg: remove video_max_swapchain_images (Vulkan/KMS
+    setting, inert on glcore/virgl); remove swapchain 2→3 upgrade path
+
 7.8.3  2026-03-31
 
   Fixes:

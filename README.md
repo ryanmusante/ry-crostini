@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.8.3-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.9.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -18,7 +18,7 @@ containers are upgraded to Trixie automatically during installation.
 - [Installation Steps](#installation-steps)
 - [Generated Files](#generated-files)
   - [System (5 files, requires sudo)](#system-5-files-requires-sudo)
-  - [User (17 files)](#user-17-files)
+  - [User (19 files)](#user-19-files)
 - [Trixie Upgrade](#trixie-upgrade)
 - [Design](#design)
   - [Safety and Reliability](#safety-and-reliability)
@@ -116,15 +116,15 @@ errors. Verification failures preserve the checkpoint so that
 | Step | Category | Description |
 |------|----------|-------------|
 | 1 | Preflight | Architecture, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive` |
-| 2 | System | APT tuning, Trixie upgrade, cros package hold, deb822 migration, `/tmp` tmpfs cap, cros-pin service |
-| 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, and others |
+| 2 | System | APT tuning, man-db trigger disable, Trixie upgrade, cros package hold, deb822 migration, `/tmp` tmpfs cap, cros-pin service |
+| 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, and others |
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
 | 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning |
 | 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor |
 | 8 | GUI | xterm, session support, fonts, icons |
-| 9 | Environment | Locale, journald volatile, environment variables, XDG directories, PATH |
-| 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user |
+| 9 | Environment | Locale, journald volatile, timer cleanup, environment variables, XDG directories, PATH |
+| 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher |
 | 11 | Verify | Tools and configuration files |
 | 12 | Verify | Scripts and assets |
 | 13 | Summary | Verification summary and elapsed time |
@@ -145,7 +145,7 @@ installed with mode 700.
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
 | `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 
-### User (17 files)
+### User (19 files)
 
 | Path | Step | Purpose |
 |------|------|---------|
@@ -161,11 +161,13 @@ installed with mode 700.
 | `~/.Xresources` | 7 | Xft DPI 120 |
 | `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
 | `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
-| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio, frame delay |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio, frame delay, late input polling |
 | `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth, chorus off |
-| `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning |
+| `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, cycle tuning |
+| `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
+| `~/.local/bin/run-game` | 10 | CPU affinity + priority game launcher, `MALLOC_ARENA_MAX` |
 
 ## Trixie Upgrade
 
@@ -223,6 +225,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | WirePlumber 0.5 format | Trixie ships WirePlumber 0.5.8 which uses JSON `.conf` files, not Lua scripts. User-created Lua configurations in `~/.config/wireplumber/` are silently ignored. |
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
 | Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak runtime Mesa compositor crashes (Zink regression), doubled RAM during install/update, and all gaming targets are available as native arm64 `.deb` packages. |
+| `BOX64_DYNAREC_ALIGNED_ATOMICS` | Faster atomic code generation (`=1`) but causes SIGBUS on unaligned LOCK ops. Per-game only via `~/.box64rc` `[gamename]` section; do not set globally. |
 
 ### Informational
 
@@ -255,7 +258,7 @@ gog-extract on first install.
 
 | Emulator | Description | Configuration |
 |----------|-------------|---------------|
-| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | — |
+| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, cycle tuning) |
 | ScummVM | 200+ native engine reimplementations | `~/.config/scummvm/scummvm.ini` (OpenGL, pixel-perfect scaling, FluidSynth) |
 | RetroArch | Multi-system frontend (native arm64 Debian package) | `~/.config/retroarch/retroarch.cfg` |
 
@@ -301,6 +304,20 @@ run_ahead_secondary_instance = "false"
 Two-instance run-ahead doubles RAM usage per core and must not be enabled on
 this hardware. Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast
 cores.
+
+### RetroArch Preemptive Frames
+
+Preemptive Frames (RetroArch 1.15+) is a lower-overhead alternative to
+Run-Ahead. It only re-runs core logic when input state changes. Enable
+per-core for 8-bit and 16-bit systems only. Create a core override with:
+
+```
+preempt_enable = "true"
+run_ahead_frames = "1"
+```
+
+Preemptive Frames requires deterministic frame state support — not all
+cores qualify. Do not enable for PSX, N64, PSP, DS, or Dreamcast cores.
 
 ### x86 Translation
 
@@ -348,6 +365,22 @@ privileged container:
 
 > **Warning:** Privileged containers have reduced security isolation. The
 > default `penguin` container remains unprivileged and unaffected.
+
+### Game Launcher
+
+The `run-game` wrapper (`~/.local/bin/run-game`) pins processes to the
+Cortex-A76 big cores (6–7) with elevated scheduling priority and caps
+glibc malloc arenas (`MALLOC_ARENA_MAX=2`) to reduce memory waste:
+
+```bash
+run-game retroarch                     # RetroArch on big cores
+run-game dosbox-x                      # DOSBox-X on big cores
+run-game scummvm                       # ScummVM on big cores
+run-game run-x86 ./some_x86_program    # Chain with x86 emulation
+```
+
+On non-SC7180P hardware, the wrapper falls back to priority elevation only
+(no CPU affinity). Run `run-game --help` for details.
 
 ### GOG Games
 

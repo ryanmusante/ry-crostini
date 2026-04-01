@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.8.3
+# Version: 7.9.0
 # Date:    2026-03-31
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.8.3"
+readonly SCRIPT_VERSION="7.9.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -537,10 +537,11 @@ STEPS PERFORMED:
      1  Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini,
         Debian version, disk, GPU, network, root, sommelier, mic, USB,
         folders, ports, disk-resize; --interactive)
-     2  System update (apt tuning, Trixie upgrade, cros pkg hold,
-        deb822 migration, /tmp tmpfs cap, cros-pin service)
+     2  System update (apt tuning, man-db trigger disable, Trixie
+        upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap,
+        cros-pin service)
      3  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
-        ripgrep, fd, fzf, bat, ...)
+        ripgrep, fd, fzf, bat, earlyoom, ...)
      4  Build essentials and development headers
      5  GPU + graphics stack (Mesa, Virgl, Wayland, X11, Vulkan)
      6  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
@@ -548,11 +549,11 @@ STEPS PERFORMED:
      7  Display scaling and HiDPI (sommelier, Super key passthrough,
         GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
      8  GUI essentials (xterm, session support, fonts, icons)
-     9  Container resource tuning (locale, journald volatile, env,
-        XDG, paths)
+     9  Container resource tuning (locale, journald volatile, timer
+        cleanup, env, XDG, paths)
     10  Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth
-        soundfont, innoextract/GOG, unrar/unar, box64,
-        qemu-user)
+        soundfont, innoextract/GOG, unrar/unar, box64, qemu-user,
+        DOSBox-X config, run-game launcher)
     11  Verification — tools and config files
     12  Verification — scripts and assets
     13  Verification summary
@@ -683,7 +684,6 @@ GTK_THEME=Adwaita:dark
 # Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
 # Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
 MESA_LOADER_DRIVER_OVERRIDE=virgl
-GALLIUM_DRIVER=virgl
 
 # Disable GL error checking (~5-10% CPU savings in games/emulators)
 # Unset for debugging: env -u MESA_NO_ERROR <command>
@@ -691,16 +691,14 @@ MESA_NO_ERROR=1
 
 # Shader cache: database backend respects MAX_SIZE (single-file Fossilize ignores it);
 # 256 MB cap appropriate for 128 GB eMMC
-MESA_SHADER_CACHE_DISABLE=false
 MESA_SHADER_CACHE_MAX_SIZE=256M
 MESA_DISK_CACHE_DATABASE=1
 # Reduce database partition count from default 50 — less overhead on 4 GB RAM
 MESA_DISK_CACHE_DATABASE_NUM_PARTS=10
 
-# [experimental] GL thread offloading — marshals GL calls on separate CPU thread;
-# Kryo 468 has 8 cores with headroom. virgl host-side remains single-threaded;
-# benefit is speculative but safe on Wayland.
-mesa_glthread=true
+# mesa_glthread intentionally omitted — virgl serializes all GL through
+# virtio-gpu; glthread adds marshaling overhead feeding a serial pipe.
+# Re-enable for testing: env mesa_glthread=true <command>
 EOF
 }
 
@@ -709,13 +707,15 @@ _pw_gaming_content() {
     cat <<'PWEOF'
 # PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
 # Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
-# Quantum 256 at 48 kHz = 5.3 ms latency — optimal for SC7180P under gaming load.
+# Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with
+# variable audio rates (N64, PSX). RetroArch PipeWire driver may override system
+# quantum (libretro/RetroArch#17685); 512 prevents xruns.
 
 context.properties = {
     default.clock.rate          = 48000
     default.clock.allowed-rates = [ 48000 ]
-    default.clock.quantum       = 256
-    default.clock.min-quantum   = 256
+    default.clock.quantum       = 512
+    default.clock.min-quantum   = 512
     default.clock.max-quantum   = 1024
     clock.power-of-two-quantum  = true
     # Allow real-time memory locking for audio threads
@@ -727,7 +727,7 @@ context.properties.rules = [
         matches = [ { cpu.vm.name = !null } ]
         actions = {
             update-props = {
-                default.clock.min-quantum = 256
+                default.clock.min-quantum = 512
             }
         }
     }
@@ -961,7 +961,7 @@ if should_run_step 1; then
 fi
 # Step 2: System update
 if should_run_step 2; then
-    step_banner 2 "System update (apt tuning, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
+    step_banner 2 "System update (apt tuning, man-db trigger disable, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
 
     # Enable parallel downloads and HTTP pipelining (Pipeline-Depth applies to HTTP only)
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
@@ -978,6 +978,17 @@ EOF
         log "Parallel apt config already exists"
     fi
     unset APT_PARALLEL
+
+    # Disable man-db auto-update trigger (30-60 s on ARM64 per apt install)
+    if $DRY_RUN; then
+        log "[DRY-RUN] disable man-db auto-update"
+    elif command -v debconf-communicate &>/dev/null; then
+        if echo "set man-db/auto-update false" | sudo debconf-communicate &>/dev/null; then
+            log "man-db auto-update disabled (run 'sudo mandb' manually when needed)"
+        else
+            warn "man-db auto-update disable failed — non-fatal"
+        fi
+    fi
 
     # 2a. Upgrade to Trixie if not already running it
     _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
@@ -1186,7 +1197,7 @@ CROSEOF
 fi
 # Step 3: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
 if should_run_step 3; then
-    step_banner 3 "Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)"
+    step_banner 3 "Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, ...)"
 
     CORE_PKGS=(
         # Navigation and file management
@@ -1231,6 +1242,28 @@ if should_run_step 3; then
     fi
 
     unset CORE_PKGS
+
+    # earlyoom: userspace OOM killer — prevents hard freeze on 4 GB RAM.
+    # Kernel OOM killer activates too late in containers; systemd-oomd requires
+    # cgroup v2 (Crostini uses v1). earlyoom uses 1-2 MB RAM.
+    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y earlyoom; then
+        if ! $DRY_RUN; then
+            _EARLYOOM_CONF="/etc/default/earlyoom"
+            if [[ -f "$_EARLYOOM_CONF" ]] && ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
+                write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
+# earlyoom config — managed by ry-crostini.sh
+EARLYOOM_ARGS="-m 5 -s 10 --avoid '(^|/)(init|systemd|dbus-daemon|garcon|sommelier)$' -r 3600"
+EOOMEOF
+            fi
+            run sudo systemctl enable --now earlyoom.service \
+                || warn "earlyoom enable failed"
+            log "earlyoom installed and enabled"
+            unset _EARLYOOM_CONF
+        fi
+    else
+        warn "earlyoom install failed — OOM protection unavailable"
+    fi
+
     set_checkpoint 3
     log "Step 3 complete."
 fi
@@ -1311,6 +1344,9 @@ if should_run_step 5; then
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
     elif ! grep -q 'MESA_DISK_CACHE_DATABASE_NUM_PARTS' "$GPU_ENV_FILE"; then
         log "Upgrading gpu.conf: adding database partition count"
+        _gpu_conf_content | write_file "$GPU_ENV_FILE"
+    elif grep -q 'mesa_glthread=true' "$GPU_ENV_FILE"; then
+        log "Upgrading gpu.conf: removing mesa_glthread (overhead on virgl)"
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
     else
         log "GPU env already up to date — skipping"
@@ -1395,6 +1431,9 @@ if should_run_step 6; then
     elif ! grep -q 'mem.allow-mlock' "$_PW_GAMING"; then
         log "Upgrading PipeWire gaming config: adding mem.allow-mlock"
         _pw_gaming_content | write_file "$_PW_GAMING"
+    elif grep -q 'default\.clock\.quantum.*= 256' "$_PW_GAMING"; then
+        log "Upgrading PipeWire gaming config: quantum 256→512 (xrun mitigation)"
+        _pw_gaming_content | write_file "$_PW_GAMING"
     else
         log "PipeWire gaming config already exists"
     fi
@@ -1409,12 +1448,28 @@ if should_run_step 6; then
 # pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
-    pulse.min.req     = 256/48000
-    pulse.min.quantum = 256/48000
+    pulse.min.req     = 512/48000
+    pulse.min.quantum = 512/48000
 }
 pulse.properties.rules = [
     { matches = [ { cpu.vm.name = !null } ]
-      actions = { update-props = { pulse.min.quantum = 256/48000 } }
+      actions = { update-props = { pulse.min.quantum = 512/48000 } }
+    }
+]
+PPEOF
+    elif grep -q '256/48000' "$_PW_PULSE_GAMING"; then
+        log "Upgrading PipeWire-Pulse config: quantum 256→512"
+        write_file "$_PW_PULSE_GAMING" <<'PPEOF'
+# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
+# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
+
+pulse.properties = {
+    pulse.min.req     = 512/48000
+    pulse.min.quantum = 512/48000
+}
+pulse.properties.rules = [
+    { matches = [ { cpu.vm.name = !null } ]
+      actions = { update-props = { pulse.min.quantum = 512/48000 } }
     }
 ]
 PPEOF
@@ -1499,7 +1554,6 @@ gtk-xft-antialias=1
 gtk-xft-hinting=1
 gtk-xft-hintstyle=hintslight
 gtk-xft-rgba=none
-gtk-overlay-scrolling=1
 EOF
     else
         log "GTK 3 settings.ini already exists — skipping"
@@ -1611,6 +1665,7 @@ EOF
     <edit name="hinting" mode="assign"><bool>true</bool></edit>
     <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
     <edit name="rgba" mode="assign"><const>none</const></edit>
+    <edit name="embeddedbitmap" mode="assign"><bool>false</bool></edit>
   </match>
   <!-- Default sans-serif -->
   <alias>
@@ -1630,7 +1685,41 @@ EOF
 </fontconfig>
 FCEOF
     else
-        log "Fontconfig already exists — skipping"
+        if ! grep -q 'embeddedbitmap' "$FC_LOCAL"; then
+            log "Upgrading fontconfig: adding embeddedbitmap=false"
+            # Rewrite full fonts.conf (atomic via write_file)
+            write_file "$FC_LOCAL" <<'FCEOF2'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <!-- Grayscale antialiasing for OLED display (no LCD subpixel stripe) -->
+  <match target="font">
+    <edit name="antialias" mode="assign"><bool>true</bool></edit>
+    <edit name="hinting" mode="assign"><bool>true</bool></edit>
+    <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
+    <edit name="rgba" mode="assign"><const>none</const></edit>
+    <edit name="embeddedbitmap" mode="assign"><bool>false</bool></edit>
+  </match>
+  <!-- Default sans-serif -->
+  <alias>
+    <family>sans-serif</family>
+    <prefer><family>Noto Sans</family></prefer>
+  </alias>
+  <!-- Default serif -->
+  <alias>
+    <family>serif</family>
+    <prefer><family>Noto Serif</family></prefer>
+  </alias>
+  <!-- Default monospace -->
+  <alias>
+    <family>monospace</family>
+    <prefer><family>Fira Code</family><family>Noto Sans Mono</family></prefer>
+  </alias>
+</fontconfig>
+FCEOF2
+        else
+            log "Fontconfig already up to date — skipping"
+        fi
     fi
     if command -v fc-cache &>/dev/null; then
         if run timeout 60 fc-cache -f; then
@@ -1701,7 +1790,7 @@ if should_run_step 8; then
 fi
 # Step 9: Container resource tuning (sysctl keys are read-only in Crostini — removed)
 if should_run_step 9; then
-    step_banner 9 "Container resource tuning (locale, journald volatile, env, XDG, paths)"
+    step_banner 9 "Container resource tuning (locale, journald volatile, timer cleanup, env, XDG, paths)"
 
     # 9c. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
@@ -1784,12 +1873,33 @@ ENVEOF
     fi
 
     unset PROFILE_D
+
+    # Disable background apt timers (compete for I/O/RAM during gaming)
+    if ! $DRY_RUN; then
+        for _timer in apt-daily.timer apt-daily-upgrade.timer; do
+            if systemctl is-enabled "$_timer" &>/dev/null; then
+                run sudo systemctl disable "$_timer" \
+                    || warn "Cannot disable $_timer"
+            fi
+        done
+        # Mask no-op timers in Crostini (virtio-blk, no real fstrim/e2scrub)
+        for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
+            if systemctl list-unit-files "$_timer" &>/dev/null 2>&1; then
+                run sudo systemctl mask "$_timer" 2>/dev/null || true
+            fi
+        done
+        log "Unnecessary timers disabled/masked"
+        unset _timer
+    else
+        log "[DRY-RUN] disable apt-daily, fstrim, e2scrub, man-db timers"
+    fi
+
     set_checkpoint 9
     log "Step 9 complete."
 fi
 # Step 10: Gaming packages
 if should_run_step 10; then
-    step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user)"
+    step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher)"
 
     # Native ARM packages — unrar is non-free; unar handles RAR4/RAR5 as adequate replacement
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
@@ -1815,25 +1925,31 @@ if should_run_step 10; then
 # Written once on first install; edit freely afterward.
 
 # Video: glcore works on virgl's GL 4.3 core profile and enables slang shaders.
-# Threaded video offloads GL calls (benefits virgl's serialized command stream)
-# at the cost of +1 frame input latency — acceptable for retro gaming.
+# Threaded video disabled — interferes with video_frame_delay_auto timing and
+# frame pacing (Libretro docs). Enable per-core override for N64/PSP if needed.
 video_driver = "glcore"
-video_threaded = "true"
+video_threaded = "false"
 video_vsync = "true"
-video_max_swapchain_images = "3"
 video_frame_delay_auto = "true"
 
-# Audio: PipeWire driver (RetroArch 1.20+, Trixie). Caveat: RA 1.20.0
-# hardcodes quantum values ignoring audio_latency (libretro/RetroArch#17685,
-# fixed in RA 1.21+). If stutters occur, switch to audio_driver = "alsa".
-# Latency 96 ms prevents underruns on SC7180P under gaming load.
+# Audio: PipeWire driver (RetroArch 1.20+, Trixie).
+# Latency 96 ms prevents underruns on SC7180P under gaming load. RA PipeWire
+# driver may ignore this value (libretro/RetroArch#17685). If stutters occur,
+# switch to "alsa".
 audio_driver = "pipewire"
 audio_latency = "96"
 
+# Input: late polling reduces input-to-screen latency by polling as late as
+# possible in the frame cycle.
+input_poll_type_behavior = "2"
+
 # Memory: disable rewind (consumes ~20 MB/min buffer on 4 GB device).
-# Run-ahead: disabled globally; enable per-core for 8/16-bit only (see README).
+# Preemptive Frames: lower-overhead alternative to Run-Ahead; enable per-core
+# for 8/16-bit cores only (see README). Requires deterministic frame state.
+# Uses run_ahead_frames for count.
 rewind_enable = "false"
 run_ahead_enabled = "false"
+preempt_enable = "false"
 
 # Misc
 savestate_compression = "true"
@@ -1841,29 +1957,6 @@ menu_driver = "rgui"
 RACFG
     else
         # Upgrade paths — surgical edits for existing configs (preserve user changes)
-        if grep -q 'video_max_swapchain_images *= *"2"' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] sed swapchain 2→3 in retroarch.cfg"
-            else
-                _ra_tmp=""
-                _ra_tmp="$(mktemp "${_RA_CFG}.tmp_XXXXXXXX")" || { warn "Cannot create tmpfile for retroarch.cfg upgrade"; }
-                if [[ -n "${_ra_tmp:-}" ]]; then
-                    chmod 600 "$_ra_tmp" 2>/dev/null || true
-                    if sed 's/video_max_swapchain_images *= *"2"/video_max_swapchain_images = "3"/' "$_RA_CFG" > "$_ra_tmp"; then
-                        if mv -- "$_ra_tmp" "$_RA_CFG"; then
-                            log "RetroArch: video_max_swapchain_images 2→3"
-                        else
-                            rm -f -- "$_ra_tmp"
-                            warn "Cannot move retroarch.cfg upgrade into place"
-                        fi
-                    else
-                        rm -f -- "$_ra_tmp"
-                        warn "retroarch.cfg swapchain upgrade failed"
-                    fi
-                fi
-                unset _ra_tmp
-            fi
-        fi
         # video_frame_delay_auto: add if absent
         if ! grep -q 'video_frame_delay_auto' "$_RA_CFG"; then
             if $DRY_RUN; then
@@ -1875,6 +1968,60 @@ RACFG
                     printf '%s\nvideo_frame_delay_auto = "true"\n' "$_ra_content" \
                         | write_file_private "$_RA_CFG"
                     log "RetroArch: added video_frame_delay_auto=true"
+                fi
+                unset _ra_content
+            fi
+        fi
+        # video_threaded: change true→false (frame pacing fix)
+        if grep -q 'video_threaded *= *"true"' "$_RA_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] sed video_threaded true→false in retroarch.cfg"
+            else
+                _ra_tmp=""
+                _ra_tmp="$(mktemp "${_RA_CFG}.tmp_XXXXXXXX")" || { warn "Cannot create tmpfile for retroarch.cfg upgrade"; }
+                if [[ -n "${_ra_tmp:-}" ]]; then
+                    chmod 600 "$_ra_tmp" 2>/dev/null || true
+                    if sed 's/video_threaded *= *"true"/video_threaded = "false"/' "$_RA_CFG" > "$_ra_tmp"; then
+                        if mv -- "$_ra_tmp" "$_RA_CFG"; then
+                            log "RetroArch: video_threaded true→false"
+                        else
+                            rm -f -- "$_ra_tmp"
+                            warn "Cannot move retroarch.cfg upgrade into place"
+                        fi
+                    else
+                        rm -f -- "$_ra_tmp"
+                        warn "retroarch.cfg video_threaded upgrade failed"
+                    fi
+                fi
+                unset _ra_tmp
+            fi
+        fi
+        # input_poll_type_behavior: add if absent
+        if ! grep -q 'input_poll_type_behavior' "$_RA_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] append input_poll_type_behavior to retroarch.cfg"
+            else
+                _ra_content=""
+                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
+                if [[ -n "${_ra_content:-}" ]]; then
+                    printf '%s\ninput_poll_type_behavior = "2"\n' "$_ra_content" \
+                        | write_file_private "$_RA_CFG"
+                    log "RetroArch: added input_poll_type_behavior=2"
+                fi
+                unset _ra_content
+            fi
+        fi
+        # preempt_enable: add if absent
+        if ! grep -q 'preempt_enable' "$_RA_CFG"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] append preempt_enable to retroarch.cfg"
+            else
+                _ra_content=""
+                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
+                if [[ -n "${_ra_content:-}" ]]; then
+                    printf '%s\npreempt_enable = "false"\n' "$_ra_content" \
+                        | write_file_private "$_RA_CFG"
+                    log "RetroArch: added preempt_enable=false (enable per-core)"
                 fi
                 unset _ra_content
             fi
@@ -1920,6 +2067,34 @@ SVMCFG
         fi
     fi
     unset _SVM_CFG
+
+    # DOSBox-X default config
+    _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
+    if [[ ! -f "$_DBX_CFG" ]]; then
+        run mkdir -p "${HOME}/.config/dosbox-x" || true
+        write_file_private "$_DBX_CFG" <<'DBXCFG'
+# DOSBox-X Crostini config — managed by ry-crostini.sh
+# Written once on first install; edit freely afterward.
+
+[sdl]
+# GPU-accelerated rendering via virgl; nearest-neighbor (no bilinear blur)
+output=openglnb
+# Built-in pixel-perfect GLSL shader
+glshader=sharp
+
+[cpu]
+# ARM64 dynamic recompiler — 3-4× speedup over interpreter.
+# Verify: dosbox-x --version should show C_DYNREC 1.
+# Falls back to normal core for 386 protected-mode paging.
+core=dynamic_rec
+# Real-mode: fixed 5000 cycles; protected-mode: up to 70% host CPU,
+# capped at 30000 to prevent audio dropout on Kryo 468.
+cycles=auto 5000 70% limit 30000
+DBXCFG
+    else
+        log "DOSBox-X config already exists — skipping"
+    fi
+    unset _DBX_CFG
 
     # Verify (skip in dry-run — packages were not actually installed)
     if ! $DRY_RUN; then
@@ -1983,6 +2158,14 @@ BOX64_DYNAREC_PURGE=1
 BOX64_DYNAREC_CACHE=1
 # Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
 BOX64_DYNAREC_NATIVEFLAGS=1
+# Larger forward gap for DynaRec blocks — default 128; 512 builds bigger
+# blocks for better throughput (box64 CHANGELOG: "can get more than 30%")
+BOX64_DYNAREC_FORWARD=512
+# Map x86 PAUSE→ARM YIELD — better spinlock behavior, lower power on battery
+BOX64_DYNAREC_PAUSE=1
+# Per-game only (do NOT set globally — SIGBUS on unaligned LOCK ops):
+# BOX64_DYNAREC_ALIGNED_ATOMICS=1
+# BOX64_DYNAREC_SAFEFLAGS=0
 
 [wine]
 # 32-bit address space for Wine WoW64 mode
@@ -1994,7 +2177,25 @@ BOX64_DYNAREC_BIGBLOCK=3
 RCEOF
         log "Wrote ${_BOX64_RC}"
     else
-        log "\$HOME/.box64rc already exists — skipping"
+        # Upgrade path: add DYNAREC_FORWARD and DYNAREC_PAUSE if absent
+        if ! grep -q 'DYNAREC_FORWARD' "$_BOX64_RC"; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] append DYNAREC_FORWARD=512, DYNAREC_PAUSE=1 to .box64rc"
+            else
+                _box_content=""
+                _box_content="$(cat "$_BOX64_RC")" || { warn "Cannot read .box64rc for upgrade"; }
+                if [[ -n "${_box_content:-}" ]]; then
+                    # Insert before [wine] section
+                    printf '%s\n' "$_box_content" \
+                        | sed '/^\[wine\]/i BOX64_DYNAREC_FORWARD=512\nBOX64_DYNAREC_PAUSE=1' \
+                        | write_file_private "$_BOX64_RC"
+                    log "box64: added DYNAREC_FORWARD=512, DYNAREC_PAUSE=1"
+                fi
+                unset _box_content
+            fi
+        else
+            log "\$HOME/.box64rc already exists — skipping"
+        fi
     fi
     unset _BOX64_RC
 
@@ -2167,6 +2368,50 @@ GOGWRAP
         log "gog-extract wrapper already exists — skipping"
     fi
     unset _GOG_EXTRACT
+
+    # run-game: CPU affinity + priority launcher for gaming on big.LITTLE SoC
+    _RUN_GAME="${HOME}/.local/bin/run-game"
+    if [[ ! -f "$_RUN_GAME" ]]; then
+        write_file_exec "$_RUN_GAME" <<'RGWRAP'
+#!/usr/bin/env bash
+# run-game — launch a game on Cortex-A76 big cores with elevated priority
+# SC7180P: cores 6-7 = Cortex-A76, cores 0-5 = Cortex-A55
+# Usage: run-game <command> [args...]
+# Managed by ry-crostini.sh — edit freely.
+
+set -euo pipefail
+
+case "${1:-}" in
+    --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (6-7), sets nice -5, ionice best-effort class 0.\n'; exit 0 ;;
+    --version) printf 'run-game @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+esac
+
+if [[ $# -lt 1 ]]; then
+    printf 'Usage: run-game <command> [args...]\n' >&2
+    exit 2
+fi
+
+# Build command with optional affinity and priority
+_cmd=("$@")
+# Pin to big cores if SC7180P topology detected
+if [[ -d /sys/devices/system/cpu/cpu7 ]]; then
+    _cmd=(taskset -c 6,7 "${_cmd[@]}")
+fi
+# nice -n -5 requires CAP_SYS_NICE; fall back silently if unprivileged
+if nice -n -5 true 2>/dev/null; then
+    _cmd=(nice -n -5 ionice -c2 -n0 "${_cmd[@]}")
+fi
+# Cap glibc malloc arenas — default 8×cores = 64 on SC7180P; wastes RAM
+export MALLOC_ARENA_MAX=2
+exec "${_cmd[@]}"
+RGWRAP
+        if ! $DRY_RUN; then
+            sed -i "s/@@VERSION@@/v${SCRIPT_VERSION}/" "$_RUN_GAME"
+        fi
+    else
+        log "run-game wrapper already exists — skipping"
+    fi
+    unset _RUN_GAME
 
     set_checkpoint 10
     log "Step 10 complete."
@@ -2384,6 +2629,8 @@ if should_run_step 11; then
     check_tool "qemu-x86_64" qemu-x86_64
     check_tool "run-x86" run-x86
     check_tool "gog-extract" gog-extract
+    check_tool "run-game" run-game
+    check_tool "earlyoom"    earlyoom
     logprintf '\n'
 
     # Config files
@@ -2424,6 +2671,7 @@ if should_run_step 11; then
     check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
+    check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
     # PipeWire audio chain verification
     if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
@@ -2431,6 +2679,32 @@ if should_run_step 11; then
     else
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "PipeWire-pulse not running — restart terminal"
         ((_verify_warn++)) || true
+    fi
+    # earlyoom OOM killer
+    if systemctl is-active earlyoom.service &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "earlyoom not running"
+        ((_verify_warn++)) || true
+    fi
+    # apt-daily timer
+    if ! systemctl is-enabled apt-daily.timer &>/dev/null 2>&1; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily.timer disabled"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily.timer still enabled"
+        ((_verify_warn++)) || true
+    fi
+    # RetroArch video_threaded sanity check
+    if [[ -f "${HOME}/.config/retroarch/retroarch.cfg" ]]; then
+        if grep -q 'video_threaded *= *"false"' "${HOME}/.config/retroarch/retroarch.cfg"; then
+            logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "RetroArch video_threaded=false"
+            ((_verify_pass++)) || true
+        elif grep -q 'video_threaded *= *"true"' "${HOME}/.config/retroarch/retroarch.cfg"; then
+            logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "RetroArch video_threaded still true — update config"
+            ((_verify_warn++)) || true
+        fi
     fi
     logprintf '\n'
 
@@ -2446,6 +2720,7 @@ if should_run_step 12; then
     check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
     check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
     check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
+    check_config "${HOME}/.local/bin/run-game"                                                "CPU affinity game launcher"
     logprintf '\n'
 
     set_checkpoint 12
