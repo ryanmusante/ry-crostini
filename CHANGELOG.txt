@@ -1,3 +1,19 @@
+7.9.3  2026-04-02
+
+  - parallel check_tool verification: new _parallel_check_tools() runs ~42
+    version probes concurrently via subshells with ordered output replay and
+    sentinel-line counter summation; sequential fallback on tmpdir failure
+  - batch package installs: merge 3 gaming install_pkgs_best_effort calls
+    into single array (scummvm, soundfont, innoextract, unar, dosbox-x,
+    retroarch, retroarch-assets); merge 3 Qt theme calls into one
+  - batch systemctl calls: PipeWire mask/enable (4→2 calls), timer
+    disable/mask (5→2 calls with array accumulation for mask guard)
+  - batch dpkg-query: replace 9 sequential dpkg -s forks with single
+    dpkg-query -W piped through awk for cros package hold detection
+  - remove 7 redundant mkdir -p calls before write_file/write_file_private/
+    write_file_exec (all three variants already call mkdir -p internally)
+  - README: add parallel verification to Design table
+
 7.9.2  2026-04-02
 
   - fix gog-extract: replace single-keyword makeself check with 5 structural

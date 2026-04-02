@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.2
+# Version: 7.9.3
 # Date:    2026-04-02
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.2"
+readonly SCRIPT_VERSION="7.9.3"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -515,6 +515,58 @@ check_config() {
         logprintf '  %b✗%b  %-44s %s\n' "$RED" "$RESET" "$desc" "$path"
         ((_verify_fail++)) || true
     fi
+}
+
+# _parallel_check_tools: run check_tool calls concurrently, replay output in order.
+# Usage: _parallel_check_tools "display_name|command" ...
+# Each entry spawns a subshell running check_tool; output is captured per-tool
+# and replayed sequentially to preserve visual ordering + counter accuracy.
+_parallel_check_tools() {
+    local _pct_dir _pct_n=0 _pct_pids=()
+    _pct_dir="$(mktemp -d "${TMPDIR:-/tmp}/ry-ct-XXXXXX")" || {
+        warn "Cannot create tmpdir for parallel tool checks — falling back to sequential"
+        local _pct_entry
+        for _pct_entry in "$@"; do
+            check_tool "${_pct_entry%%|*}" "${_pct_entry#*|}"
+        done
+        return
+    }
+
+    local _pct_entry _pct_idx
+    for _pct_entry in "$@"; do
+        printf -v _pct_idx '%04d' "$_pct_n"
+        (
+            # Suppress LOG_FILE writes inside subshell — replay handles logging
+            LOG_FILE=/dev/null
+            _verify_pass=0; _verify_fail=0; _verify_warn=0
+            check_tool "${_pct_entry%%|*}" "${_pct_entry#*|}"
+            # Sentinel line: SOH + counters (never appears in normal output)
+            printf '\x01%d %d %d\n' "$_verify_pass" "$_verify_fail" "$_verify_warn"
+        ) > "${_pct_dir}/${_pct_idx}" 2>/dev/null &
+        _pct_pids+=($!)
+        ((_pct_n++)) || true
+    done
+
+    wait "${_pct_pids[@]}" 2>/dev/null || true
+
+    # Replay output in order; sum counters from sentinel lines
+    local _pct_f _pct_line _pct_p _pct_fl _pct_w
+    for _pct_f in "${_pct_dir}/"*; do
+        [[ -f "$_pct_f" ]] || continue
+        while IFS= read -r _pct_line; do
+            if [[ "$_pct_line" == $'\x01'* ]]; then
+                read -r _pct_p _pct_fl _pct_w <<< "${_pct_line#$'\x01'}"
+                ((_verify_pass += _pct_p)) || true
+                ((_verify_fail += _pct_fl)) || true
+                ((_verify_warn += _pct_w)) || true
+            else
+                printf '%s\n' "$_pct_line"
+                printf '%s\n' "$_pct_line" >> "$LOG_FILE" 2>/dev/null || true
+            fi
+        done < "$_pct_f"
+    done
+
+    rm -rf -- "$_pct_dir"
 }
 
 usage() {
@@ -1076,14 +1128,14 @@ EOF
     unset _cur_codename
 
     # 2b. Update and upgrade — hold cros-* during dist-upgrade to prevent lifecycle breakage
-    _CROS_HOLD_PKGS=()
-    for _cpkg in cros-guest-tools cros-garcon cros-notificationd \
-                 cros-sftp cros-sommelier cros-sommelier-config \
-                 cros-wayland cros-pulse-config cros-apt-config; do
-        if dpkg -s "$_cpkg" &>/dev/null; then
-            _CROS_HOLD_PKGS+=("$_cpkg")
-        fi
-    done
+    # Single dpkg-query replaces 9 individual dpkg -s forks
+    mapfile -t _CROS_HOLD_PKGS < <(
+        dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' \
+            cros-guest-tools cros-garcon cros-notificationd \
+            cros-sftp cros-sommelier cros-sommelier-config \
+            cros-wayland cros-pulse-config cros-apt-config 2>/dev/null \
+        | awk '/^ii/{print $2}'
+    )
     if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
         if $DRY_RUN; then
             log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
@@ -1093,7 +1145,6 @@ EOF
             log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
         fi
     fi
-    unset _cpkg
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
@@ -1407,27 +1458,20 @@ if should_run_step 6; then
     # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
         if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
-            if run systemctl --user mask --now pulseaudio.service && \
-               run systemctl --user mask --now pulseaudio.socket; then
+            if run systemctl --user mask --now pulseaudio.service pulseaudio.socket; then
                 log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
             else
                 warn "PulseAudio mask failed — PipeWire may conflict"
             fi
         fi
-        if run systemctl --user enable --now pipewire.socket; then
-            log "pipewire.socket enabled"
+        if run systemctl --user enable --now pipewire.socket pipewire-pulse.socket; then
+            log "PipeWire sockets enabled"
         else
-            warn "pipewire.socket enable failed"
-        fi
-        if run systemctl --user enable --now pipewire-pulse.socket; then
-            log "pipewire-pulse.socket enabled"
-        else
-            warn "pipewire-pulse.socket enable failed"
+            warn "PipeWire socket enable failed"
         fi
     else
-        log "[DRY-RUN] systemctl --user mask --now pulseaudio.service (if installed)"
-        log "[DRY-RUN] systemctl --user enable --now pipewire.socket"
-        log "[DRY-RUN] systemctl --user enable --now pipewire-pulse.socket"
+        log "[DRY-RUN] systemctl --user mask --now pulseaudio.service pulseaudio.socket (if installed)"
+        log "[DRY-RUN] systemctl --user enable --now pipewire.socket pipewire-pulse.socket"
     fi
 
     # libavcodec-extra is now included in AUDIO_PKGS above (same transaction).
@@ -1448,7 +1492,6 @@ if should_run_step 6; then
     # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
-        run mkdir -p "${HOME}/.config/pipewire/pipewire.conf.d" || true
         _pw_gaming_content | write_file "$_PW_GAMING"
     elif ! grep -q 'mem.allow-mlock' "$_PW_GAMING"; then
         log "Upgrading PipeWire gaming config: adding mem.allow-mlock"
@@ -1464,7 +1507,6 @@ if should_run_step 6; then
     # PipeWire-Pulse user-level gaming override — disable pulse-layer VM quantum override
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
-        run mkdir -p "${HOME}/.config/pipewire/pipewire-pulse.conf.d" || true
         _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
     elif grep -q '256/48000' "$_PW_PULSE_GAMING"; then
         log "Upgrading PipeWire-Pulse config: quantum 256→512"
@@ -1477,7 +1519,6 @@ if should_run_step 6; then
     # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
     if [[ ! -f "$_WP_ALSA" ]]; then
-        run mkdir -p "${HOME}/.config/wireplumber/wireplumber.conf.d" || true
         write_file "$_WP_ALSA" <<'WPEOF'
 # WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
 # Optimizes ALSA node buffer parameters; disables auto-suspend.
@@ -1609,15 +1650,9 @@ EOF
     fi
 
     # Qt GTK platform theme plugins (do NOT install qt5ct — conflicts with =gtk3 in qt.conf)
-    install_pkgs_best_effort qt5-gtk-platformtheme || \
-        warn "Qt5 GTK theme package not available — Qt5 apps may not follow dark theme"
-
-    # Adwaita-Qt — supplemental Qt5/Qt6 style for apps that ignore QT_QPA_PLATFORMTHEME
-    install_pkgs_best_effort adwaita-qt adwaita-qt6 || true
-
-    # Qt6 GTK platform theme — allows Qt6 apps to follow GTK dark theme
-    install_pkgs_best_effort qt6-gtk-platformtheme || \
-        warn "qt6-gtk-platformtheme not available — Qt6 apps may not follow dark theme"
+    # Single batch: qt5-gtk-platformtheme, adwaita-qt/qt6 (supplemental), qt6-gtk-platformtheme
+    install_pkgs_best_effort qt5-gtk-platformtheme adwaita-qt adwaita-qt6 qt6-gtk-platformtheme || \
+        warn "Some Qt theme packages not available — Qt apps may not fully follow dark theme"
 
     # 7f. Xft / Xresources (for pure X11 apps)
     XRESOURCES="${HOME}/.Xresources"
@@ -1872,20 +1907,19 @@ ENVEOF
 
     # Disable background apt timers (compete for I/O/RAM during gaming)
     if ! $DRY_RUN; then
-        for _timer in apt-daily.timer apt-daily-upgrade.timer; do
-            if systemctl is-enabled "$_timer" &>/dev/null; then
-                run sudo systemctl disable "$_timer" \
-                    || warn "Cannot disable $_timer"
-            fi
-        done
-        # Mask no-op timers in Crostini (virtio-blk, no real fstrim/e2scrub)
+        # Batch disable — systemctl disable is a no-op on already-disabled units
+        run sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null \
+            || warn "Cannot disable apt timers"
+        # Batch mask — guard with list-unit-files to avoid dead symlinks
+        _mask_timers=()
         for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
-            if systemctl list-unit-files "$_timer" &>/dev/null 2>&1; then
-                run sudo systemctl mask "$_timer" 2>/dev/null || true
-            fi
+            systemctl list-unit-files "$_timer" &>/dev/null 2>&1 && _mask_timers+=("$_timer")
         done
+        if [[ "${#_mask_timers[@]}" -gt 0 ]]; then
+            run sudo systemctl mask "${_mask_timers[@]}" 2>/dev/null || true
+        fi
         log "Unnecessary timers disabled/masked"
-        unset _timer
+        unset _timer _mask_timers
     else
         log "[DRY-RUN] disable apt-daily, fstrim, e2scrub, man-db timers"
     fi
@@ -1898,7 +1932,9 @@ if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher)"
 
     # Native ARM packages — unrar is non-free; unar handles RAR4/RAR5 as adequate replacement
-    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar || warn "Some gaming packages failed"
+    # Single batch install — saves 2 apt invocations vs separate calls
+    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
+        dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
     # Attempt non-free unrar separately; failure is non-fatal
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
         log "unrar installed ✓"
@@ -1906,16 +1942,9 @@ if should_run_step 10; then
         log "unrar not available (non-free not enabled) — unar will be used for RAR archives ✓"
     fi
 
-    # DOSBox-X: actively maintained DOSBox fork with save-states, PC-98, MT-32, and CJK support.
-    install_pkgs_best_effort dosbox-x || warn "dosbox-x install failed"
-
-    # RetroArch multi-system emulator — native arm64 Debian package
-    install_pkgs_best_effort retroarch retroarch-assets || warn "RetroArch install failed"
-
     # RetroArch default config
     _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"
     if [[ ! -f "$_RA_CFG" ]]; then
-        run mkdir -p "${HOME}/.config/retroarch" || true
         write_file_private "$_RA_CFG" <<'RACFG'
 # RetroArch Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2028,7 +2057,6 @@ RACFG
     # ScummVM default config
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
     if [[ ! -f "$_SVM_CFG" ]]; then
-        run mkdir -p "${HOME}/.config/scummvm" || true
         write_file_private "$_SVM_CFG" <<'SVMCFG'
 # ScummVM Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2067,7 +2095,6 @@ SVMCFG
     # DOSBox-X default config
     _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
     if [[ ! -f "$_DBX_CFG" ]]; then
-        run mkdir -p "${HOME}/.config/dosbox-x" || true
         write_file_private "$_DBX_CFG" <<'DBXCFG'
 # DOSBox-X Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2198,7 +2225,6 @@ RCEOF
     # run-x86: convenience wrapper — auto-detects ELF arch, prefers box64 for x86_64
     _RUN_X86="${HOME}/.local/bin/run-x86"
     if [[ ! -f "$_RUN_X86" ]]; then
-        run mkdir -p "${HOME}/.local/bin" || true
         write_file_exec "$_RUN_X86" <<'WRAPPER'
 #!/usr/bin/env bash
 # run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini
@@ -2575,55 +2601,26 @@ if should_run_step 11; then
     # Installed tools — ordered by installation step (3→4→5→6→8→10)
     logprintf '%bInstalled tools:%b\n' "$BOLD" "$RESET"
 
-    # Step 3: core CLI utilities
-    check_tool "vim"         vim
-    check_tool "nano"        nano
-    check_tool "curl"        curl
-    check_tool "wget"        wget
-    check_tool "less"        less
-    check_tool "jq"          jq
-    check_tool "tmux"        tmux
-    check_tool "screen"      screen
-    check_tool "htop"        htop
-    check_tool "ncdu"        ncdu
-    check_tool "strace"      strace
-    check_tool "lsof"        lsof
-    check_tool "rsync"       rsync
-    check_tool "file"        file
-    check_tool "tree"        tree
-    check_tool "dig"         dig
-    check_tool "ssh"         ssh
-    check_tool "zip"         zip
-    check_tool "unzip"       unzip
-    check_tool "7z"          7z
-    check_tool "rename"      rename
-    check_tool "wl-clipboard" wl-copy
-    # Step 3: Rust CLI alternatives (Debian renames fd-find → fdfind, bat → batcat)
-    check_tool "fzf"         fzf
-    check_tool "ripgrep"     rg
-    if command -v fd &>/dev/null; then check_tool "fd" fd; else check_tool "fd" fdfind; fi
-    if command -v bat &>/dev/null; then check_tool "bat" bat; else check_tool "bat" batcat; fi
-    # Step 4: build essentials
-    check_tool "gcc"         gcc
-    check_tool "g++"         g++
-    check_tool "make"        make
-    check_tool "cmake"       cmake
-    check_tool "pkg-config"  pkg-config
-    # Step 5: GPU + graphics
-    check_tool "glxinfo"     glxinfo
-    check_tool "vulkaninfo"  vulkaninfo
-    # Step 6: audio
-    check_tool "pactl"       pactl
-    check_tool "pavucontrol" pavucontrol
-    # Step 8: GUI essentials
-    check_tool "xterm"       xterm
-    check_tool "gnome-disks" gnome-disks
-    # Step 10: gaming
-    check_tool "dosbox-x"    dosbox-x
-    check_tool "scummvm"     scummvm
-    check_tool "retroarch"   retroarch
-    check_tool "innoextract" innoextract
-    # unrar is in non-free; when unar (functional equivalent) is present treat as pass
+    # Resolve Debian-renamed commands before parallel dispatch
+    _fd_cmd=fdfind;  command -v fd  &>/dev/null && _fd_cmd=fd
+    _bat_cmd=batcat; command -v bat &>/dev/null && _bat_cmd=bat
+
+    # Parallel tool checks — all version probes run concurrently (~35 tools)
+    _parallel_check_tools \
+        "vim|vim" "nano|nano" "curl|curl" "wget|wget" "less|less" \
+        "jq|jq" "tmux|tmux" "screen|screen" "htop|htop" "ncdu|ncdu" \
+        "strace|strace" "lsof|lsof" "rsync|rsync" "file|file" "tree|tree" \
+        "dig|dig" "ssh|ssh" "zip|zip" "unzip|unzip" "7z|7z" \
+        "rename|rename" "wl-clipboard|wl-copy" \
+        "fzf|fzf" "ripgrep|rg" "fd|${_fd_cmd}" "bat|${_bat_cmd}" \
+        "gcc|gcc" "g++|g++" "make|make" "cmake|cmake" "pkg-config|pkg-config" \
+        "glxinfo|glxinfo" "vulkaninfo|vulkaninfo" \
+        "pactl|pactl" "pavucontrol|pavucontrol" \
+        "xterm|xterm" "gnome-disks|gnome-disks" \
+        "dosbox-x|dosbox-x" "scummvm|scummvm" "retroarch|retroarch" "innoextract|innoextract"
+    unset _fd_cmd _bat_cmd
+
+    # unrar: non-free; unar is a functional equivalent — handle separately
     if command -v unrar &>/dev/null; then
         check_tool "unrar"   unrar
     elif command -v unar &>/dev/null; then
@@ -2634,14 +2631,12 @@ if should_run_step 11; then
         logprintf '  %-14s %b✗%b  not found\n' "unrar" "$RED" "$RESET"
         ((_verify_fail++)) || true
     fi
-    check_tool "unar"        unar
-    check_tool "box64"       box64
-    # Step 10: qemu-user
-    check_tool "qemu-x86_64" qemu-x86_64
-    check_tool "run-x86" run-x86
-    check_tool "gog-extract" gog-extract
-    check_tool "run-game" run-game
-    check_tool "earlyoom"    earlyoom
+
+    # Remaining tools (sequential — fast commands, conditional logic above)
+    _parallel_check_tools \
+        "unar|unar" "box64|box64" "qemu-x86_64|qemu-x86_64" \
+        "run-x86|run-x86" "gog-extract|gog-extract" "run-game|run-game" \
+        "earlyoom|earlyoom"
     logprintf '\n'
 
     # Config files

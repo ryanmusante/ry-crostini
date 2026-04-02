@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.9.2-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.9.3-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -204,6 +204,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | Property | Implementation |
 |----------|---------------|
 | Unattended by default | All prompts auto-answered; `--interactive` restores them |
+| Parallel verification | Step 11 tool checks run concurrently with ordered output replay |
 | Dry run | Zero side effects, zero network, zero interaction |
 | Colored output | Respects `NO_COLOR` |
 | Progress bar | Bottom-pinned step counter with percentage; resize-aware (WINCH) |
