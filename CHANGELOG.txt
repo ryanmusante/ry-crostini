@@ -1,193 +1,102 @@
 7.9.0  2026-03-31
 
-  Changes (performance & gaming optimization audit):
-  - retroarch.cfg: video_threaded true→false; eliminates frame pacing
-    interference with video_frame_delay_auto (Libretro docs)
-  - retroarch.cfg: remove video_max_swapchain_images (Vulkan/KMS
-    setting, inert on glcore/virgl; eliminates swapchain 2→3 upgrade)
-  - retroarch.cfg: add input_poll_type_behavior=2 (late input polling)
-  - retroarch.cfg: add preempt_enable=false (per-core override for
-    8/16-bit; lower-overhead alternative to Run-Ahead)
-  - gpu.conf: remove mesa_glthread=true; virgl serializes all GL
-    through virtio-gpu making glthread overhead-only
-  - PipeWire quantum 256→512, min-quantum 256→512; prevents xruns
-    from emulation cores with variable audio rates (N64, PSX)
-  - PipeWire-Pulse quantum 256→512 to match core config
-  - new dosbox-x.conf: ARM64 dynamic recompiler (core=dynamic_rec),
-    GPU-accelerated rendering (output=openglnb, glshader=sharp),
-    cycle tuning (auto 5000 70% limit 30000), memsize=16
-  - .box64rc: add DYNAREC_FORWARD=512 (larger blocks, 30%+ speedup),
-    DYNAREC_PAUSE=1 (YIELD for spinlocks), ALIGNED_ATOMICS and
-    SAFEFLAGS documented as per-game only (commented out)
-  - earlyoom installed and enabled: userspace OOM killer for 4 GB RAM
-    (systemd-oomd requires cgroup v2; Crostini uses v1)
-  - man-db auto-update trigger disabled (30-60 s on ARM64 per apt)
-  - apt-daily, apt-daily-upgrade, fstrim, e2scrub_all, man-db timers
-    disabled/masked (no-ops or counterproductive in Crostini)
-  - fontconfig: add embeddedbitmap=false (prevents bitmap font
-    substitution at 166 PPI OLED)
-  - new run-game wrapper: pins to Cortex-A76 big cores (6-7) with
-    elevated nice/ionice priority and MALLOC_ARENA_MAX=2; graceful
-    fallback if unprivileged or non-SC7180P hardware
-  - verification: earlyoom service, apt-daily.timer, video_threaded,
-    dosbox-x.conf, run-game
-  - user file count 17→19 (dosbox-x.conf, run-game)
-  - README: Preemptive Frames documentation, run-game launcher
-    section, DOSBox-X config reference, ALIGNED_ATOMICS constraint,
-    mupen64plus-next and PPSSPP core option guidance
-
-  Cleanup (redundant defaults removed):
-  - gpu.conf: remove GALLIUM_DRIVER=virgl (redundant with
-    MESA_LOADER_DRIVER_OVERRIDE on Mesa 19+; Trixie ships 25.x)
-  - gpu.conf: remove MESA_SHADER_CACHE_DISABLE=false (Mesa default)
-  - GTK3 settings.ini: remove gtk-overlay-scrolling=1 (GTK3 default)
-  - dosbox-x.conf: remove memsize=16 (DOSBox-X default; comment was
-    misleading — 16 MB is not a reduction)
-  - retroarch.cfg: remove video_max_swapchain_images (Vulkan/KMS
-    setting, inert on glcore/virgl); remove swapchain 2→3 upgrade path
+  - retroarch.cfg: video_threaded true→false, add input_poll_type_behavior=2,
+    add preempt_enable=false, remove video_max_swapchain_images
+  - gpu.conf: remove mesa_glthread=true, GALLIUM_DRIVER=virgl,
+    MESA_SHADER_CACHE_DISABLE=false (all redundant on Trixie Mesa 25.x)
+  - GTK3 settings.ini: remove gtk-overlay-scrolling=1 (default)
+  - PipeWire quantum 256→512 (core + pulse); prevents emulation xruns
+  - new dosbox-x.conf: ARM64 dynamic_rec, openglnb, cycle auto-tuning
+  - .box64rc: add DYNAREC_FORWARD=512, DYNAREC_PAUSE=1
+  - new run-game wrapper: big-core affinity, nice/ionice, MALLOC_ARENA_MAX
+  - earlyoom installed and enabled (cgroup v1 prevents systemd-oomd)
+  - man-db trigger + apt-daily/fstrim/e2scrub/man-db timers disabled
+  - fontconfig: add embeddedbitmap=false
+  - dosbox-x.conf: remove memsize=16 (DOSBox-X default)
+  - user file count 17→19
 
 7.8.3  2026-03-31
 
-  Fixes:
-  - fix --dry-run contract violation: bare sudo apt-get install -y
-    unrar bypassed DRY_RUN guard and swallowed all output via
-    &>/dev/null; routed through run() matching box64 install pattern
-    (DRY_RUN guard, log capture, error visibility)
-  - fix --from-step=13 false success: step 13 printed
-    "RY-CROSTINI COMPLETE" and deleted checkpoint when no checks
-    actually ran (counters all zero); now prints "NO CHECKS RAN"
-    banner and preserves checkpoint file
-  - fix verification failure guidance: log message said "re-run or
-    use --verify" but bare re-run skips checks (steps 11-12);
-    now directs user to --verify only; README updated to match
+  - fix --dry-run: unrar install bypassed DRY_RUN guard; route through run()
+  - fix --from-step=13: suppress false success when no checks ran
+  - fix verification guidance: direct to --verify only (bare re-run skips)
 
 7.8.2  2026-03-31
 
-  Changes:
-  - restructure README for professional tone, visual hierarchy, and
-    information density: reorder sections (Quick Start first, Prerequisites
-    before Usage), merge Exit Codes into Usage, rename Features→Design and
-    Gaming→Gaming Reference, convert prose blocks to tables (Trixie Upgrade,
-    Known Limitations, Design), add file counts to Generated Files
-    subheadings (5 system, 17 user), normalize casual phrasing, eliminate
-    redundant Bookworm-to-Trixie note after Quick Start
+  - README restructured: tables for Design/Limitations/Trixie, reorder
+    sections, merge Exit Codes into Usage, add file counts to subheadings
 
 7.8.1  2026-03-31
 
-  Changes:
-  - add sudo credential keepalive: background sudo -v loop every 60 s
-    after lock acquisition prevents credential timeout during long apt
-    operations (e.g. Trixie dist-upgrade); skipped in --dry-run; killed
-    in cleanup()
-  - scope Trixie codename sed to repo lines only: /^deb/ for .list
-    files, /^Suites:/ for deb822 .sources files; comments and non-repo
-    content are no longer rewritten
+  - sudo credential keepalive: background sudo -v loop every 60 s
+  - scope Trixie sed to repo lines only (/^deb/, /^Suites:/)
 
 7.8.0  2026-03-31
 
-  Changes:
-  - split verification into three steps: step 11 (tools and config
-    files), step 12 (scripts and assets), step 13 (verification
-    summary with totals, elapsed time, and result banner)
-  - move FluidR3_GM.sf2, run-x86, and gog-extract from "Config files
-    written" section to new "Scripts and assets" section (step 12);
-    these are not config files
-  - _PROGRESS_TOTAL 12→13; --from-step range 1-12→1-13; --verify
-    now runs steps 11-13
-  - verification counters span steps 11-13; initialized before step 11
-    so --from-step=12 or --from-step=13 works correctly
+  - split verification into steps 11-13; _PROGRESS_TOTAL 12→13
+  - move soundfont/run-x86/gog-extract to new "Scripts and assets" section
 
-7.7.2  2026-03-30
+7.7.0 - 7.7.2  2026-03-30
 
-  Changes:
-  - remove deprecated and experimental ChromeOS flags from README
-    flag status table: #crostini-multi-container (deprecated M141),
-    #borealis-enabled (shut down 2026-01-01), #crostini-containerless
-    (early-stage); table now lists only the two required flags
+  - remove --minimal flag (gnome-disk-utility, libavcodec-extra, qemu-user
+    now always installed)
+  - remove deprecated ChromeOS flags from README
+  - trim verbose comments to concise form
 
-7.7.1  2026-03-30
+7.6.0 - 7.6.4  2026-03-29 - 2026-03-30
 
-  Changes:
-  - trim all multiline comments to single line (6 blocks)
-  - trim all verbose comments (>120 chars) to concise form (40 edits)
-  - no inline comments existed; no moves needed
-
-7.7.0  2026-03-30
-
-  Breaking:
-  - remove --minimal flag: gnome-disk-utility, libavcodec-extra, and
-    qemu-user are now always installed; MINIMAL variable, argument
-    parsing, conditional guards, and step 11 verification guards all
-    removed
-
-7.6.4  2026-03-30
-
-  Changes:
-  - remove qt5ct from install: conflicts with QT_QPA_PLATFORMTHEME=gtk3
-    set in qt.conf; qt5-gtk-platformtheme (the actual plugin) retained
-  - extract _pw_gaming_content() function for PipeWire gaming config
-    heredoc, eliminating 26-line duplication between fresh-write and
-    upgrade-path (matches existing _gpu_conf_content pattern)
-  - update --minimal description in usage() to list all three skipped
-    packages (gnome-disk-utility, libavcodec-extra, qemu-user),
-    matching README
-  - clarify README Trixie Upgrade section: cros-guest-tools stays held
-    permanently (cros-im unavailable on Trixie), not just during
-    upgrade like other cros-* packages
-
-7.6.3  2026-03-30
-
-  Changes:
-  - remove systemd v257.* APT version pin
-    (/etc/apt/preferences.d/pin-systemd): systemd upgrades are no
-    longer blocked; pin was originally added to prevent v258 cgroup v1
-    incompatibility but is no longer desired
-  - add version number to run-x86 --version and gog-extract --version
-    output; version is baked in at generation time via @@VERSION@@
-    placeholder sed replacement (single-quoted heredoc prevents direct
-    shell expansion)
-
-7.6.0 - 7.6.2  2026-03-29 - 2026-03-30
-  Gaming optimizations: Mesa shader cache partitioning, PipeWire
-  mem.allow-mlock + WirePlumber ALSA tuning, RetroArch swapchain 3 +
-  frame delay auto, ScummVM chorus off, journald volatile storage.
-  Fixes: local-outside-function crashes, find|wc-l newline safety,
-  gog-extract makeself validation, non-atomic config upgrade paths,
-  nullglob guard for sources.list.d glob.
+  - remove qt5ct (conflicts with QT_QPA_PLATFORMTHEME=gtk3)
+  - extract _pw_gaming_content() to eliminate heredoc duplication
+  - remove systemd v257 APT version pin
+  - add version to run-x86/gog-extract --version via @@VERSION@@ sed
+  - Mesa shader cache partitioning, PipeWire mem.allow-mlock, WirePlumber
+    ALSA tuning, RetroArch frame delay auto, ScummVM chorus off, journald
+    volatile
+  - fix local-outside-function, find|wc safety, gog-extract makeself
+    validation, non-atomic config upgrades, nullglob sources.list.d glob
 
 7.5.0 - 7.5.1  2026-03-29
-  README restructured for GitHub readability. Trixie package fixes:
-  7zip replaces p7zip-full, adwaita-qt replaces qt5-style-plugins.
-  Mesa DISK_CACHE_DATABASE, pipewire-pulse rules syntax, BOX64_DYNAREC
-  renames. RetroArch native pipewire driver. #exo-pointer-lock added.
+
+  - README restructured for GitHub readability
+  - Trixie package fixes: 7zip replaces p7zip-full, adwaita-qt replaces
+    qt5-style-plugins
+  - Mesa DISK_CACHE_DATABASE, pipewire-pulse rules, BOX64_DYNAREC renames
+  - RetroArch native pipewire driver, #exo-pointer-lock added
 
 7.4.0 - 7.4.2  2026-03-28
-  Remove all sysctl settings (read-only in Crostini namespace).
-  Add ry-crostini-cros-pin.service, write_file_exec helper. Fix unrar
-  exit 1, suppress 5 spurious warnings.
+
+  - remove all sysctl settings (read-only in Crostini namespace)
+  - add ry-crostini-cros-pin.service, write_file_exec helper
+  - fix unrar exit 1, suppress 5 spurious warnings
 
 7.0.0 - 7.3.0  2026-03-27
-  Breaking: consolidate 15→11 steps, mandatory Trixie, remove Rust/
-  Flatpak/backup steps, switch RetroArch to native .deb, remove GUI
-  apps. Add DOSBox-X, unrar/unar.
+
+  - consolidate 15→11 steps, mandatory Trixie, remove Rust/Flatpak/backup
+  - switch RetroArch to native .deb, remove GUI apps, add DOSBox-X/unrar/unar
 
 6.0.0 - 6.0.1  2026-03-26
-  Breaking: rename crostini-setup-duet5 → ry-crostini.
+
+  - rename crostini-setup-duet5 → ry-crostini
 
 5.0.0 - 5.5.0  2026-03-24 - 2026-03-26
-  Progress bar, qemu-user, run-x86/gog-extract wrappers, box64,
-  check_tool version probing, log rotation.
+
+  - progress bar, qemu-user, run-x86/gog-extract wrappers, box64
+  - check_tool version probing, log rotation
 
 4.0.0 - 4.12.0  2026-03-19 - 2026-03-24
-  Dual-target Bookworm/Trixie, deb822 migration, PipeWire audio,
-  gaming step, Mesa virgl override.
+
+  - dual-target Bookworm/Trixie, deb822 migration, PipeWire audio
+  - gaming step, Mesa virgl override
 
 3.0.0 - 3.22.0  2026-03-15 - 2026-03-19
-  Execution safety: run() pipefail fix, PIPESTATUS race, signal
-  handling, --from-step, --verify, --reset.
+
+  - run() pipefail fix, PIPESTATUS race, signal handling
+  - --from-step, --verify, --reset
 
 2.0.0 - 2.9.0  2026-03-08 - 2026-03-15
-  Full rewrite: checkpoint resume, --dry-run, --interactive, --minimal.
+
+  - full rewrite: checkpoint resume, --dry-run, --interactive, --minimal
 
 1.0.0 - 1.1.0  2026-03-08
-  Initial release.
+
+  - initial release
