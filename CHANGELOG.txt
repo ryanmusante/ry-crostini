@@ -1,3 +1,16 @@
+7.9.1  2026-04-01
+
+  - README: fix ScummVM "200+ engine reimplementations" → "325+ supported
+    games via native engine reimplementations" (scummvm.org)
+  - README: fix Moonlight Qt "No arm64 .deb" → arm64 .deb available since
+    v5.0.0 (software-decode-only in Crostini, no V4L2 hw accel)
+  - README: drop "only" from Chiaki-ng "only native Crostini streaming
+    client" (Moonlight Qt arm64 also qualifies)
+  - README: virgl "OpenGL 4.3 only" → "OpenGL 4.3+" (Mesa 23.2+ virgl
+    supports up to 4.6; actual version depends on ChromeOS host Mesa)
+  - README: drop specific ChromeOS milestone from flag status; add note
+    that GPU flag disabled by default since M131
+
 7.9.0  2026-03-31
 
   - retroarch.cfg: video_threaded true→false, add input_poll_type_behavior=2,

@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.9.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.9.1-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -215,7 +215,7 @@ codename references in APT sources and running `apt full-upgrade`.
 
 | Limitation | Detail |
 |------------|--------|
-| Vulkan unavailable | The virgl paravirtualized GPU exposes OpenGL 4.3 only. `vulkaninfo` installs and reports its version in verification, but no Vulkan device is enumerated. Vulkan-only applications will not run. |
+| Vulkan unavailable | The virgl paravirtualized GPU exposes OpenGL 4.3+ (up to 4.6 depending on the ChromeOS host Mesa version). `vulkaninfo` installs and reports its version in verification, but no Vulkan device is enumerated. Vulkan-only applications will not run. |
 
 ### Constraints
 
@@ -232,7 +232,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | Item | Detail |
 |------|--------|
 | Sommelier not running during install | Sommelier (Wayland/X11 bridge) is started by the container login process, not inside a running shell. Step 1 logs this as informational; step 11 reports it as a warning only if still absent at completion. Close and reopen the Terminal to resolve. |
-| ChromeOS flag status (confirmed M145) | `#crostini-gpu-support`: Required. `#exo-pointer-lock`: Required. |
+| ChromeOS flag status | `#crostini-gpu-support`: Required (disabled by default since M131). `#exo-pointer-lock`: Required. |
 
 ## Gaming Reference
 
@@ -259,7 +259,7 @@ gog-extract on first install.
 | Emulator | Description | Configuration |
 |----------|-------------|---------------|
 | DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, cycle tuning) |
-| ScummVM | 200+ native engine reimplementations | `~/.config/scummvm/scummvm.ini` (OpenGL, pixel-perfect scaling, FluidSynth) |
+| ScummVM | 325+ supported games via native engine reimplementations | `~/.config/scummvm/scummvm.ini` (OpenGL, pixel-perfect scaling, FluidSynth) |
 | RetroArch | Multi-system frontend (native arm64 Debian package) | `~/.config/retroarch/retroarch.cfg` |
 
 ### RetroArch Cores
@@ -425,13 +425,13 @@ under box64 on Trixie but is untested on 4 GB RAM). Alternative: download GOG
 |----------|--------|-------|
 | 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming, Luna) | Direct V4L2 hardware decode, no VM overhead |
 | 2 | Android Moonlight app (Play Store) | Hardware decode; optimal for Sunshine/GameStream hosts |
-| 3 | Chiaki-ng (PS Remote Play) | ARM64 Linux AppImage; only native Crostini streaming client |
+| 3 | Chiaki-ng (PS Remote Play) | ARM64 Linux AppImage; native Crostini streaming client |
 
 **Not recommended inside Crostini:**
 
 | Client | Issue |
 |--------|-------|
-| Moonlight Qt | No arm64 `.deb`; software decode only |
+| Moonlight Qt | arm64 `.deb` available (v5.0.0+) but software decode only in Crostini (no V4L2 hw accel) |
 | Parsec | No ARM64 Linux support |
 | Steam Link | No ARM64 Linux support |
 
