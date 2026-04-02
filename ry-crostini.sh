@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.1
-# Date:    2026-04-01
+# Version: 7.9.2
+# Date:    2026-04-02
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.1"
+readonly SCRIPT_VERSION="7.9.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -214,8 +214,10 @@ _prompt() {
 # _cleanup_warn: log helper safe inside cleanup/trap. Uses $SECONDS (builtin, no subprocess).
 # shellcheck disable=SC2317,SC2329
 _cleanup_warn() {
-    printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" >&2
-    printf '%ss [WARN]  %s\n' "${SECONDS:-?}" "$*" \
+    local _s="${SECONDS:-0}" _ts
+    printf -v _ts '+%dm%02ds' "$((_s / 60))" "$((_s % 60))"
+    printf '%s [WARN]  %s\n' "$_ts" "$*" >&2
+    printf '%s [WARN]  %s\n' "$_ts" "$*" \
         >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -735,6 +737,24 @@ context.properties.rules = [
 PWEOF
 }
 
+# _pw_pulse_gaming_content: emit PipeWire-Pulse gaming config heredoc (fresh-write and upgrade-path)
+_pw_pulse_gaming_content() {
+    cat <<'PPEOF'
+# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
+# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
+
+pulse.properties = {
+    pulse.min.req     = 512/48000
+    pulse.min.quantum = 512/48000
+}
+pulse.properties.rules = [
+    { matches = [ { cpu.vm.name = !null } ]
+      actions = { update-props = { pulse.min.quantum = 512/48000 } }
+    }
+]
+PPEOF
+}
+
 # Step 1: Preflight + ChromeOS integration
 if should_run_step 1; then
     step_banner 1 "Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; --interactive)"
@@ -1249,6 +1269,8 @@ if should_run_step 3; then
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y earlyoom; then
         if ! $DRY_RUN; then
             _EARLYOOM_CONF="/etc/default/earlyoom"
+            # @@WHY: marker check makes this self-healing — if apt upgrade overwrites
+            # the file, the marker is lost and next ry-crostini run re-applies config.
             if [[ -f "$_EARLYOOM_CONF" ]] && ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
                 write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
 # earlyoom config — managed by ry-crostini.sh
@@ -1443,36 +1465,10 @@ if should_run_step 6; then
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
         run mkdir -p "${HOME}/.config/pipewire/pipewire-pulse.conf.d" || true
-        write_file "$_PW_PULSE_GAMING" <<'PPEOF'
-# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
-
-pulse.properties = {
-    pulse.min.req     = 512/48000
-    pulse.min.quantum = 512/48000
-}
-pulse.properties.rules = [
-    { matches = [ { cpu.vm.name = !null } ]
-      actions = { update-props = { pulse.min.quantum = 512/48000 } }
-    }
-]
-PPEOF
+        _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
     elif grep -q '256/48000' "$_PW_PULSE_GAMING"; then
         log "Upgrading PipeWire-Pulse config: quantum 256→512"
-        write_file "$_PW_PULSE_GAMING" <<'PPEOF'
-# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
-
-pulse.properties = {
-    pulse.min.req     = 512/48000
-    pulse.min.quantum = 512/48000
-}
-pulse.properties.rules = [
-    { matches = [ { cpu.vm.name = !null } ]
-      actions = { update-props = { pulse.min.quantum = 512/48000 } }
-    }
-]
-PPEOF
+        _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
     else
         log "PipeWire-Pulse gaming config already exists"
     fi
@@ -2265,6 +2261,7 @@ case "$arch" in
         fi
         ;;
     "")
+        printf 'run-x86: arch detection failed for %s — assuming x86_64\n' "$prog" >&2
         if command -v box64 &>/dev/null; then
             exec box64 "$@"
         elif command -v qemu-x86_64 &>/dev/null; then
@@ -2337,12 +2334,22 @@ case "$installer" in
         fi
         ;;
     *.sh|*.SH)
-        # Validate makeself archive signature before execution — prevents running arbitrary scripts
-        if ! head -20 -- "$installer" 2>/dev/null | grep -qi 'makeself'; then
+        # Validate makeself archive structure — require ≥2 structural markers
+        # (keyword-only checks are bypassable by hostile scripts embedding "makeself")
+        _ms_score=0
+        _ms_head="$(head -200 -- "$installer" 2>/dev/null)" || _ms_head=""
+        [[ "$_ms_head" == *'MS_dd='* || "$_ms_head" == *'MS_dd_Progress='* ]] && ((_ms_score++)) || true
+        [[ "$_ms_head" == *'label='* ]]     && ((_ms_score++)) || true
+        [[ "$_ms_head" == *'filesizes='* ]] && ((_ms_score++)) || true
+        [[ "$_ms_head" == *'TMPROOT='* ]]   && ((_ms_score++)) || true
+        [[ "$_ms_head" == *'offset=`head'* ]] && ((_ms_score++)) || true
+        if [[ "$_ms_score" -lt 2 ]]; then
             printf 'gog-extract: %s does not appear to be a makeself archive (GOG Linux installer)\n' "$installer" >&2
             printf 'Expected a GOG .sh installer (makeself archive). Aborting for safety.\n' >&2
+            printf 'Matched %d/5 makeself structural markers (need ≥2).\n' "$_ms_score" >&2
             exit 1
         fi
+        unset _ms_score _ms_head
         printf 'Extracting GOG Linux installer: %s\n' "$installer"
         mkdir -p -- "$outdir"
         # GOG Linux installers are makeself archives; invoke via bash to avoid modifying the original file's permissions
@@ -2393,9 +2400,13 @@ fi
 
 # Build command with optional affinity and priority
 _cmd=("$@")
-# Pin to big cores if SC7180P topology detected
+# Pin to big cores if big.LITTLE topology detected (heterogeneous CPU parts)
+# SC7180P: cores 0-5 = Cortex-A55 (part 0x805), cores 6-7 = Cortex-A76 (part 0x804)
 if [[ -d /sys/devices/system/cpu/cpu7 ]]; then
-    _cmd=(taskset -c 6,7 "${_cmd[@]}")
+    _nparts="$(awk '/^CPU part/ {print $4}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
+    if [[ "${_nparts:-0}" -ge 2 ]]; then
+        _cmd=(taskset -c 6,7 "${_cmd[@]}")
+    fi
 fi
 # nice -n -5 requires CAP_SYS_NICE; fall back silently if unprivileged
 if nice -n -5 true 2>/dev/null; then

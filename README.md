@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.9.1-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.9.2-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -17,7 +17,7 @@ containers are upgraded to Trixie automatically during installation.
 - [Usage](#usage)
 - [Installation Steps](#installation-steps)
 - [Generated Files](#generated-files)
-  - [System (5 files, requires sudo)](#system-5-files-requires-sudo)
+  - [System (6 files, requires sudo)](#system-6-files-requires-sudo)
   - [User (19 files)](#user-19-files)
 - [Trixie Upgrade](#trixie-upgrade)
 - [Design](#design)
@@ -135,13 +135,14 @@ All configuration files are written atomically (tmpfile + mv). Existing files
 are skipped to ensure idempotency. Executable wrappers in `~/.local/bin/` are
 installed with mode 700.
 
-### System (5 files, requires sudo)
+### System (6 files, requires sudo)
 
 | Path | Step | Purpose |
 |------|------|---------|
 | `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
 | `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
+| `/etc/default/earlyoom` | 3 | earlyoom OOM killer tuning |
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
 | `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 

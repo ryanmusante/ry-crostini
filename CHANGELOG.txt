@@ -1,3 +1,20 @@
+7.9.2  2026-04-02
+
+  - fix gog-extract: replace single-keyword makeself check with 5 structural
+    marker validation (MS_dd, label, filesizes, TMPROOT, offset); require ≥2
+    matches to prevent hostile .sh execution via embedded keyword
+  - fix run-game: verify big.LITTLE topology via heterogeneous CPU part count
+    in /proc/cpuinfo before pinning to cores 6-7 (previously matched any 8+
+    core system)
+  - fix _cleanup_warn: format $SECONDS as +Xm Ys elapsed time to distinguish
+    from wall-clock HH:MM:SS used by log/warn/err
+  - extract _pw_pulse_gaming_content() to eliminate PipeWire-Pulse heredoc
+    duplication (same pattern as _pw_gaming_content, _gpu_conf_content)
+  - fix run-x86: add diagnostic warning when ELF arch detection fails before
+    assuming x86_64 fallback
+  - README: add /etc/default/earlyoom to system files table (5→6 files)
+  - earlyoom config: add @@WHY comment documenting self-healing marker check
+
 7.9.1  2026-04-01
 
   - README: fix ScummVM "200+ engine reimplementations" → "325+ supported
