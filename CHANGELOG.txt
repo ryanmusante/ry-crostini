@@ -12,6 +12,15 @@
     dpkg-query -W piped through awk for cros package hold detection
   - remove 7 redundant mkdir -p calls before write_file/write_file_private/
     write_file_exec (all three variants already call mkdir -p internally)
+  - fix _parallel_check_tools: subshell stderr merged via 2>&1 instead of
+    suppressed via 2>/dev/null; bash errors (set -e kill, unbound variable)
+    now captured in temp file and replayed as diagnostics
+  - fix _parallel_check_tools: tmpdir stored in global _PARALLEL_TMPDIR so
+    cleanup trap can remove it on SIGINT during wait (previously leaked
+    until tmpfs cleanup on container restart)
+  - fix batch systemctl disable/mask: remove outer 2>/dev/null from run()
+    calls; run() already captures command stderr via internal 2>&1, outer
+    redirect only suppressed run()'s own warn diagnostic on failure
   - README: add parallel verification to Design table
 
 7.9.2  2026-04-02

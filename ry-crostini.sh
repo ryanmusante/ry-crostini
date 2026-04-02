@@ -42,6 +42,7 @@ _CHECKPOINT_OVERRIDE=""
 _LOCK_ACQUIRED=false
 _received_signal=""
 _SUDO_KEEPALIVE_PID=""
+_PARALLEL_TMPDIR=""
 
 # Signal handler — stores signal name, triggers EXIT trap via exit
 # shellcheck disable=SC2317,SC2329
@@ -62,6 +63,10 @@ cleanup() {
     # Stop sudo credential keepalive (disowned — kill by raw PID)
     if [[ -n "${_SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$_SUDO_KEEPALIVE_PID" 2>/dev/null; then
         kill "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    fi
+    # Remove parallel check_tool tmpdir if abandoned by signal during wait
+    if [[ -n "${_PARALLEL_TMPDIR:-}" && -d "${_PARALLEL_TMPDIR:-}" ]]; then
+        rm -rf -- "$_PARALLEL_TMPDIR" 2>/dev/null || true
     fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
@@ -531,6 +536,8 @@ _parallel_check_tools() {
         done
         return
     }
+    # Expose to cleanup trap so SIGINT during wait doesn't leak tmpdir
+    _PARALLEL_TMPDIR="$_pct_dir"
 
     local _pct_entry _pct_idx
     for _pct_entry in "$@"; do
@@ -542,7 +549,7 @@ _parallel_check_tools() {
             check_tool "${_pct_entry%%|*}" "${_pct_entry#*|}"
             # Sentinel line: SOH + counters (never appears in normal output)
             printf '\x01%d %d %d\n' "$_verify_pass" "$_verify_fail" "$_verify_warn"
-        ) > "${_pct_dir}/${_pct_idx}" 2>/dev/null &
+        ) > "${_pct_dir}/${_pct_idx}" 2>&1 &
         _pct_pids+=($!)
         ((_pct_n++)) || true
     done
@@ -567,6 +574,7 @@ _parallel_check_tools() {
     done
 
     rm -rf -- "$_pct_dir"
+    _PARALLEL_TMPDIR=""
 }
 
 usage() {
@@ -1908,7 +1916,7 @@ ENVEOF
     # Disable background apt timers (compete for I/O/RAM during gaming)
     if ! $DRY_RUN; then
         # Batch disable — systemctl disable is a no-op on already-disabled units
-        run sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null \
+        run sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer \
             || warn "Cannot disable apt timers"
         # Batch mask — guard with list-unit-files to avoid dead symlinks
         _mask_timers=()
@@ -1916,7 +1924,7 @@ ENVEOF
             systemctl list-unit-files "$_timer" &>/dev/null 2>&1 && _mask_timers+=("$_timer")
         done
         if [[ "${#_mask_timers[@]}" -gt 0 ]]; then
-            run sudo systemctl mask "${_mask_timers[@]}" 2>/dev/null || true
+            run sudo systemctl mask "${_mask_timers[@]}" || true
         fi
         log "Unnecessary timers disabled/masked"
         unset _timer _mask_timers
