@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.3
+# Version: 7.9.4
 # Date:    2026-04-02
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.3"
+readonly SCRIPT_VERSION="7.9.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
@@ -1831,7 +1831,7 @@ fi
 if should_run_step 9; then
     step_banner 9 "Container resource tuning (locale, journald volatile, timer cleanup, env, XDG, paths)"
 
-    # 9c. Set locale to en_US.UTF-8
+    # 9a. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — cp failure means no rollback
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
@@ -1856,7 +1856,7 @@ if should_run_step 9; then
         log "en_US.UTF-8 locale already available"
     fi
 
-    # 9d. Journald volatile storage — write logs to RAM only (saves eMMC I/O)
+    # 9b. Journald volatile storage — write logs to RAM only (saves eMMC I/O)
     _JOURNALD_VOL="/etc/systemd/journald.conf.d/volatile.conf"
     if [[ ! -f "$_JOURNALD_VOL" ]]; then
         write_file_sudo "$_JOURNALD_VOL" <<'JDEOF'
@@ -1871,7 +1871,7 @@ JDEOF
     fi
     unset _JOURNALD_VOL
 
-    # 9e. Master environment profile (shell-agnostic via /etc/profile.d)
+    # 9c. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/ry-crostini-env.sh"
     if [[ ! -f "$PROFILE_D" ]]; then
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
@@ -1900,7 +1900,7 @@ ENVEOF
         log "Environment profile already exists"
     fi
 
-    # 9f. Ensure XDG dirs exist
+    # 9d. Ensure XDG dirs exist
     run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
@@ -1913,7 +1913,7 @@ ENVEOF
 
     unset PROFILE_D
 
-    # Disable background apt timers (compete for I/O/RAM during gaming)
+    # 9e. Disable background timers (compete for I/O/RAM during gaming)
     if ! $DRY_RUN; then
         # Batch disable — systemctl disable is a no-op on already-disabled units
         run sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer \
@@ -2695,6 +2695,7 @@ if should_run_step 11; then
         ((_verify_warn++)) || true
     fi
     # earlyoom OOM killer
+    check_config "/etc/default/earlyoom"                                                           "earlyoom OOM config"
     if systemctl is-active earlyoom.service &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
         ((_verify_pass++)) || true

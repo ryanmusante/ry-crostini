@@ -1,3 +1,11 @@
+7.9.4  2026-04-02
+
+  - fix verification: add check_config for /etc/default/earlyoom (step 11);
+    earlyoom config file was written (step 3) and documented (README) but not
+    verified — system file verification count now matches README (6/6)
+  - fix step 9 sub-labels: renumber 9c-9f → 9a-9d after sysctl removal
+    (cosmetic); add 9e label for timer cleanup section
+
 7.9.3  2026-04-02
 
   - parallel check_tool verification: new _parallel_check_tools() runs ~42
