@@ -5,6 +5,8 @@
     verified — system file verification count now matches README (6/6)
   - fix step 9 sub-labels: renumber 9c-9f → 9a-9d after sysctl removal
     (cosmetic); add 9e label for timer cleanup section
+  - fix step 11 comment: parallel tool count ~35 → ~48 (stale after 7.9.3
+    batch merges added tools to both parallel dispatch calls)
 
 7.9.3  2026-04-02
 

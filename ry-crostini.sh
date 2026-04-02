@@ -2613,7 +2613,7 @@ if should_run_step 11; then
     _fd_cmd=fdfind;  command -v fd  &>/dev/null && _fd_cmd=fd
     _bat_cmd=batcat; command -v bat &>/dev/null && _bat_cmd=bat
 
-    # Parallel tool checks — all version probes run concurrently (~35 tools)
+    # Parallel tool checks — all version probes run concurrently (~48 tools)
     _parallel_check_tools \
         "vim|vim" "nano|nano" "curl|curl" "wget|wget" "less|less" \
         "jq|jq" "tmux|tmux" "screen|screen" "htop|htop" "ncdu|ncdu" \
