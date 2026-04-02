@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.4
+# Version: 7.9.5
 # Date:    2026-04-02
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,10 +17,11 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.4"
+readonly SCRIPT_VERSION="7.9.5"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
-readonly LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
+# Not readonly — _parallel_check_tools subshells must reassign to /dev/null
+LOG_FILE="${HOME}/ry-crostini-${_log_ts}.log"
 readonly STEP_FILE="${HOME}/.ry-crostini-checkpoint"
 readonly LOCK_FILE="${HOME}/.ry-crostini.lock"
 unset _log_ts
@@ -385,6 +386,9 @@ write_file_sudo() {
         return 0
     fi
     sudo mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
+    # Script umask is 077; sudo may inherit it, giving new .d dirs mode 700.
+    # systemd and check_config both need world-readable parent directories.
+    sudo chmod 755 "$(dirname "$dest")" || true
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; die "Cannot write $dest"; }
@@ -1330,7 +1334,8 @@ if should_run_step 3; then
             _EARLYOOM_CONF="/etc/default/earlyoom"
             # @@WHY: marker check makes this self-healing — if apt upgrade overwrites
             # the file, the marker is lost and next ry-crostini run re-applies config.
-            if [[ -f "$_EARLYOOM_CONF" ]] && ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
+            # Also writes when the file doesn't exist yet (fresh earlyoom installs).
+            if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
                 write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
 # earlyoom config — managed by ry-crostini.sh
 EARLYOOM_ARGS="-m 5 -s 10 --avoid '(^|/)(init|systemd|dbus-daemon|garcon|sommelier)$' -r 3600"
@@ -2696,6 +2701,10 @@ if should_run_step 11; then
     fi
     # earlyoom OOM killer
     check_config "/etc/default/earlyoom"                                                           "earlyoom OOM config"
+    # earlyoom may have been killed during heavy apt operations; restart if needed
+    if ! systemctl is-active earlyoom.service &>/dev/null; then
+        sudo systemctl start earlyoom.service 2>/dev/null || true
+    fi
     if systemctl is-active earlyoom.service &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
         ((_verify_pass++)) || true

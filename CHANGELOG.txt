@@ -1,3 +1,24 @@
+7.9.5  2026-04-02
+
+  - fix _parallel_check_tools: LOG_FILE declared readonly propagated into
+    subshells, causing immediate exit under set -e before check_tool could
+    run; all 48 tool verification probes were silently skipped — removed
+    readonly from LOG_FILE (subshell parentheses already provide isolation)
+  - fix write_file_sudo: parent directories created by sudo mkdir -p
+    inherited the script's umask 077, producing mode-700 dirs unreadable
+    by the unprivileged verification user; added explicit chmod 755 after
+    mkdir -p — fixes check_config failures on tmp.mount.d/override.conf
+    and journald.conf.d/volatile.conf
+  - fix earlyoom verification: service may be killed during heavy apt
+    operations in steps 4-10; verification now attempts systemctl start
+    before the is-active check so transient kills don't produce false
+    warnings
+  - fix earlyoom config gate: condition required /etc/default/earlyoom to
+    already exist (-f && !grep), skipping config write on fresh installs
+    where apt creates no default file; inverted to (!-f || !grep) so
+    config is written when the file is missing or lacks the ry-crostini
+    marker
+
 7.9.4  2026-04-02
 
   - fix verification: add check_config for /etc/default/earlyoom (step 11);
