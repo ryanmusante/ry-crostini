@@ -1,43 +1,21 @@
 7.9.7  2026-04-02
 
-  - fix terminal echo corruption: the disowned sudo keepalive background
-    loop can corrupt tty echo/icanon state when killed during cleanup;
-    added wait after kill and stty sane in the EXIT trap to guarantee
-    terminal restoration
-  - fix sommelier activation: environment.d changes were not applied to
-    the running user session, causing sommelier to keep the old env and
-    GPU to fall back to llvmpipe (software rendering) until full container
-    shutdown; step 13 now imports environment via systemctl --user
-    import-environment and restarts sommelier@0 + sommelier-x@0 services
-    in-place, eliminating the need for a manual terminal restart
-
-7.9.6  2026-04-02
-
-  - fix check_tool: add dosbox-x to _TOOL_VER_FLAG with empty flag (skip
-    version probe); dosbox-x --version emits "Usage:" as first line which
-    the error-string filter incorrectly classified as a failed probe —
-    now reports ✓ (installed) like glxinfo and gnome-disks
-
-7.9.5  2026-04-02
-
-  - fix _parallel_check_tools: LOG_FILE declared readonly propagated into
-    subshells, causing immediate exit under set -e before check_tool could
-    run; all 48 tool verification probes were silently skipped — removed
-    readonly from LOG_FILE (subshell parentheses already provide isolation)
-  - fix write_file_sudo: parent directories created by sudo mkdir -p
-    inherited the script's umask 077, producing mode-700 dirs unreadable
-    by the unprivileged verification user; added explicit chmod 755 after
-    mkdir -p — fixes check_config failures on tmp.mount.d/override.conf
-    and journald.conf.d/volatile.conf
-  - fix earlyoom verification: service may be killed during heavy apt
-    operations in steps 4-10; verification now attempts systemctl start
-    before the is-active check so transient kills don't produce false
-    warnings
-  - fix earlyoom config gate: condition required /etc/default/earlyoom to
-    already exist (-f && !grep), skipping config write on fresh installs
-    where apt creates no default file; inverted to (!-f || !grep) so
-    config is written when the file is missing or lacks the ry-crostini
-    marker
+  - fix _parallel_check_tools: LOG_FILE readonly killed subshells under
+    set -e; all 48 tool probes silently skipped — removed readonly
+  - fix write_file_sudo: umask 077 created mode-700 parent dirs; added
+    chmod 755 after mkdir -p — fixes tmp.mount.d and journald.conf.d
+    verification failures
+  - fix earlyoom config gate: inverted condition so config is written on
+    fresh installs where /etc/default/earlyoom does not exist
+  - fix earlyoom verification: attempt systemctl start before is-active
+    check to recover from transient kills during heavy apt operations
+  - fix check_tool: add dosbox-x to _TOOL_VER_FLAG (empty flag) — skip
+    version probe that triggered error-string filter on "Usage:" output
+  - fix terminal echo: added wait after sudo keepalive kill + stty sane
+    in EXIT trap to restore tty state
+  - fix sommelier activation: step 13 now runs systemctl --user
+    import-environment + restarts sommelier services in-place instead of
+    requiring manual terminal restart
 
 7.9.4  2026-04-02
 
