@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.5
+# Version: 7.9.7
 # Date:    2026-04-02
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -17,7 +17,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.5"
+readonly SCRIPT_VERSION="7.9.7"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -64,7 +64,11 @@ cleanup() {
     # Stop sudo credential keepalive (disowned — kill by raw PID)
     if [[ -n "${_SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$_SUDO_KEEPALIVE_PID" 2>/dev/null; then
         kill "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        wait "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
     fi
+    # Restore terminal state — sudo keepalive + progress bar escape sequences
+    # can corrupt echo/icanon when killed mid-write
+    [[ -t 0 ]] && stty sane 2>/dev/null || true
     # Remove parallel check_tool tmpdir if abandoned by signal during wait
     if [[ -n "${_PARALLEL_TMPDIR:-}" && -d "${_PARALLEL_TMPDIR:-}" ]]; then
         rm -rf -- "$_PARALLEL_TMPDIR" 2>/dev/null || true
@@ -442,6 +446,7 @@ declare -gA _TOOL_VER_FLAG=(
     [ssh]="-V"
     [glxinfo]=""
     [xterm]="-v"
+    [dosbox-x]=""
     [gnome-disks]=""
     [vulkaninfo]="--version"
 )
@@ -2817,7 +2822,28 @@ if should_run_step 13; then
     logprintf '%bElapsed time:%b  %dm %ds\n' "$BOLD" "$RESET" "$((_elapsed / 60))" "$((_elapsed % 60))"
     unset _now_epoch _elapsed
 
-    logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
+    # Live-reload environment.d vars and restart sommelier so changes take
+    # effect without a full container shutdown or terminal restart.
+    if ! $DRY_RUN; then
+        # Import updated environment.d variables into the systemd user session
+        if systemctl --user import-environment 2>/dev/null; then
+            log "Imported environment.d variables into user session"
+        fi
+        # Restart sommelier (Wayland + X11 bridge) to pick up new env vars
+        if systemctl --user restart sommelier@0.service sommelier-x@0.service 2>/dev/null; then
+            # Brief settle — sommelier needs ~1 s to re-establish the display socket
+            sleep 1
+            if pgrep -x sommelier &>/dev/null; then
+                log "Sommelier restarted — environment changes are live"
+            else
+                logprintf '\n%bSommelier restart failed — shut down Linux (Settings → Developers) and reopen Terminal.%b\n\n' "$BOLD" "$RESET"
+            fi
+        else
+            logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
+        fi
+    else
+        logprintf '\n%b[DRY-RUN] Would restart sommelier to apply environment changes.%b\n\n' "$BOLD" "$RESET"
+    fi
     log "Step 13 complete."
 fi
 

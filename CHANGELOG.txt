@@ -1,3 +1,23 @@
+7.9.7  2026-04-02
+
+  - fix terminal echo corruption: the disowned sudo keepalive background
+    loop can corrupt tty echo/icanon state when killed during cleanup;
+    added wait after kill and stty sane in the EXIT trap to guarantee
+    terminal restoration
+  - fix sommelier activation: environment.d changes were not applied to
+    the running user session, causing sommelier to keep the old env and
+    GPU to fall back to llvmpipe (software rendering) until full container
+    shutdown; step 13 now imports environment via systemctl --user
+    import-environment and restarts sommelier@0 + sommelier-x@0 services
+    in-place, eliminating the need for a manual terminal restart
+
+7.9.6  2026-04-02
+
+  - fix check_tool: add dosbox-x to _TOOL_VER_FLAG with empty flag (skip
+    version probe); dosbox-x --version emits "Usage:" as first line which
+    the error-string filter incorrectly classified as a failed probe —
+    now reports ✓ (installed) like glxinfo and gnome-disks
+
 7.9.5  2026-04-02
 
   - fix _parallel_check_tools: LOG_FILE declared readonly propagated into
