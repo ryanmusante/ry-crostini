@@ -1,93 +1,79 @@
+7.9.9  2026-04-06
+
+  - fix .box64rc DYNAREC_CACHE rename: atomic read+sed+write_file_private replaces bare sed -i
+  - fix verification: guard earlyoom sudo systemctl start with DRY_RUN check
+  - fix run-x86/gog-extract/run-game: pipe heredoc through sed before write_file_exec (atomic)
+  - fix cleanup: rewrite stty sane guard as if/then (SC2015)
+  - fix timer mask guard: --no-legend | grep -q . replaces ineffective exit-code check
+  - fix apt-daily.timer check: remove redundant 2>&1 after &>/dev/null
+  - trim all multiline comments to single line (−17 lines)
+
+7.9.8  2026-04-05
+
+  - WirePlumber ALSA headroom 256→8192 (VM default; fixes audio glitches)
+  - box64: rename DYNAREC_CACHE→DYNACACHE; add ALIGNED_ATOMICS, DIRTY, MAXCPU, FORWARD
+  - retroarch.cfg: add video_frame_delay="4" floor; PipeWire driver warning (#17685)
+  - PipeWire: add cpu.zero.denormals=true
+  - earlyoom: add -p, --prefer game processes, --sort-by-rss
+  - journald: add RuntimeMaxUse=50M, RuntimeMaxFileSize=10M
+  - scummvm.ini: add output_rate=48000, interpolation=linear
+  - run-game: add mesa_glthread=true (per-game only)
+  - dosbox-x.conf: cycles limit 30000→50000
+  - gpu.conf: NUM_PARTS 10→4; MESA_NO_ERROR virgl risk comment
+  - apt: Pipeline-Depth 4→0; qt.conf: remove QT_AUTO_SCREEN_SCALE_FACTOR
+  - bash: add set -E, inherit_errexit
+  - refactor: version-marker upgrade gates replace per-setting elif chains (−66 lines)
+
 7.9.7  2026-04-02
 
-  - fix _parallel_check_tools: LOG_FILE readonly killed subshells under
-    set -e; all 48 tool probes silently skipped — removed readonly
-  - fix write_file_sudo: umask 077 created mode-700 parent dirs; added
-    chmod 755 after mkdir -p — fixes tmp.mount.d and journald.conf.d
-    verification failures
-  - fix earlyoom config gate: inverted condition so config is written on
-    fresh installs where /etc/default/earlyoom does not exist
-  - fix earlyoom verification: attempt systemctl start before is-active
-    check to recover from transient kills during heavy apt operations
-  - fix check_tool: add dosbox-x to _TOOL_VER_FLAG (empty flag) — skip
-    version probe that triggered error-string filter on "Usage:" output
-  - fix terminal echo: added wait after sudo keepalive kill + stty sane
-    in EXIT trap to restore tty state
-  - fix sommelier activation: step 13 now runs systemctl --user
-    import-environment + restarts sommelier services in-place instead of
-    requiring manual terminal restart
+  - fix _parallel_check_tools: LOG_FILE readonly killed subshells — removed readonly
+  - fix write_file_sudo: umask 077 created mode-700 parent dirs; added chmod 755
+  - fix earlyoom config gate: inverted condition for fresh installs
+  - fix earlyoom verification: attempt systemctl start before is-active check
+  - fix check_tool: add dosbox-x to _TOOL_VER_FLAG (empty flag)
+  - fix terminal echo: wait after sudo keepalive kill + stty sane in EXIT trap
+  - fix sommelier: step 13 import-environment + restart services in-place
 
 7.9.4  2026-04-02
 
-  - fix verification: add check_config for /etc/default/earlyoom (step 11);
-    earlyoom config file was written (step 3) and documented (README) but not
-    verified — system file verification count now matches README (6/6)
-  - fix step 9 sub-labels: renumber 9c-9f → 9a-9d after sysctl removal
-    (cosmetic); add 9e label for timer cleanup section
-  - fix step 11 comment: parallel tool count ~35 → ~48 (stale after 7.9.3
-    batch merges added tools to both parallel dispatch calls)
+  - fix verification: add check_config for /etc/default/earlyoom (6/6 system files)
+  - fix step 9 sub-labels: renumber 9c-9f → 9a-9d; add 9e label
+  - fix step 11 comment: parallel tool count ~35 → ~48
 
 7.9.3  2026-04-02
 
-  - parallel check_tool verification: new _parallel_check_tools() runs ~42
-    version probes concurrently via subshells with ordered output replay and
-    sentinel-line counter summation; sequential fallback on tmpdir failure
-  - batch package installs: merge 3 gaming install_pkgs_best_effort calls
-    into single array (scummvm, soundfont, innoextract, unar, dosbox-x,
-    retroarch, retroarch-assets); merge 3 Qt theme calls into one
-  - batch systemctl calls: PipeWire mask/enable (4→2 calls), timer
-    disable/mask (5→2 calls with array accumulation for mask guard)
-  - batch dpkg-query: replace 9 sequential dpkg -s forks with single
-    dpkg-query -W piped through awk for cros package hold detection
-  - remove 7 redundant mkdir -p calls before write_file/write_file_private/
-    write_file_exec (all three variants already call mkdir -p internally)
-  - fix _parallel_check_tools: subshell stderr merged via 2>&1 instead of
-    suppressed via 2>/dev/null; bash errors (set -e kill, unbound variable)
-    now captured in temp file and replayed as diagnostics
-  - fix _parallel_check_tools: tmpdir stored in global _PARALLEL_TMPDIR so
-    cleanup trap can remove it on SIGINT during wait (previously leaked
-    until tmpfs cleanup on container restart)
-  - fix batch systemctl disable/mask: remove outer 2>/dev/null from run()
-    calls; run() already captures command stderr via internal 2>&1, outer
-    redirect only suppressed run()'s own warn diagnostic on failure
+  - parallel check_tool: _parallel_check_tools() runs ~42 probes concurrently
+  - batch package installs: merge 3 gaming calls into single array
+  - batch systemctl calls: PipeWire mask/enable (4→2), timer disable/mask (5→2)
+  - batch dpkg-query: single dpkg-query -W replaces 9 sequential dpkg -s forks
+  - remove 7 redundant mkdir -p calls (write_file variants do it internally)
+  - fix _parallel_check_tools: subshell stderr merged via 2>&1
+  - fix _parallel_check_tools: tmpdir stored in _PARALLEL_TMPDIR for cleanup trap
+  - fix batch systemctl: remove outer 2>/dev/null that suppressed run() warnings
   - README: add parallel verification to Design table
 
 7.9.2  2026-04-02
 
-  - fix gog-extract: replace single-keyword makeself check with 5 structural
-    marker validation (MS_dd, label, filesizes, TMPROOT, offset); require ≥2
-    matches to prevent hostile .sh execution via embedded keyword
-  - fix run-game: verify big.LITTLE topology via heterogeneous CPU part count
-    in /proc/cpuinfo before pinning to cores 6-7 (previously matched any 8+
-    core system)
-  - fix _cleanup_warn: format $SECONDS as +Xm Ys elapsed time to distinguish
-    from wall-clock HH:MM:SS used by log/warn/err
-  - extract _pw_pulse_gaming_content() to eliminate PipeWire-Pulse heredoc
-    duplication (same pattern as _pw_gaming_content, _gpu_conf_content)
-  - fix run-x86: add diagnostic warning when ELF arch detection fails before
-    assuming x86_64 fallback
+  - fix gog-extract: 5-marker makeself validation replaces single-keyword check
+  - fix run-game: verify heterogeneous CPU parts before big.LITTLE affinity
+  - fix _cleanup_warn: format $SECONDS as +Xm Ys elapsed time
+  - extract _pw_pulse_gaming_content() to eliminate heredoc duplication
+  - fix run-x86: diagnostic warning on ELF arch detection failure
   - README: add /etc/default/earlyoom to system files table (5→6 files)
-  - earlyoom config: add @@WHY comment documenting self-healing marker check
+  - earlyoom config: add @@WHY comment for self-healing marker check
 
 7.9.1  2026-04-01
 
-  - README: fix ScummVM "200+ engine reimplementations" → "325+ supported
-    games via native engine reimplementations" (scummvm.org)
-  - README: fix Moonlight Qt "No arm64 .deb" → arm64 .deb available since
-    v5.0.0 (software-decode-only in Crostini, no V4L2 hw accel)
-  - README: drop "only" from Chiaki-ng "only native Crostini streaming
-    client" (Moonlight Qt arm64 also qualifies)
-  - README: virgl "OpenGL 4.3 only" → "OpenGL 4.3+" (Mesa 23.2+ virgl
-    supports up to 4.6; actual version depends on ChromeOS host Mesa)
-  - README: drop specific ChromeOS milestone from flag status; add note
-    that GPU flag disabled by default since M131
+  - README: ScummVM "200+" → "325+ supported games" (scummvm.org)
+  - README: Moonlight Qt arm64 .deb available since v5.0.0 (software-decode-only)
+  - README: drop "only" from Chiaki-ng (Moonlight Qt arm64 also qualifies)
+  - README: virgl "OpenGL 4.3 only" → "OpenGL 4.3+" (Mesa 23.2+)
+  - README: drop specific ChromeOS milestone; note GPU flag default since M131
 
 7.9.0  2026-03-31
 
-  - retroarch.cfg: video_threaded true→false, add input_poll_type_behavior=2,
-    add preempt_enable=false, remove video_max_swapchain_images
-  - gpu.conf: remove mesa_glthread=true, GALLIUM_DRIVER=virgl,
-    MESA_SHADER_CACHE_DISABLE=false (all redundant on Trixie Mesa 25.x)
+  - retroarch.cfg: video_threaded false, input_poll_type_behavior=2, preempt_enable
+  - gpu.conf: remove mesa_glthread, GALLIUM_DRIVER, MESA_SHADER_CACHE_DISABLE
   - GTK3 settings.ini: remove gtk-overlay-scrolling=1 (default)
   - PipeWire quantum 256→512 (core + pulse); prevents emulation xruns
   - new dosbox-x.conf: ARM64 dynamic_rec, openglnb, cycle auto-tuning
@@ -95,8 +81,7 @@
   - new run-game wrapper: big-core affinity, nice/ionice, MALLOC_ARENA_MAX
   - earlyoom installed and enabled (cgroup v1 prevents systemd-oomd)
   - man-db trigger + apt-daily/fstrim/e2scrub/man-db timers disabled
-  - fontconfig: add embeddedbitmap=false
-  - dosbox-x.conf: remove memsize=16 (DOSBox-X default)
+  - fontconfig: add embeddedbitmap=false; dosbox-x.conf: remove memsize=16
   - user file count 17→19
 
 7.8.3  2026-03-31
@@ -107,8 +92,7 @@
 
 7.8.2  2026-03-31
 
-  - README restructured: tables for Design/Limitations/Trixie, reorder
-    sections, merge Exit Codes into Usage, add file counts to subheadings
+  - README restructured: tables, reorder sections, merge Exit Codes into Usage
 
 7.8.1  2026-03-31
 
@@ -122,8 +106,7 @@
 
 7.7.0 - 7.7.2  2026-03-30
 
-  - remove --minimal flag (gnome-disk-utility, libavcodec-extra, qemu-user
-    now always installed)
+  - remove --minimal flag (gnome-disk-utility, libavcodec-extra always installed)
   - remove deprecated ChromeOS flags from README
   - trim verbose comments to concise form
 
@@ -133,17 +116,13 @@
   - extract _pw_gaming_content() to eliminate heredoc duplication
   - remove systemd v257 APT version pin
   - add version to run-x86/gog-extract --version via @@VERSION@@ sed
-  - Mesa shader cache partitioning, PipeWire mem.allow-mlock, WirePlumber
-    ALSA tuning, RetroArch frame delay auto, ScummVM chorus off, journald
-    volatile
-  - fix local-outside-function, find|wc safety, gog-extract makeself
-    validation, non-atomic config upgrades, nullglob sources.list.d glob
+  - Mesa shader cache, PipeWire mlock, WirePlumber ALSA, RA frame delay, journald volatile
+  - fix local-outside-function, find|wc, gog-extract makeself, non-atomic upgrades, nullglob
 
 7.5.0 - 7.5.1  2026-03-29
 
   - README restructured for GitHub readability
-  - Trixie package fixes: 7zip replaces p7zip-full, adwaita-qt replaces
-    qt5-style-plugins
+  - Trixie package fixes: 7zip replaces p7zip-full, adwaita-qt replaces qt5-style-plugins
   - Mesa DISK_CACHE_DATABASE, pipewire-pulse rules, BOX64_DYNAREC renames
   - RetroArch native pipewire driver, #exo-pointer-lock added
 

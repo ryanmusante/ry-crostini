@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.9.7-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-7.9.9-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -227,7 +227,8 @@ codename references in APT sources and running `apt full-upgrade`.
 | WirePlumber 0.5 format | Trixie ships WirePlumber 0.5.8 which uses JSON `.conf` files, not Lua scripts. User-created Lua configurations in `~/.config/wireplumber/` are silently ignored. |
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
 | Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak runtime Mesa compositor crashes (Zink regression), doubled RAM during install/update, and all gaming targets are available as native arm64 `.deb` packages. |
-| `BOX64_DYNAREC_ALIGNED_ATOMICS` | Faster atomic code generation (`=1`) but causes SIGBUS on unaligned LOCK ops. Per-game only via `~/.box64rc` `[gamename]` section; do not set globally. |
+| `BOX64_DYNAREC_ALIGNED_ATOMICS` | Enabled globally (`=1`) — Cortex-A76 LSE atomics produce faster, smaller code. Programs with unaligned LOCK ops may SIGBUS; disable per-game via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=0`. |
+| RetroArch PipeWire audio | Trixie ships RetroArch 1.20.0 whose PipeWire driver silently ignores `audio_latency` ([#17685](https://github.com/libretro/RetroArch/issues/17685)). Fixed in 1.21.0+. Use `audio_driver = "alsa"` as workaround, or install ≥ 1.21.0 from trixie-backports when available. |
 
 ### Informational
 
