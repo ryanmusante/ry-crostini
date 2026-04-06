@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.0
+# Version: 8.0.2
 # Date:    2026-04-05
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -15,12 +15,12 @@ set -euo pipefail
 # Propagate ERR trap to functions/subshells; inherit errexit in $(command substitution)
 set -E
 shopt -s inherit_errexit
-# Restrict tempfiles/logs to owner-only by default
-umask 077
+# Standard umask — all write_file variants set explicit permissions (644/600/700)
+umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.0"
+readonly SCRIPT_VERSION="8.0.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -47,6 +47,7 @@ _LOCK_ACQUIRED=false
 _received_signal=""
 _SUDO_KEEPALIVE_PID=""
 _PARALLEL_TMPDIR=""
+_SUDO_TMPFILE=""
 
 # Signal handler — stores signal name, triggers EXIT trap via exit
 # shellcheck disable=SC2317,SC2329
@@ -75,6 +76,10 @@ cleanup() {
     if [[ -n "${_PARALLEL_TMPDIR:-}" && -d "${_PARALLEL_TMPDIR:-}" ]]; then
         rm -rf -- "$_PARALLEL_TMPDIR" 2>/dev/null || true
     fi
+    # Remove abandoned write_file_sudo tmpfile (signal between mktemp and mv)
+    if [[ -n "${_SUDO_TMPFILE:-}" ]]; then
+        sudo rm -f -- "$_SUDO_TMPFILE" 2>/dev/null || true
+    fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
         # Remove all files (pid + any orphaned tmpfiles from crash)
@@ -85,6 +90,9 @@ cleanup() {
         if [[ "${_had_failures:-0}" -gt 0 ]]; then
             # Exited due to verification failures — steps 1-10 are complete
             _cleanup_warn "Script exited with code $rc. Verification failed. Fix issues above, then run: bash ry-crostini.sh --verify"
+        elif ${_no_checks_ran:-false}; then
+            # --from-step=13 with no prior verification — already messaged inline
+            :
         else
             _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
         fi
@@ -330,9 +338,9 @@ run() {
     return "$rc"
 }
 
-# write_file: atomic write stdin to path, respects dry-run
-write_file() {
-    local dest="$1"
+# _write_file_impl: atomic write stdin to path with given mode, respects dry-run
+_write_file_impl() {
+    local dest="$1" mode="$2"
     if $DRY_RUN; then
         log "[DRY-RUN] write $dest"
         # Consume stdin so heredoc doesn't error
@@ -343,45 +351,20 @@ write_file() {
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
-    # 644: standard for user config (GTK, fontconfig, Qt expect world-readable)
-    chmod 644 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
+    chmod "$mode" "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
     mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
-    log "Wrote $dest"
+    if [[ "$mode" == "644" ]]; then
+        log "Wrote $dest"
+    else
+        log "Wrote $dest (mode $mode)"
+    fi
 }
-
+# write_file: atomic write stdin to path, mode 644
+write_file() { _write_file_impl "$1" 644; }
 # write_file_private: atomic write stdin to path, mode 600
-write_file_private() {
-    local dest="$1"
-    if $DRY_RUN; then
-        log "[DRY-RUN] write $dest"
-        cat > /dev/null
-        return 0
-    fi
-    mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
-    local tmp
-    tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
-    chmod 600 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
-    mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
-    log "Wrote $dest (mode 600)"
-}
-
+write_file_private() { _write_file_impl "$1" 600; }
 # write_file_exec: atomic write stdin to path, mode 700. For user scripts/wrappers.
-write_file_exec() {
-    local dest="$1"
-    if $DRY_RUN; then
-        log "[DRY-RUN] write $dest"
-        cat > /dev/null
-        return 0
-    fi
-    mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
-    local tmp
-    tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
-    chmod 700 "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
-    mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
-    log "Wrote $dest (mode 700)"
-}
+write_file_exec() { _write_file_impl "$1" 700; }
 
 # write_file_sudo: atomic write via sudo, respects dry-run. Output mode 644.
 write_file_sudo() {
@@ -392,13 +375,14 @@ write_file_sudo() {
         return 0
     fi
     sudo mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
-    # Umask 077 may propagate via sudo — systemd and check_config need world-readable parent dirs
-    sudo chmod 755 "$(dirname "$dest")" || true
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; die "Cannot write $dest"; }
-    sudo chmod 644 "$tmp" || { sudo rm -f -- "$tmp"; die "Cannot chmod tmpfile for $dest"; }
-    sudo mv -- "$tmp" "$dest" || { sudo rm -f -- "$tmp"; die "Cannot move $dest into place"; }
+    # Track for cleanup trap — signal between mktemp and mv would leak this file
+    _SUDO_TMPFILE="$tmp"
+    sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot write $dest"; }
+    sudo chmod 644 "$tmp" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot chmod tmpfile for $dest"; }
+    sudo mv -- "$tmp" "$dest" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot move $dest into place"; }
+    _SUDO_TMPFILE=""
     log "Wrote $dest (sudo)"
 }
 
@@ -616,7 +600,7 @@ STEPS PERFORMED:
      6  Audio stack (PipeWire, ALSA, GStreamer codecs, pavucontrol,
         PipeWire gaming tuning, WirePlumber ALSA tuning)
      7  Display scaling and HiDPI (sommelier, Super key passthrough,
-        GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)
+        GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor)
      8  GUI essentials (xterm, session support, fonts, icons)
      9  Container resource tuning (locale, journald volatile, timer
         cleanup, env, XDG, paths)
@@ -744,7 +728,7 @@ find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null
 _gpu_conf_content() {
     cat <<'EOF'
 # Crostini GPU acceleration environment — managed by ry-crostini.sh
-# ry-crostini:8.0.0
+# ry-crostini:8.0.2
 # Wayland EGL
 EGL_PLATFORM=wayland
 # GTK4 dark mode
@@ -780,7 +764,7 @@ EOF
 _pw_gaming_content() {
     cat <<'PWEOF'
 # PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:8.0.0
+# ry-crostini:8.0.2
 # Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
 # Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with
 # variable audio rates (N64, PSX). RetroArch PipeWire driver may override system
@@ -818,7 +802,7 @@ PWEOF
 _pw_pulse_gaming_content() {
     cat <<'PPEOF'
 # PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# ry-crostini:8.0.0
+# ry-crostini:8.0.2
 # pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
@@ -831,6 +815,23 @@ pulse.properties.rules = [
     }
 ]
 PPEOF
+}
+
+# _gtk_settings_content: emit GTK 3/4 settings.ini heredoc. Called by step 7 (GTK 3 and GTK 4).
+_gtk_settings_content() {
+    cat <<'GTKEOF'
+[Settings]
+gtk-application-prefer-dark-theme=1
+gtk-theme-name=Adwaita-dark
+gtk-icon-theme-name=Adwaita
+gtk-font-name=Noto Sans 11
+gtk-cursor-theme-name=Adwaita
+gtk-cursor-theme-size=24
+gtk-xft-antialias=1
+gtk-xft-hinting=1
+gtk-xft-hintstyle=hintslight
+gtk-xft-rgba=none
+GTKEOF
 }
 
 # Step 1: Preflight + ChromeOS integration
@@ -1434,11 +1435,8 @@ if should_run_step 5; then
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
-    elif ! grep -q 'ry-crostini:8.0.0' "$GPU_ENV_FILE"; then
-        log "Upgrading gpu.conf to 8.0.0"
-        _gpu_conf_content | write_file "$GPU_ENV_FILE"
     else
-        log "GPU env already up to date — skipping"
+        log "GPU env already exists — skipping"
     fi
 
     unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
@@ -1509,9 +1507,6 @@ if should_run_step 6; then
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         _pw_gaming_content | write_file "$_PW_GAMING"
-    elif ! grep -q 'ry-crostini:8.0.0' "$_PW_GAMING"; then
-        log "Upgrading PipeWire gaming config to 8.0.0"
-        _pw_gaming_content | write_file "$_PW_GAMING"
     else
         log "PipeWire gaming config already exists"
     fi
@@ -1521,9 +1516,6 @@ if should_run_step 6; then
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
         _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
-    elif ! grep -q 'ry-crostini:8.0.0' "$_PW_PULSE_GAMING"; then
-        log "Upgrading PipeWire-Pulse config to 8.0.0"
-        _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
     else
         log "PipeWire-Pulse gaming config already exists"
     fi
@@ -1531,11 +1523,10 @@ if should_run_step 6; then
 
     # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
-    if [[ ! -f "$_WP_ALSA" ]] || ! grep -q 'ry-crostini:8.0.0' "$_WP_ALSA"; then
-        [[ -f "$_WP_ALSA" ]] && log "Upgrading WirePlumber ALSA config to 8.0.0"
+    if [[ ! -f "$_WP_ALSA" ]]; then
         write_file "$_WP_ALSA" <<'WPEOF'
 # WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:8.0.0
+# ry-crostini:8.0.2
 # Optimizes ALSA node buffer parameters; disables auto-suspend.
 # WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8).
 # Virtio-snd is a batch device — do NOT set api.alsa.disable-batch=true,
@@ -1567,7 +1558,7 @@ WPEOF
 fi
 # Step 7: Display scaling and HiDPI
 if should_run_step 7; then
-    step_banner 7 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor)"
+    step_banner 7 "Display scaling and HiDPI (sommelier, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor)"
 
     # 13.3in FHD OLED — configure sommelier, GTK 2/3/4, Qt, Xft, fontconfig, cursor
 
@@ -1596,19 +1587,7 @@ EOF
     # 7b. GTK 3 settings
     GTK3_SETTINGS="${HOME}/.config/gtk-3.0/settings.ini"
     if [[ ! -f "$GTK3_SETTINGS" ]]; then
-        write_file "$GTK3_SETTINGS" <<'EOF'
-[Settings]
-gtk-application-prefer-dark-theme=1
-gtk-theme-name=Adwaita-dark
-gtk-icon-theme-name=Adwaita
-gtk-font-name=Noto Sans 11
-gtk-cursor-theme-name=Adwaita
-gtk-cursor-theme-size=24
-gtk-xft-antialias=1
-gtk-xft-hinting=1
-gtk-xft-hintstyle=hintslight
-gtk-xft-rgba=none
-EOF
+        _gtk_settings_content | write_file "$GTK3_SETTINGS"
     else
         log "GTK 3 settings.ini already exists — skipping"
     fi
@@ -1616,19 +1595,7 @@ EOF
     # 7c. GTK 4 settings
     GTK4_SETTINGS="${HOME}/.config/gtk-4.0/settings.ini"
     if [[ ! -f "$GTK4_SETTINGS" ]]; then
-        write_file "$GTK4_SETTINGS" <<'EOF'
-[Settings]
-gtk-application-prefer-dark-theme=1
-gtk-theme-name=Adwaita-dark
-gtk-icon-theme-name=Adwaita
-gtk-font-name=Noto Sans 11
-gtk-cursor-theme-name=Adwaita
-gtk-cursor-theme-size=24
-gtk-xft-antialias=1
-gtk-xft-hinting=1
-gtk-xft-hintstyle=hintslight
-gtk-xft-rgba=none
-EOF
+        _gtk_settings_content | write_file "$GTK4_SETTINGS"
     else
         log "GTK 4 settings.ini already exists — skipping"
     fi
@@ -1701,12 +1668,11 @@ EOF
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
-    if [[ ! -f "$FC_LOCAL" ]] || ! grep -q 'ry-crostini:8.0.0' "$FC_LOCAL"; then
-        [[ -f "$FC_LOCAL" ]] && log "Upgrading fontconfig to 8.0.0"
+    if [[ ! -f "$FC_LOCAL" ]]; then
         write_file "$FC_LOCAL" <<'FCEOF'
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<!-- ry-crostini:8.0.0 -->
+<!-- ry-crostini:8.0.2 -->
 <fontconfig>
   <!-- Grayscale antialiasing for OLED display (no LCD subpixel stripe) -->
   <match target="font">
@@ -1735,7 +1701,7 @@ EOF
 </fontconfig>
 FCEOF
     else
-        log "Fontconfig already up to date — skipping"
+        log "Fontconfig already exists — skipping"
     fi
     if command -v fc-cache &>/dev/null; then
         if run timeout 60 fc-cache -f; then
@@ -1972,90 +1938,7 @@ savestate_compression = "true"
 menu_driver = "rgui"
 RACFG
     else
-        # Upgrade paths — surgical edits for existing configs; video_frame_delay_auto: add if absent
-        if ! grep -q 'video_frame_delay_auto' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append video_frame_delay_auto to retroarch.cfg"
-            else
-                _ra_content=""
-                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
-                if [[ -n "${_ra_content:-}" ]]; then
-                    printf '%s\nvideo_frame_delay_auto = "true"\n' "$_ra_content" \
-                        | write_file_private "$_RA_CFG"
-                    log "RetroArch: added video_frame_delay_auto=true"
-                fi
-                unset _ra_content
-            fi
-        fi
-        # video_threaded: change true→false (frame pacing fix)
-        if grep -q 'video_threaded *= *"true"' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] sed video_threaded true→false in retroarch.cfg"
-            else
-                _ra_tmp=""
-                _ra_tmp="$(mktemp "${_RA_CFG}.tmp_XXXXXXXX")" || { warn "Cannot create tmpfile for retroarch.cfg upgrade"; }
-                if [[ -n "${_ra_tmp:-}" ]]; then
-                    chmod 600 "$_ra_tmp" 2>/dev/null || true
-                    if sed 's/video_threaded *= *"true"/video_threaded = "false"/' "$_RA_CFG" > "$_ra_tmp"; then
-                        if mv -- "$_ra_tmp" "$_RA_CFG"; then
-                            log "RetroArch: video_threaded true→false"
-                        else
-                            rm -f -- "$_ra_tmp"
-                            warn "Cannot move retroarch.cfg upgrade into place"
-                        fi
-                    else
-                        rm -f -- "$_ra_tmp"
-                        warn "retroarch.cfg video_threaded upgrade failed"
-                    fi
-                fi
-                unset _ra_tmp
-            fi
-        fi
-        # input_poll_type_behavior: add if absent
-        if ! grep -q 'input_poll_type_behavior' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append input_poll_type_behavior to retroarch.cfg"
-            else
-                _ra_content=""
-                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
-                if [[ -n "${_ra_content:-}" ]]; then
-                    printf '%s\ninput_poll_type_behavior = "2"\n' "$_ra_content" \
-                        | write_file_private "$_RA_CFG"
-                    log "RetroArch: added input_poll_type_behavior=2"
-                fi
-                unset _ra_content
-            fi
-        fi
-        # preempt_enable: add if absent
-        if ! grep -q 'preempt_enable' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append preempt_enable to retroarch.cfg"
-            else
-                _ra_content=""
-                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
-                if [[ -n "${_ra_content:-}" ]]; then
-                    printf '%s\npreempt_enable = "false"\n' "$_ra_content" \
-                        | write_file_private "$_RA_CFG"
-                    log "RetroArch: added preempt_enable=false (enable per-core)"
-                fi
-                unset _ra_content
-            fi
-        fi
-        # video_frame_delay: add floor if absent (prevents auto from collapsing to zero in VM)
-        if ! grep -q '^video_frame_delay ' "$_RA_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append video_frame_delay to retroarch.cfg"
-            else
-                _ra_content=""
-                _ra_content="$(cat "$_RA_CFG")" || { warn "Cannot read retroarch.cfg for upgrade"; }
-                if [[ -n "${_ra_content:-}" ]]; then
-                    printf '%s\nvideo_frame_delay = "4"\n' "$_ra_content" \
-                        | write_file_private "$_RA_CFG"
-                    log "RetroArch: added video_frame_delay=4 (VM timing floor)"
-                fi
-                unset _ra_content
-            fi
-        fi
+        log "RetroArch config already exists — skipping"
     fi
     unset _RA_CFG
 
@@ -2083,51 +1966,7 @@ fluidsynth_chorus_activate=false
 fluidsynth_misc_interpolation=linear
 SVMCFG
     else
-        # Upgrade path: add fluidsynth_chorus_activate=false if absent (5–8% CPU savings)
-        if ! grep -q 'fluidsynth_chorus_activate' "$_SVM_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append fluidsynth_chorus_activate=false to scummvm.ini"
-            else
-                _svm_content=""
-                _svm_content="$(cat "$_SVM_CFG")" || { warn "Cannot read scummvm.ini for upgrade"; }
-                if [[ -n "${_svm_content:-}" ]]; then
-                    printf '%s\nfluidsynth_chorus_activate=false\n' "$_svm_content" \
-                        | write_file_private "$_SVM_CFG"
-                    log "ScummVM: added fluidsynth_chorus_activate=false"
-                fi
-                unset _svm_content
-            fi
-        fi
-        # Upgrade path: add output_rate=48000 if absent (eliminates resampling)
-        if ! grep -q 'output_rate' "$_SVM_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append output_rate=48000 to scummvm.ini"
-            else
-                _svm_content=""
-                _svm_content="$(cat "$_SVM_CFG")" || { warn "Cannot read scummvm.ini for upgrade"; }
-                if [[ -n "${_svm_content:-}" ]]; then
-                    printf '%s\noutput_rate=48000\n' "$_svm_content" \
-                        | write_file_private "$_SVM_CFG"
-                    log "ScummVM: added output_rate=48000"
-                fi
-                unset _svm_content
-            fi
-        fi
-        # Upgrade path: add fluidsynth_misc_interpolation=linear if absent (~30-50% less CPU)
-        if ! grep -q 'fluidsynth_misc_interpolation' "$_SVM_CFG"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append fluidsynth_misc_interpolation=linear to scummvm.ini"
-            else
-                _svm_content=""
-                _svm_content="$(cat "$_SVM_CFG")" || { warn "Cannot read scummvm.ini for upgrade"; }
-                if [[ -n "${_svm_content:-}" ]]; then
-                    printf '%s\nfluidsynth_misc_interpolation=linear\n' "$_svm_content" \
-                        | write_file_private "$_SVM_CFG"
-                    log "ScummVM: added fluidsynth_misc_interpolation=linear"
-                fi
-                unset _svm_content
-            fi
-        fi
+        log "ScummVM config already exists — skipping"
     fi
     unset _SVM_CFG
 
@@ -2218,6 +2057,8 @@ BOX64_DYNAREC_PURGE=1
 # DynaRec disk cache — saves generated native code for faster subsequent loads.
 # 0=off, 1=generate+use, 2=use existing only (default). Requires box64 ≥ v0.3.8.
 # Canonical name since v0.3.8; older builds use BOX64_DYNAREC_CACHE.
+# Fresh install: no cache exists yet; change to 1 after first run to generate,
+# then revert to 2 for faster startup without regeneration overhead.
 BOX64_DYNACACHE=2
 # Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
 BOX64_DYNAREC_NATIVEFLAGS=1
@@ -2250,56 +2091,7 @@ BOX64_DYNAREC_FORWARD=1024
 RCEOF
         log "Wrote ${_BOX64_RC}"
     else
-        # Upgrade paths — check for missing flags; rewrite if latest additions absent
-        if ! grep -q 'DYNAREC_FORWARD' "$_BOX64_RC"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append DYNAREC_FORWARD=512, DYNAREC_PAUSE=1 to .box64rc"
-            else
-                _box_content=""
-                _box_content="$(cat "$_BOX64_RC")" || { warn "Cannot read .box64rc for upgrade"; }
-                if [[ -n "${_box_content:-}" ]]; then
-                    # Insert before [wine] section
-                    printf '%s\n' "$_box_content" \
-                        | sed '/^\[wine\]/i BOX64_DYNAREC_FORWARD=512\nBOX64_DYNAREC_PAUSE=1' \
-                        | write_file_private "$_BOX64_RC"
-                    log "box64: added DYNAREC_FORWARD=512, DYNAREC_PAUSE=1"
-                fi
-                unset _box_content
-            fi
-        fi
-        # Rename BOX64_DYNAREC_CACHE → BOX64_DYNACACHE (canonical name since v0.3.8)
-        if grep -q 'BOX64_DYNAREC_CACHE=' "$_BOX64_RC"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] rename BOX64_DYNAREC_CACHE → BOX64_DYNACACHE in .box64rc"
-            else
-                _box_content=""
-                _box_content="$(cat "$_BOX64_RC")" || { warn "Cannot read .box64rc for rename"; }
-                if [[ -n "${_box_content:-}" ]]; then
-                    printf '%s\n' "$_box_content" \
-                        | sed 's/BOX64_DYNAREC_CACHE=/BOX64_DYNACACHE=/' \
-                        | write_file_private "$_BOX64_RC"
-                    log "box64: renamed BOX64_DYNAREC_CACHE → BOX64_DYNACACHE"
-                fi
-                unset _box_content
-            fi
-        fi
-        # Add ALIGNED_ATOMICS, DIRTY, MAXCPU if absent (v7.9.9)
-        if ! grep -q 'BOX64_DYNAREC_ALIGNED_ATOMICS' "$_BOX64_RC"; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] append ALIGNED_ATOMICS, DIRTY, MAXCPU to .box64rc"
-            else
-                _box_content=""
-                _box_content="$(cat "$_BOX64_RC")" || { warn "Cannot read .box64rc for upgrade"; }
-                if [[ -n "${_box_content:-}" ]]; then
-                    printf '%s\n' "$_box_content" \
-                        | sed '/^\[wine\]/i BOX64_DYNAREC_ALIGNED_ATOMICS=1\nBOX64_DYNAREC_DIRTY=1\nBOX64_MAXCPU=4' \
-                        | write_file_private "$_BOX64_RC"
-                    log "box64: added ALIGNED_ATOMICS=1, DIRTY=1, MAXCPU=4"
-                fi
-                unset _box_content
-            fi
-        fi
-        log "\$HOME/.box64rc upgrade checks complete"
+        log ".box64rc already exists — skipping"
     fi
     unset _BOX64_RC
 
@@ -2318,6 +2110,7 @@ set -euo pipefail
 case "${1:-}" in
     --help)    printf 'Usage: run-x86 <program> [args...]\nAuto-detects ELF arch; prefers box64 (x86_64), falls back to qemu.\n'; exit 0 ;;
     --version) printf 'run-x86 @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --)        shift ;;
 esac
 
 if [[ $# -lt 1 ]]; then
@@ -2401,6 +2194,7 @@ set -euo pipefail
 case "${1:-}" in
     --help)    printf 'Usage: gog-extract <installer> [output-dir]\nExtracts GOG Windows .exe or Linux .sh installers.\n'; exit 0 ;;
     --version) printf 'gog-extract @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --)        shift ;;
 esac
 
 if [[ $# -lt 1 ]]; then
@@ -2488,8 +2282,9 @@ GOGWRAP
 set -euo pipefail
 
 case "${1:-}" in
-    --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (6-7), sets nice -5, ionice best-effort class 0.\n'; exit 0 ;;
+    --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (auto-detected via /proc/cpuinfo), sets nice -5, ionice -c2 -n0.\n'; exit 0 ;;
     --version) printf 'run-game @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --)        shift ;;
 esac
 
 if [[ $# -lt 1 ]]; then
@@ -2499,13 +2294,19 @@ fi
 
 # Build command with optional affinity and priority
 _cmd=("$@")
-# Pin to big cores if big.LITTLE topology detected (heterogeneous CPU parts)
-# SC7180P: cores 0-5 = Cortex-A55 (part 0x805), cores 6-7 = Cortex-A76 (part 0x804)
-if [[ -d /sys/devices/system/cpu/cpu7 ]]; then
+# Pin to big cores on SC7180P (Cortex-A76 = part 0x804, cores 6-7).
+# Only applies when both conditions hold: heterogeneous parts detected AND
+# Cortex-A76 (0x804) is present. On non-SC7180P SoCs, skips affinity entirely.
+_big_cores=""
+if [[ -d /sys/devices/system/cpu/cpu0 ]]; then
     _nparts="$(awk '/^CPU part/ {print $4}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
-    if [[ "${_nparts:-0}" -ge 2 ]]; then
-        _cmd=(taskset -c 6,7 "${_cmd[@]}")
+    if [[ "${_nparts:-0}" -ge 2 ]] && grep -q '0x804' /proc/cpuinfo 2>/dev/null; then
+        # Collect core indices whose part matches Cortex-A76 (0x804)
+        _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x804/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
     fi
+fi
+if [[ -n "$_big_cores" ]]; then
+    _cmd=(taskset -c "$_big_cores" "${_cmd[@]}")
 fi
 # nice -n -5 requires CAP_SYS_NICE; fall back silently if unprivileged
 if nice -n -5 true 2>/dev/null; then
@@ -2518,7 +2319,7 @@ export MALLOC_ARENA_MAX=2
 export MESA_NO_ERROR=1
 # Enable GL threading for games — offloads command batching to separate thread.
 # NOT safe globally (crashes Firefox on X11/EGL with virgl); safe per-game.
-# Override: MESA_GLTHREAD=false run-game <command>
+# Mesa canonical name is lowercase; override: MESA_GLTHREAD=false run-game <cmd>
 export mesa_glthread="${MESA_GLTHREAD:-true}"
 exec "${_cmd[@]}"
 RGWRAP
@@ -2532,6 +2333,7 @@ RGWRAP
 fi
 # Steps 11-13: Verification — counters span all three steps for --from-step=12/13
 _had_failures=0
+_no_checks_ran=false
 _verify_pass=0
 _verify_fail=0
 _verify_warn=0
@@ -2540,7 +2342,7 @@ _verify_warn=0
 [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
 
 if $DRY_RUN; then
-    log "[DRY-RUN] Verification runs live (all checks are read-only)"
+    log "[DRY-RUN] Verification runs live (checks are read-only; earlyoom restarted if stopped)"
 fi
 
 # Step 11: Verification — tools and config files
@@ -2708,7 +2510,7 @@ if should_run_step 11; then
         ((_verify_fail++)) || true
     fi
 
-    # Remaining tools (sequential — fast commands, conditional logic above)
+    # Remaining tools (parallel — fast commands; unrar handled conditionally above)
     _parallel_check_tools \
         "unar|unar" "box64|box64" "qemu-x86_64|qemu-x86_64" \
         "run-x86|run-x86" "gog-extract|gog-extract" "run-game|run-game" \
@@ -2827,7 +2629,7 @@ if should_run_step 13; then
     logprintf '%bReminders:%b\n' "$YELLOW" "$RESET"
     logprintf '  • Manual .deb downloads: always get the arm64 variant\n'
     logprintf '  • If GPU not active: reboot entire Chromebook (not just container)\n'
-    logprintf '  • Gaming (box86/Wine/GOG/cloud): see README.md § Gaming\n'
+    logprintf '  • Gaming (box64/Wine/GOG/cloud): see README.md § Gaming\n'
     logprintf '\n'
 
     logprintf '%bLog file:%b %s\n' "$BOLD" "$RESET" "$LOG_FILE"
@@ -2851,6 +2653,7 @@ if should_run_step 13; then
 
     if [[ $((_verify_pass + _verify_fail + _verify_warn)) -eq 0 ]]; then
         # No checks ran (e.g. --from-step=13) — do not advance checkpoint
+        _no_checks_ran=true
         log "No verification checks were executed — use --verify to validate."
     elif [[ "$_had_failures" -eq 0 ]]; then
         # All checks passed — mark step 13 complete and remove checkpoint
@@ -2904,6 +2707,9 @@ if should_run_step 13; then
     log "Step 13 complete."
 fi
 
+if $_no_checks_ran; then
+    exit 2
+fi
 if [[ "$_had_failures" -gt 0 ]]; then
     exit 1
 fi

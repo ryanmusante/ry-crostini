@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.0-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-8.0.2-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -102,6 +102,7 @@ bash ry-crostini.sh [OPTIONS]
 |-----------|---------|
 | `0` | All verification checks passed |
 | `1` | Verification failure or fatal error |
+| `2` | No verification checks executed (e.g. `--from-step=13` alone) |
 
 The exit message distinguishes verification failures from mid-step fatal
 errors. Verification failures preserve the checkpoint so that
@@ -192,11 +193,11 @@ codename references in APT sources and running `apt full-upgrade`.
 | Property | Implementation |
 |----------|---------------|
 | Idempotent | Configuration files skip if already present |
-| Atomic writes | tmpfile + mv for all configuration files; `write_file_exec` for mode-700 wrappers |
+| Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644/600/700) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
 | No eval | `run()` passes `"$@"` directly; generated systemd unit uses `bash -c` for inline conditional only |
-| Signal handling | Traps INT, TERM, HUP, PIPE, QUIT; re-raises for correct 128+N exit code |
+| Signal handling | Traps INT, TERM, HUP, PIPE, QUIT; re-raises for correct 128+N exit code; sudo tmpfiles tracked for cleanup |
 | Sudo keepalive | Background `sudo -v` loop every 60 s prevents credential timeout; killed in cleanup |
 
 ### User Experience
@@ -382,8 +383,9 @@ run-game scummvm                       # ScummVM on big cores
 run-game run-x86 ./some_x86_program    # Chain with x86 emulation
 ```
 
-On non-SC7180P hardware, the wrapper falls back to priority elevation only
-(no CPU affinity). Run `run-game --help` for details.
+On non-SC7180P hardware, the wrapper detects big cores dynamically via
+`/proc/cpuinfo` CPU part IDs. If no Cortex-A76 (part 0x804) cores are found,
+affinity is skipped and only priority elevation applies.
 
 ### GOG Games
 

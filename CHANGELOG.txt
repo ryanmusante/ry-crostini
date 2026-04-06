@@ -1,3 +1,18 @@
+8.0.2  2026-04-05
+
+  - fix run-game: detect big cores dynamically via /proc/cpuinfo part 0x804 (was hardcoded 6,7)
+  - fix DRY-RUN verification message: note earlyoom restart side-effect
+  - .box64rc: clarify DYNACACHE=2 is a no-op on fresh install (no existing cache)
+
+8.0.1  2026-04-06
+
+  - fix --from-step=13: exit 2 when no verification checks executed (was exit 0)
+  - fix write_file_sudo: track tmpfile in _SUDO_TMPFILE for cleanup trap (signal race)
+  - refactor write_file/write_file_private/write_file_exec → unified _write_file_impl(dest, mode)
+  - refactor GTK 3/4 settings.ini → _gtk_settings_content() (eliminates 12-line duplication)
+  - add -- option terminator to run-x86, gog-extract, run-game wrappers
+  - README: add exit code 2 to table; update Design/Safety table
+
 8.0.0  2026-04-05
 
   - gpu.conf: add GSK_RENDERER=ngl (GTK4 crashes on virgl without GL backend)
@@ -23,8 +38,17 @@
   - box64: add DYNACACHE version note (canonical since v0.3.8)
   - verification: check apt-daily-upgrade.timer instead of apt-daily.timer
   - README: sync all changed settings, descriptions, and known limitations
+  - fix step 7 banner and usage(): stale "Xft DPI 120" text (value is 96 since 8.0.0)
+  - fix run-game --help: "ionice best-effort class 0" → "ionice -c2 -n0 (best-effort, highest priority)"
+  - umask 077→022 (single-user Crostini; all write_file variants set explicit chmod)
+  - write_file_sudo: remove chmod 755 parent workaround (only existed to undo umask 077)
+  - fix step 13 reminder: stale "box86" → "box64" (box86 not installed)
+  - fix step 11 comment: "sequential" → "parallel" (calls _parallel_check_tools)
+  - fix run-game: clarify mesa_glthread lowercase is Mesa canonical name
+  - remove all upgrade paths (−187 lines): clean-install only, no prior-version configs
+    retroarch.cfg, scummvm.ini, .box64rc, gpu.conf, PipeWire, WirePlumber, fontconfig
 
-7.9.9  2026-04-06
+7.9.9  2026-04-05
 
   - fix .box64rc DYNAREC_CACHE rename: atomic read+sed+write_file_private replaces bare sed -i
   - fix verification: guard earlyoom sudo systemctl start with DRY_RUN check
