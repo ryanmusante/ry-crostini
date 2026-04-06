@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-7.9.9-blue?style=flat-square)
+![version](https://img.shields.io/badge/version-8.0.0-blue?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange?style=flat-square)
 
@@ -121,7 +121,7 @@ errors. Verification failures preserve the checkpoint so that
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
 | 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning |
-| 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 120, fontconfig, cursor |
+| 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor |
 | 8 | GUI | xterm, session support, fonts, icons |
 | 9 | Environment | Locale, journald volatile, timer cleanup, environment variables, XDG directories, PATH |
 | 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher |
@@ -150,7 +150,7 @@ installed with mode 700.
 
 | Path | Step | Purpose |
 |------|------|---------|
-| `~/.config/environment.d/gpu.conf` | 5 | EGL, Mesa virgl override, shader cache, GTK dark theme |
+| `~/.config/environment.d/gpu.conf` | 5 | EGL, Mesa virgl override, shader cache, GTK dark theme, GSK_RENDERER |
 | `~/.config/environment.d/sommelier.conf` | 7 | Sommelier scaling, Super key passthrough |
 | `~/.config/environment.d/qt.conf` | 7 | Qt 5/6 platform theme |
 | `~/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf` | 6 | PipeWire gaming quantum |
@@ -159,10 +159,10 @@ installed with mode 700.
 | `~/.config/gtk-3.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
 | `~/.config/gtk-4.0/settings.ini` | 7 | Dark theme, Noto Sans 11pt, grayscale AA |
 | `~/.gtkrc-2.0` | 7 | GTK 2 dark theme |
-| `~/.Xresources` | 7 | Xft DPI 120 |
+| `~/.Xresources` | 7 | Xft DPI 96 |
 | `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
 | `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
-| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, PipeWire audio, frame delay, late input polling |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, ALSA audio, frame delay, late input polling |
 | `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth, chorus off |
 | `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, cycle tuning |
 | `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
@@ -228,7 +228,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
 | Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak runtime Mesa compositor crashes (Zink regression), doubled RAM during install/update, and all gaming targets are available as native arm64 `.deb` packages. |
 | `BOX64_DYNAREC_ALIGNED_ATOMICS` | Enabled globally (`=1`) — Cortex-A76 LSE atomics produce faster, smaller code. Programs with unaligned LOCK ops may SIGBUS; disable per-game via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=0`. |
-| RetroArch PipeWire audio | Trixie ships RetroArch 1.20.0 whose PipeWire driver silently ignores `audio_latency` ([#17685](https://github.com/libretro/RetroArch/issues/17685)). Fixed in 1.21.0+. Use `audio_driver = "alsa"` as workaround, or install ≥ 1.21.0 from trixie-backports when available. |
+| RetroArch PipeWire audio | Trixie ships RetroArch 1.20.0 whose PipeWire driver silently ignores `audio_latency` ([#17685](https://github.com/libretro/RetroArch/issues/17685)). Fixed in 1.21.0+. Default is `audio_driver = "alsa"` (routes through PipeWire ALSA compat layer with working latency control). Switch to `"pipewire"` after installing ≥ 1.21.0 from trixie-backports. |
 
 ### Informational
 

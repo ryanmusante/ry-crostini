@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 7.9.9
-# Date:    2026-04-06
+# Version: 8.0.0
+# Date:    2026-04-05
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
@@ -20,7 +20,7 @@ umask 077
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="7.9.9"
+readonly SCRIPT_VERSION="8.0.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -744,24 +744,27 @@ find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null
 _gpu_conf_content() {
     cat <<'EOF'
 # Crostini GPU acceleration environment — managed by ry-crostini.sh
-# ry-crostini:7.9.9
+# ry-crostini:8.0.0
 # Wayland EGL
 EGL_PLATFORM=wayland
 # GTK4 dark mode
 GTK_THEME=Adwaita:dark
+# GTK4 defaults to Vulkan renderer; virgl exposes only OpenGL — crashes or
+# software fallback without this. ngl = new GL backend (GTK >= 4.14).
+GSK_RENDERER=ngl
 
 # Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276).
 # Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
 MESA_LOADER_DRIVER_OVERRIDE=virgl
 
-# Disable GL error checking (~5-10% CPU savings in games/emulators)
-# Unset for debugging: env -u MESA_NO_ERROR <command>
-# WARNING: on virgl, invalid GL commands cross the VM boundary to host virglrenderer
-# and can hang GPU output. Safe for native games; disable for Wine/box64 translation.
-MESA_NO_ERROR=1
+# MESA_NO_ERROR intentionally omitted — disables all GL error checking, which is
+# dangerous system-wide on virgl (invalid GL calls cross VM boundary and can hang
+# host virglrenderer). Enabled per-game via run-game wrapper instead.
 
 # Shader cache: database backend respects MAX_SIZE (single-file Fossilize ignores it);
-# 256 MB cap appropriate for 128 GB eMMC
+# 256 MB cap appropriate for 128 GB eMMC. Explicit dir prevents misplacement if
+# XDG_CACHE_HOME is unset.
+MESA_SHADER_CACHE_DIR=${HOME}/.cache/mesa_shader_cache
 MESA_SHADER_CACHE_MAX_SIZE=256M
 MESA_DISK_CACHE_DATABASE=1
 # Reduce database partition count from default 50 — less overhead on 4 GB RAM / eMMC
@@ -769,7 +772,7 @@ MESA_DISK_CACHE_DATABASE_NUM_PARTS=4
 
 # mesa_glthread intentionally omitted — virgl serializes all GL through
 # virtio-gpu; glthread adds marshaling overhead feeding a serial pipe.
-# Re-enable for testing: env mesa_glthread=true <command>
+# Enabled per-game via run-game wrapper instead.
 EOF
 }
 
@@ -777,7 +780,7 @@ EOF
 _pw_gaming_content() {
     cat <<'PWEOF'
 # PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:7.9.9
+# ry-crostini:8.0.0
 # Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
 # Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with
 # variable audio rates (N64, PSX). RetroArch PipeWire driver may override system
@@ -788,12 +791,14 @@ context.properties = {
     default.clock.allowed-rates = [ 48000 ]
     default.clock.quantum       = 512
     default.clock.min-quantum   = 512
-    default.clock.max-quantum   = 1024
+    default.clock.max-quantum   = 2048
     clock.power-of-two-quantum  = true
     # Allow real-time memory locking for audio threads
     mem.allow-mlock             = true
     # Flush denormal floats in audio thread — prevents CPU spikes during silence on ARM64 NEON
     cpu.zero.denormals          = true
+    # Reduce max link buffers from default 64 — saves memory on 4 GB system
+    link.max-buffers            = 16
 }
 
 context.properties.rules = [
@@ -813,7 +818,7 @@ PWEOF
 _pw_pulse_gaming_content() {
     cat <<'PPEOF'
 # PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# ry-crostini:7.9.9
+# ry-crostini:8.0.0
 # pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
@@ -1342,7 +1347,7 @@ if should_run_step 3; then
             if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
                 write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
 # earlyoom config — managed by ry-crostini.sh
-EARLYOOM_ARGS="-m 5 -s 10 -p --prefer '(retroarch|box64|wine|dosbox-x|scummvm)' --avoid '(^|/)(init|systemd|dbus-daemon|garcon|sommelier)$' --sort-by-rss -r 3600"
+EARLYOOM_ARGS="-m 10 -s 10 -p --prefer '(retroarch|box64|wine|dosbox-x|scummvm)' --avoid '(^|/)(init|systemd|dbus-daemon|garcon|sommelier)$' --sort-by-rss -r 3600"
 EOOMEOF
             fi
             run sudo systemctl enable --now earlyoom.service \
@@ -1429,8 +1434,8 @@ if should_run_step 5; then
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
     if [[ ! -f "$GPU_ENV_FILE" ]]; then
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
-    elif ! grep -q 'ry-crostini:7.9.9' "$GPU_ENV_FILE"; then
-        log "Upgrading gpu.conf to 7.9.9"
+    elif ! grep -q 'ry-crostini:8.0.0' "$GPU_ENV_FILE"; then
+        log "Upgrading gpu.conf to 8.0.0"
         _gpu_conf_content | write_file "$GPU_ENV_FILE"
     else
         log "GPU env already up to date — skipping"
@@ -1504,8 +1509,8 @@ if should_run_step 6; then
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]]; then
         _pw_gaming_content | write_file "$_PW_GAMING"
-    elif ! grep -q 'ry-crostini:7.9.9' "$_PW_GAMING"; then
-        log "Upgrading PipeWire gaming config to 7.9.9"
+    elif ! grep -q 'ry-crostini:8.0.0' "$_PW_GAMING"; then
+        log "Upgrading PipeWire gaming config to 8.0.0"
         _pw_gaming_content | write_file "$_PW_GAMING"
     else
         log "PipeWire gaming config already exists"
@@ -1516,8 +1521,8 @@ if should_run_step 6; then
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
         _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
-    elif ! grep -q 'ry-crostini:7.9.9' "$_PW_PULSE_GAMING"; then
-        log "Upgrading PipeWire-Pulse config to 7.9.9"
+    elif ! grep -q 'ry-crostini:8.0.0' "$_PW_PULSE_GAMING"; then
+        log "Upgrading PipeWire-Pulse config to 8.0.0"
         _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
     else
         log "PipeWire-Pulse gaming config already exists"
@@ -1526,23 +1531,25 @@ if should_run_step 6; then
 
     # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
-    if [[ ! -f "$_WP_ALSA" ]] || ! grep -q 'ry-crostini:7.9.9' "$_WP_ALSA"; then
-        [[ -f "$_WP_ALSA" ]] && log "Upgrading WirePlumber ALSA config to 7.9.9"
+    if [[ ! -f "$_WP_ALSA" ]] || ! grep -q 'ry-crostini:8.0.0' "$_WP_ALSA"; then
+        [[ -f "$_WP_ALSA" ]] && log "Upgrading WirePlumber ALSA config to 8.0.0"
         write_file "$_WP_ALSA" <<'WPEOF'
 # WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:7.9.9
+# ry-crostini:8.0.0
 # Optimizes ALSA node buffer parameters; disables auto-suspend.
 # WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8).
+# Virtio-snd is a batch device — do NOT set api.alsa.disable-batch=true,
+# which removes PipeWire's native batch compensation and forces excessive
+# headroom. Let PipeWire handle batch timing natively.
 
 monitor.alsa.rules = [
     {
         matches = [ { node.name = "~alsa_output.*" } ]
         actions = {
             update-props = {
-                api.alsa.period-size              = 256
+                api.alsa.period-size              = 512
                 api.alsa.period-num               = 3
-                api.alsa.headroom                 = 8192
-                api.alsa.disable-batch            = true
+                api.alsa.headroom                 = 2048
                 session.suspend-timeout-seconds   = 0
             }
         }
@@ -1668,9 +1675,10 @@ EOF
         write_file "$XRESOURCES" <<'EOF'
 ! Font rendering for X11 apps on Duet 5 (13.3in 1920x1080 OLED)
 ! OLED has no LCD subpixel stripe — use grayscale AA (rgba=none)
-! NOTE: sommelier now passes exact DPI to X clients.
-! 120 DPI affects pure X11 apps only (not Wayland/GTK4).
-Xft.dpi: 120
+! NOTE: sommelier passes DPI to X clients via Xwayland DPI buckets (72, 96, 160, 240).
+! 96 matches the nearest bucket for FHD@13.3in and avoids inconsistent sizing
+! between Xresources-reading X11 apps and Wayland-native apps.
+Xft.dpi: 96
 Xft.antialias: true
 Xft.hinting: true
 Xft.hintstyle: hintslight
@@ -1693,12 +1701,12 @@ EOF
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
-    if [[ ! -f "$FC_LOCAL" ]] || ! grep -q 'ry-crostini:7.9.9' "$FC_LOCAL"; then
-        [[ -f "$FC_LOCAL" ]] && log "Upgrading fontconfig to 7.9.9"
+    if [[ ! -f "$FC_LOCAL" ]] || ! grep -q 'ry-crostini:8.0.0' "$FC_LOCAL"; then
+        [[ -f "$FC_LOCAL" ]] && log "Upgrading fontconfig to 8.0.0"
         write_file "$FC_LOCAL" <<'FCEOF'
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<!-- ry-crostini:7.9.9 -->
+<!-- ry-crostini:8.0.0 -->
 <fontconfig>
   <!-- Grayscale antialiasing for OLED display (no LCD subpixel stripe) -->
   <match target="font">
@@ -1706,6 +1714,7 @@ EOF
     <edit name="hinting" mode="assign"><bool>true</bool></edit>
     <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
     <edit name="rgba" mode="assign"><const>none</const></edit>
+    <edit name="lcdfilter" mode="assign"><const>lcdnone</const></edit>
     <edit name="embeddedbitmap" mode="assign"><bool>false</bool></edit>
   </match>
   <!-- Default sans-serif -->
@@ -1847,7 +1856,6 @@ JDEOF
         write_file_sudo "$PROFILE_D" <<'ENVEOF'
 # Crostini environment defaults — managed by ry-crostini.sh
 export LANG="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
 export EDITOR="vim"
 export VISUAL="vim"
 export PAGER="less"
@@ -1885,9 +1893,11 @@ ENVEOF
 
     # 9e. Disable background timers (compete for I/O/RAM during gaming)
     if ! $DRY_RUN; then
-        # Batch disable — systemctl disable is a no-op on already-disabled units
-        run sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer \
-            || warn "Cannot disable apt timers"
+        # apt-daily.timer: kept enabled — refreshes package lists so `apt upgrade`
+        # shows pending security fixes. apt-daily-upgrade.timer: disabled — prevents
+        # unattended installs that compete for I/O during gaming.
+        run sudo systemctl disable apt-daily-upgrade.timer \
+            || warn "Cannot disable apt-daily-upgrade timer"
         # Batch mask — guard with list-unit-files to avoid dead symlinks
         _mask_timers=()
         for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
@@ -1899,7 +1909,7 @@ ENVEOF
         log "Unnecessary timers disabled/masked"
         unset _timer _mask_timers
     else
-        log "[DRY-RUN] disable apt-daily, fstrim, e2scrub, man-db timers"
+        log "[DRY-RUN] disable apt-daily-upgrade, fstrim, e2scrub, man-db timers"
     fi
 
     set_checkpoint 9
@@ -1936,20 +1946,18 @@ video_frame_delay_auto = "true"
 # Manual floor — prevents auto algorithm from collapsing to zero in VM (timing jitter)
 video_frame_delay = "4"
 
-# Audio: PipeWire driver (RetroArch 1.20+, Trixie).
-# WARNING: Trixie ships RetroArch 1.20.0 which has a broken PipeWire driver —
-# audio_latency is silently ignored (libretro/RetroArch#17685). Fixed in 1.21.0.
-# After upgrading to ≥ 1.21.0, reduce audio_latency to "64" (revert if crackling).
-# Workaround on 1.20.0: switch to audio_driver = "alsa" (functional, higher latency).
-# Latency 96 ms prevents underruns on SC7180P under gaming load. RA PipeWire
-# driver may ignore this value (libretro/RetroArch#17685). If stutters occur,
-# switch to "alsa".
-audio_driver = "pipewire"
-audio_latency = "96"
+# Audio: ALSA driver routes through PipeWire's ALSA compatibility layer.
+# PipeWire native driver has broken audio_latency control in RetroArch 1.20.0
+# (libretro/RetroArch#17685). Switch to audio_driver = "pipewire" after 1.21.0+.
+audio_driver = "alsa"
+audio_latency = "64"
 
 # Input: late polling reduces input-to-screen latency by polling as late as
 # possible in the frame cycle.
 input_poll_type_behavior = "2"
+
+# Display: reduce swap chain from default 3 to 2 — cuts display latency by ~16 ms
+video_max_swapchain_images = "2"
 
 # Memory: disable rewind (consumes ~20 MB/min buffer on 4 GB device).
 # Preemptive Frames: lower-overhead alternative to Run-Ahead; enable per-core
@@ -2059,7 +2067,7 @@ RACFG
 # Written once on first install; edit freely afterward.
 [scummvm]
 gfx_mode=opengl
-stretch_mode=pixel_perfect
+stretch_mode=pixel-perfect
 # Alternative: stretch_mode=even-pixels (ScummVM 2.9+) — scales width/height by
 # different integer factors for better aspect ratio approximation on 1920×1080.
 aspect_ratio=true
@@ -2209,6 +2217,7 @@ BOX64_DYNAREC_CALLRET=1
 BOX64_DYNAREC_PURGE=1
 # DynaRec disk cache — saves generated native code for faster subsequent loads.
 # 0=off, 1=generate+use, 2=use existing only (default). Requires box64 ≥ v0.3.8.
+# Canonical name since v0.3.8; older builds use BOX64_DYNAREC_CACHE.
 BOX64_DYNACACHE=2
 # Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
 BOX64_DYNAREC_NATIVEFLAGS=1
@@ -2274,7 +2283,7 @@ RCEOF
                 unset _box_content
             fi
         fi
-        # Add ALIGNED_ATOMICS, DIRTY, MAXCPU if absent (v7.9.9+)
+        # Add ALIGNED_ATOMICS, DIRTY, MAXCPU if absent (v7.9.9)
         if ! grep -q 'BOX64_DYNAREC_ALIGNED_ATOMICS' "$_BOX64_RC"; then
             if $DRY_RUN; then
                 log "[DRY-RUN] append ALIGNED_ATOMICS, DIRTY, MAXCPU to .box64rc"
@@ -2504,9 +2513,13 @@ if nice -n -5 true 2>/dev/null; then
 fi
 # Cap glibc malloc arenas — default 8×cores = 64 on SC7180P; wastes RAM
 export MALLOC_ARENA_MAX=2
+# Disable GL error checking — ~5-10% CPU savings; safe per-game, dangerous globally
+# (virgl: invalid GL calls cross VM boundary and can hang host virglrenderer)
+export MESA_NO_ERROR=1
 # Enable GL threading for games — offloads command batching to separate thread.
 # NOT safe globally (crashes Firefox on X11/EGL with virgl); safe per-game.
-export mesa_glthread=true
+# Override: MESA_GLTHREAD=false run-game <command>
+export mesa_glthread="${MESA_GLTHREAD:-true}"
 exec "${_cmd[@]}"
 RGWRAP
     else
@@ -2762,12 +2775,12 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "earlyoom not running"
         ((_verify_warn++)) || true
     fi
-    # apt-daily timer
-    if ! systemctl is-enabled apt-daily.timer &>/dev/null; then
-        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily.timer disabled"
+    # apt-daily-upgrade timer (unattended installs disabled; apt-daily list refresh kept)
+    if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily-upgrade.timer disabled"
         ((_verify_pass++)) || true
     else
-        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily.timer still enabled"
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer still enabled"
         ((_verify_warn++)) || true
     fi
     # RetroArch video_threaded sanity check

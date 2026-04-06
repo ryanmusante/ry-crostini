@@ -1,3 +1,29 @@
+8.0.0  2026-04-05
+
+  - gpu.conf: add GSK_RENDERER=ngl (GTK4 crashes on virgl without GL backend)
+  - gpu.conf: move MESA_NO_ERROR=1 to run-game wrapper (unsafe system-wide on virgl)
+  - gpu.conf: add MESA_SHADER_CACHE_DIR explicit path
+  - WirePlumber ALSA: remove disable-batch (virtio-snd is batch; disabling breaks timing)
+  - WirePlumber ALSA: headroom 8192→2048 (−128 ms audio latency)
+  - WirePlumber ALSA: period-size 256→512 (reduces IRQ frequency in VM)
+  - PipeWire: max-quantum 1024→2048 (allows recovery from VM scheduling jitter)
+  - PipeWire: add link.max-buffers=16 (saves memory on 4 GB)
+  - retroarch.cfg: audio_driver pipewire→alsa (PipeWire driver ignores latency, #17685)
+  - retroarch.cfg: audio_latency 96→64 (functional with ALSA driver)
+  - retroarch.cfg: add video_max_swapchain_images=2 (−16 ms display latency)
+  - scummvm.ini: fix stretch_mode pixel_perfect→pixel-perfect (hyphenated; ScummVM docs)
+  - earlyoom: -m 5→-m 10 (5% of 4 GB = 200 MB too aggressive; 10% = 400 MB safer)
+  - Xresources: Xft.dpi 120→96 (matches nearest Sommelier DPI bucket)
+  - env profile: remove LC_ALL export (overrides all LC_* vars; LANG alone sufficient)
+  - run-game: add MESA_NO_ERROR=1 (moved from global gpu.conf)
+  - run-game: mesa_glthread overridable via MESA_GLTHREAD env var
+  - fontconfig: add lcdfilter=lcdnone (guards against upstream LCD filter default shifts)
+  - apt timers: keep apt-daily.timer enabled (security patch list refresh)
+  - apt timers: only disable apt-daily-upgrade.timer (unattended installs)
+  - box64: add DYNACACHE version note (canonical since v0.3.8)
+  - verification: check apt-daily-upgrade.timer instead of apt-daily.timer
+  - README: sync all changed settings, descriptions, and known limitations
+
 7.9.9  2026-04-06
 
   - fix .box64rc DYNAREC_CACHE rename: atomic read+sed+write_file_private replaces bare sed -i
