@@ -3,275 +3,125 @@ ry-crostini changelog
 
 8.0.2 (2026-04-05)
 
-- fix run-game: detect big cores dynamically via /proc/cpuinfo
-    part 0x804 (was hardcoded 6,7).
-- fix DRY-RUN verification message: note earlyoom restart
-    side-effect.
-- .box64rc: clarify DYNACACHE=2 is a no-op on fresh install
-    (no existing cache).
+- fix: detect big cores dynamically via /proc/cpuinfo part 0x804.
+- fix: note earlyoom restart side-effect in DRY-RUN message.
+- clarify DYNACACHE=2 is a no-op on fresh install.
 
 8.0.1 (2026-04-05)
 
-- fix --from-step=13: exit 2 when no verification checks
-    executed (was exit 0).
-- fix write_file_sudo: track tmpfile in _SUDO_TMPFILE for
-    cleanup trap (signal race).
-- refactor write_file/write_file_private/write_file_exec →
-    unified _write_file_impl(dest, mode).
-- refactor GTK 3/4 settings.ini → _gtk_settings_content()
-    (eliminates 12-line duplication).
-- add -- option terminator to run-x86, gog-extract, run-game
-    wrappers.
-- README: add exit code 2 to table; update Design/Safety table.
+- fix: exit 2 when --from-step=13 runs no verification checks.
+- fix: track tmpfile in _SUDO_TMPFILE for cleanup trap.
+- refactor: unify write_file variants into _write_file_impl.
+- refactor: extract _gtk_settings_content (−12 lines duplication).
+- add -- option terminator to run-x86, gog-extract, run-game.
 
 8.0.0 (2026-04-05)
 
-- gpu.conf: add GSK_RENDERER=ngl (GTK4 crashes on virgl
-    without GL backend).
-- gpu.conf: move MESA_NO_ERROR=1 to run-game wrapper (unsafe
-    system-wide on virgl).
-- gpu.conf: add MESA_SHADER_CACHE_DIR explicit path.
-- WirePlumber ALSA: remove disable-batch (virtio-snd is batch;
-    disabling breaks timing).
-- WirePlumber ALSA: headroom 8192→2048 (−128 ms audio latency).
-- WirePlumber ALSA: period-size 256→512 (reduces IRQ frequency
-    in VM).
-- PipeWire: max-quantum 1024→2048 (allows recovery from VM
-    scheduling jitter).
-- PipeWire: add link.max-buffers=16 (saves memory on 4 GB).
-- retroarch.cfg: audio_driver pipewire→alsa (PipeWire driver
-    ignores latency, #17685).
-- retroarch.cfg: audio_latency 96→64 (functional with ALSA
-    driver).
-- retroarch.cfg: add video_max_swapchain_images=2 (−16 ms
-    display latency).
-- scummvm.ini: fix stretch_mode pixel_perfect→pixel-perfect
-    (hyphenated; ScummVM docs).
-- earlyoom: -m 5→-m 10 (5% of 4 GB = 200 MB too aggressive;
-    10% = 400 MB safer).
-- Xresources: Xft.dpi 120→96 (matches nearest Sommelier DPI
-    bucket).
-- env profile: remove LC_ALL export (overrides all LC_* vars;
-    LANG alone sufficient).
-- run-game: add MESA_NO_ERROR=1 (moved from global gpu.conf).
-- run-game: mesa_glthread overridable via MESA_GLTHREAD env var.
-- fontconfig: add lcdfilter=lcdnone (guards against upstream
-    LCD filter default shifts).
-- apt timers: keep apt-daily.timer enabled (security patch list
-    refresh).
-- apt timers: only disable apt-daily-upgrade.timer (unattended
-    installs).
-- box64: add DYNACACHE version note (canonical since v0.3.8).
-- verification: check apt-daily-upgrade.timer instead of
-    apt-daily.timer.
-- README: sync all changed settings, descriptions, and known
-    limitations.
-- fix step 7 banner and usage(): stale "Xft DPI 120" text
-    (value is 96 since 8.0.0).
-- fix run-game --help: "ionice best-effort class 0" → "ionice
-    -c2 -n0 (best-effort, highest priority)".
-- umask 077→022 (single-user Crostini; all write_file variants
-    set explicit chmod).
-- write_file_sudo: remove chmod 755 parent workaround (only
-    existed to undo umask 077).
-- fix step 13 reminder: stale "box86" → "box64" (box86 not
-    installed).
-- fix step 11 comment: "sequential" → "parallel" (calls
-    _parallel_check_tools).
-- fix run-game: clarify mesa_glthread lowercase is Mesa
-    canonical name.
-- remove all upgrade paths (−187 lines): clean-install only,
-    no prior-version configs. retroarch.cfg, scummvm.ini,
-    .box64rc, gpu.conf, PipeWire, WirePlumber, fontconfig.
+- gpu.conf: add GSK_RENDERER=ngl, MESA_SHADER_CACHE_DIR.
+- gpu.conf: move MESA_NO_ERROR=1 to run-game wrapper.
+- WirePlumber: remove disable-batch, headroom 8192→2048, period 256→512.
+- PipeWire: max-quantum 1024→2048, add link.max-buffers=16.
+- retroarch.cfg: audio_driver pipewire→alsa, latency 96→64.
+- scummvm.ini: fix stretch_mode to pixel-perfect (hyphenated).
+- earlyoom: -m 5→-m 10 (10% = 400 MB safer threshold).
+- Xresources: Xft.dpi 120→96.
+- remove LC_ALL export, keep only LANG.
+- run-game: add MESA_NO_ERROR=1, mesa_glthread overridable.
+- fontconfig: add lcdfilter=lcdnone.
+- apt: keep apt-daily.timer, only disable apt-daily-upgrade.timer.
+- umask 077→022 (single-user; write_file sets explicit chmod).
+- remove all upgrade paths (−187 lines): clean-install only.
 
 7.9.9 (2026-04-05)
 
-- fix .box64rc DYNAREC_CACHE rename: atomic read+sed+
-    write_file_private replaces bare sed -i.
-- fix verification: guard earlyoom sudo systemctl start with
-    DRY_RUN check.
-- fix run-x86/gog-extract/run-game: pipe heredoc through sed
-    before write_file_exec (atomic).
-- fix cleanup: rewrite stty sane guard as if/then (SC2015).
-- fix timer mask guard: --no-legend | grep -q . replaces
-    ineffective exit-code check.
-- fix apt-daily.timer check: remove redundant 2>&1 after
-    &>/dev/null.
-- trim all multiline comments to single line (−17 lines).
+- fix: atomic .box64rc rename via write_file_private.
+- fix: guard earlyoom restart with DRY_RUN check.
+- fix: pipe heredocs through sed before write_file_exec.
+- fix: rewrite stty sane guard as if/then (SC2015).
+- trim multiline comments to single line (−17 lines).
 
 7.9.8 (2026-04-05)
 
-- WirePlumber ALSA headroom 256→8192 (VM default; fixes audio
-    glitches).
-- box64: rename DYNAREC_CACHE→DYNACACHE; add ALIGNED_ATOMICS,
-    DIRTY, MAXCPU, FORWARD.
-- retroarch.cfg: add video_frame_delay="4" floor; PipeWire
-    driver warning (#17685).
+- WirePlumber ALSA headroom 256→8192 (fixes audio glitches).
+- box64: rename DYNAREC_CACHE→DYNACACHE; add 4 new flags.
+- retroarch.cfg: add video_frame_delay=4; PipeWire warning.
 - PipeWire: add cpu.zero.denormals=true.
-- earlyoom: add -p, --prefer game processes, --sort-by-rss.
+- earlyoom: add -p, --prefer, --sort-by-rss.
 - journald: add RuntimeMaxUse=50M, RuntimeMaxFileSize=10M.
 - scummvm.ini: add output_rate=48000, interpolation=linear.
-- run-game: add mesa_glthread=true (per-game only).
-- dosbox-x.conf: cycles limit 30000→50000.
-- gpu.conf: NUM_PARTS 10→4; MESA_NO_ERROR virgl risk comment.
-- apt: Pipeline-Depth 4→0; qt.conf: remove
-    QT_AUTO_SCREEN_SCALE_FACTOR.
 - bash: add set -E, inherit_errexit.
-- refactor: version-marker upgrade gates replace per-setting
-    elif chains (−66 lines).
+- refactor: version-marker gates replace elif chains (−66 lines).
 
 7.9.7 (2026-04-02)
 
-- fix _parallel_check_tools: LOG_FILE readonly killed
-    subshells — removed readonly.
-- fix write_file_sudo: umask 077 created mode-700 parent dirs;
-    added chmod 755.
-- fix earlyoom config gate: inverted condition for fresh installs.
-- fix earlyoom verification: attempt systemctl start before
-    is-active check.
-- fix check_tool: add dosbox-x to _TOOL_VER_FLAG (empty flag).
-- fix terminal echo: wait after sudo keepalive kill + stty sane
-    in EXIT trap.
-- fix sommelier: step 13 import-environment + restart services
-    in-place.
+- fix: LOG_FILE readonly killed subshells — removed readonly.
+- fix: umask 077 created mode-700 parent dirs; add chmod 755.
+- fix: inverted earlyoom config gate for fresh installs.
+- fix: attempt systemctl start before is-active check.
+- fix: stty sane in EXIT trap after sudo keepalive kill.
 
 7.9.4 (2026-04-02)
 
-- fix verification: add check_config for /etc/default/earlyoom
-    (6/6 system files).
-- fix step 9 sub-labels: renumber 9c-9f → 9a-9d; add 9e label.
-- fix step 11 comment: parallel tool count ~35 → ~48.
+- fix: add check_config for /etc/default/earlyoom (6/6 files).
+- fix: renumber step 9 sub-labels; update parallel tool count.
 
 7.9.3 (2026-04-02)
 
-- parallel check_tool: _parallel_check_tools() runs ~42 probes
-    concurrently.
-- batch package installs: merge 3 gaming calls into single array.
-- batch systemctl calls: PipeWire mask/enable (4→2), timer
-    disable/mask (5→2).
-- batch dpkg-query: single dpkg-query -W replaces 9 sequential
-    dpkg -s forks.
-- remove 7 redundant mkdir -p calls (write_file variants do it
-    internally).
-- fix _parallel_check_tools: subshell stderr merged via 2>&1.
-- fix _parallel_check_tools: tmpdir stored in _PARALLEL_TMPDIR
-    for cleanup trap.
-- fix batch systemctl: remove outer 2>/dev/null that suppressed
-    run() warnings.
-- README: add parallel verification to Design table.
+- parallel check_tool: ~42 concurrent probes.
+- batch package installs, systemctl calls, dpkg-query.
+- remove 7 redundant mkdir -p calls.
+- fix: subshell stderr, tmpdir cleanup, batch systemctl warnings.
 
 7.9.2 (2026-04-02)
 
-- fix gog-extract: 5-marker makeself validation replaces
-    single-keyword check.
-- fix run-game: verify heterogeneous CPU parts before big.LITTLE
-    affinity.
-- fix _cleanup_warn: format $SECONDS as +Xm Ys elapsed time.
-- extract _pw_pulse_gaming_content() to eliminate heredoc
-    duplication.
-- fix run-x86: diagnostic warning on ELF arch detection failure.
-- README: add /etc/default/earlyoom to system files table
-    (5→6 files).
-- earlyoom config: add @@WHY comment for self-healing marker
-    check.
+- fix: 5-marker makeself validation for gog-extract.
+- fix: verify heterogeneous CPU parts before big.LITTLE affinity.
+- extract _pw_pulse_gaming_content (−heredoc duplication).
 
 7.9.1 (2026-04-01)
 
-- README: ScummVM "200+" → "325+ supported games" (scummvm.org).
-- README: Moonlight Qt arm64 .deb available since v5.0.0
-    (software-decode-only).
-- README: drop "only" from Chiaki-ng (Moonlight Qt arm64 also
-    qualifies).
-- README: virgl "OpenGL 4.3 only" → "OpenGL 4.3+" (Mesa 23.2+).
-- README: drop specific ChromeOS milestone; note GPU flag
-    default since M131.
+- README: update ScummVM, Moonlight Qt, Chiaki-ng, virgl, ChromeOS facts.
 
 7.9.0 (2026-03-31)
 
-- retroarch.cfg: video_threaded false, input_poll_type_behavior=2,
-    preempt_enable.
-- gpu.conf: remove mesa_glthread, GALLIUM_DRIVER,
-    MESA_SHADER_CACHE_DISABLE.
-- GTK3 settings.ini: remove gtk-overlay-scrolling=1 (default).
-- PipeWire quantum 256→512 (core + pulse); prevents emulation
-    xruns.
-- new dosbox-x.conf: ARM64 dynamic_rec, openglnb, cycle
-    auto-tuning.
-- .box64rc: add DYNAREC_FORWARD=512, DYNAREC_PAUSE=1.
-- new run-game wrapper: big-core affinity, nice/ionice,
-    MALLOC_ARENA_MAX.
-- earlyoom installed and enabled (cgroup v1 prevents
-    systemd-oomd).
-- man-db trigger + apt-daily/fstrim/e2scrub/man-db timers
-    disabled.
-- fontconfig: add embeddedbitmap=false; dosbox-x.conf: remove
-    memsize=16.
+- retroarch.cfg: video_threaded false, input_poll_type_behavior=2.
+- gpu.conf: remove mesa_glthread, GALLIUM_DRIVER.
+- PipeWire quantum 256→512; new dosbox-x.conf.
+- new run-game wrapper: big-core affinity, nice/ionice.
+- earlyoom installed; disable man-db/fstrim/e2scrub timers.
 - user file count 17→19.
 
-7.8.3 (2026-03-31)
+7.8.0 – 7.8.3 (2026-03-31)
 
-- fix --dry-run: unrar install bypassed DRY_RUN guard; route
-    through run().
-- fix --from-step=13: suppress false success when no checks ran.
-- fix verification guidance: direct to --verify only (bare
-    re-run skips).
-
-7.8.2 (2026-03-31)
-
-- README restructured: tables, reorder sections, merge Exit
-    Codes into Usage.
-
-7.8.1 (2026-03-31)
-
-- sudo credential keepalive: background sudo -v loop every 60 s.
-- scope Trixie sed to repo lines only (/^deb/, /^Suites:/).
-
-7.8.0 (2026-03-31)
-
-- split verification into steps 11-13; _PROGRESS_TOTAL 12→13.
-- move soundfont/run-x86/gog-extract to new "Scripts and assets"
-    section.
+- fix: DRY_RUN guard on unrar install.
+- sudo credential keepalive (60s loop).
+- split verification into steps 11–13.
 
 7.7.0 – 7.7.2 (2026-03-30)
 
-- remove --minimal flag (gnome-disk-utility, libavcodec-extra
-    always installed).
-- remove deprecated ChromeOS flags from README.
-- trim verbose comments to concise form.
+- remove --minimal flag and deprecated ChromeOS flags.
 
 7.6.0 – 7.6.4 (2026-03-29 – 2026-03-30)
 
-- remove qt5ct (conflicts with QT_QPA_PLATFORMTHEME=gtk3).
-- extract _pw_gaming_content() to eliminate heredoc duplication.
-- remove systemd v257 APT version pin.
-- add version to run-x86/gog-extract --version via @@VERSION@@
-    sed.
-- Mesa shader cache, PipeWire mlock, WirePlumber ALSA, RA frame
-    delay, journald volatile.
-- fix local-outside-function, find|wc, gog-extract makeself,
-    non-atomic upgrades, nullglob.
+- remove qt5ct, systemd v257 APT pin.
+- Mesa shader cache, PipeWire mlock, WirePlumber ALSA tuning.
+- fix: local-outside-function, non-atomic upgrades, nullglob.
 
 7.5.0 – 7.5.1 (2026-03-29)
 
 - README restructured for GitHub readability.
-- Trixie package fixes: 7zip replaces p7zip-full, adwaita-qt
-    replaces qt5-style-plugins.
-- Mesa DISK_CACHE_DATABASE, pipewire-pulse rules, BOX64_DYNAREC
-    renames.
-- RetroArch native pipewire driver, #exo-pointer-lock added.
+- Trixie package fixes: 7zip, adwaita-qt.
+- RetroArch native pipewire driver.
 
 7.4.0 – 7.4.2 (2026-03-28)
 
-- remove all sysctl settings (read-only in Crostini namespace).
-- add ry-crostini-cros-pin.service, write_file_exec helper.
-- fix unrar exit 1, suppress 5 spurious warnings.
+- remove all sysctl settings (read-only in Crostini).
+- add ry-crostini-cros-pin.service.
 
 7.0.0 – 7.3.0 (2026-03-27)
 
-- consolidate 15→11 steps, mandatory Trixie, remove
-    Rust/Flatpak/backup.
-- switch RetroArch to native .deb, remove GUI apps, add
-    DOSBox-X/unrar/unar.
+- consolidate 15→11 steps, mandatory Trixie.
+- switch RetroArch to native .deb; add DOSBox-X/unrar/unar.
 
 6.0.0 – 6.0.1 (2026-03-26)
 
@@ -280,22 +130,18 @@ ry-crostini changelog
 5.0.0 – 5.5.0 (2026-03-24 – 2026-03-26)
 
 - progress bar, qemu-user, run-x86/gog-extract wrappers, box64.
-- check_tool version probing, log rotation.
 
 4.0.0 – 4.12.0 (2026-03-19 – 2026-03-24)
 
 - dual-target Bookworm/Trixie, deb822 migration, PipeWire audio.
-- gaming step, Mesa virgl override.
 
 3.0.0 – 3.22.0 (2026-03-15 – 2026-03-19)
 
-- run() pipefail fix, PIPESTATUS race, signal handling.
-- --from-step, --verify, --reset.
+- run() pipefail fix, signal handling, --from-step, --verify.
 
 2.0.0 – 2.9.0 (2026-03-08 – 2026-03-15)
 
-- full rewrite: checkpoint resume, --dry-run, --interactive,
-    --minimal.
+- full rewrite: checkpoint resume, --dry-run, --interactive.
 
 1.0.0 – 1.1.0 (2026-03-08)
 
