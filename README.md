@@ -9,6 +9,8 @@ Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 Trixie (Debian 13) desktop environment in a single unattended run. Bookworm
 containers are upgraded to Trixie automatically during installation.
 
+[changelog](CHANGELOG.md)
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
