@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.5
-# Date:    2026-04-06
+# Version: 8.0.6
+# Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
 # Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
@@ -20,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.5"
+readonly SCRIPT_VERSION="8.0.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -742,7 +742,15 @@ for arg in "$@"; do
             unset _reset_force
             rm -f -- "$STEP_FILE"; rm -f -- "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
             ;;
-        --force)   : ;;  # consumed by --reset; no-op standalone
+        --force)
+            # Only meaningful with --reset; warn if passed standalone so
+            # typos like `--forced` → `--force` don't silently do nothing.
+            _has_reset=false
+            for _a in "$@"; do [[ "$_a" == "--reset" ]] && { _has_reset=true; break; }; done
+            unset _a
+            $_has_reset || warn "--force has no effect without --reset; ignoring"
+            unset _has_reset
+            ;;
         --)        break ;;
         --from-step)
             die "--from-step requires =N syntax, e.g. --from-step=5" ;;
@@ -2440,15 +2448,17 @@ _verify_pass=0
 _verify_fail=0
 _verify_warn=0
 
-# Inject install-time paths (profile.d not yet sourced in current shell)
-[[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
-
 if $DRY_RUN; then
     log "[DRY-RUN] Verification runs live (checks are read-only; earlyoom restarted if stopped)"
 fi
 
 # Step 11: Verification — tools and config files
 if should_run_step 11; then
+    # Inject install-time paths (profile.d not yet sourced in current shell).
+    # Scoped to step 11 — no value to earlier steps and avoids unnecessary
+    # PATH mutation on --from-step=1..10 runs.
+    [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
+
     step_banner 11 "Verification — tools and config files"
 
     logprintf '\n%bVerification results:%b\n\n' "$BOLD" "$RESET"
@@ -2707,6 +2717,9 @@ if should_run_step 11; then
     logprintf '\n'
 
     set_checkpoint 11
+    # Snapshot failure count so cleanup() prints the correct message if an
+    # exit occurs between here and step 13's final assignment at line ~2755.
+    _had_failures="$_verify_fail"
     log "Step 11 complete."
 fi
 # Step 12: Verification — scripts and assets
@@ -2722,6 +2735,7 @@ if should_run_step 12; then
     logprintf '\n'
 
     set_checkpoint 12
+    _had_failures="$_verify_fail"
     log "Step 12 complete."
 fi
 # Step 13: Verification summary

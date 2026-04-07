@@ -1,5 +1,12 @@
 ry-crostini changelog
 
+2026-04-07  Ryan Musante
+
+- Tagged as v8.0.6
+- fix(LOW): cleanup() now prints the correct "Verification failed — run --verify" message when an exit occurs inside step 11 or 12. `_had_failures` is snapshotted from `$_verify_fail` at the end of each verification step instead of only at step 13, closing a window where the trap saw `_had_failures=0` despite non-zero `_verify_fail` and fell through to the generic "resume from checkpoint" path.
+- fix(LOW): bare `--force` (without `--reset`) now emits a warning instead of being silently consumed as a no-op. Catches typos like `--forced` collapsing to `--force`.
+- cleanup(LOW): step 11's `$HOME/.local/bin` PATH injection moved inside the `should_run_step 11` guard. Previously ran unconditionally on every invocation including `--from-step=1..10` where it was wasted work.
+
 2026-04-06  Ryan Musante
 
 - Tagged as v8.0.5

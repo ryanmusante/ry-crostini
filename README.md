@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.5-blue)
+![version](https://img.shields.io/badge/version-8.0.6-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
