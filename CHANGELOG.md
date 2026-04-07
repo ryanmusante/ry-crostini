@@ -2,6 +2,17 @@ ry-crostini changelog
 
 2026-04-06  Ryan Musante
 
+- Tagged as v8.0.5
+- fix(MED): step 2a no longer hard-die()s on missing /etc/apt/sources.list. cp/sed gated on `[[ -f ]]`; deb822-only containers are handled by the *.sources loop.
+- fix(LOW): version-marker self-heal greps switched to `grep -Fq` — `${SCRIPT_VERSION}` dots no longer interpreted as regex (5 user sites + earlyoom).
+- fix(LOW): /etc/default/earlyoom gains `# ry-crostini:@@VERSION@@` marker, sed-substituted at write time. Self-heals on version bump instead of relying on a bare `'ry-crostini'` literal.
+- fix(LOW): _LOCK_ACQUIRED set immediately after successful mkdir, before PID-file write. Closes the window where a signal would orphan the lock dir.
+- fix(LOW): step 1o reuses cached AVAIL_MB from step 1e — one df invocation per step 1.
+- doc(INFO): SC2031 disable annotations on the 4 main-shell sites tainted by the legitimate subshell at line 571.
+- cleanup: dropped redundant `chmod 600` after mktemp in `_strip_log_ansi` (mktemp creates 0600).
+
+2026-04-06  Ryan Musante
+
 - Tagged as v8.0.4
 - fix(HIGH): EARLYOOM_ARGS dropped literal single quotes around --prefer/--avoid regexes — systemd EnvironmentFile preserves inner quotes verbatim, so earlyoom regcomp'd "'(retroarch|...)'" and never matched. Prefer/avoid tuning was silently no-op since v7.9.8.
 - fix(MED): step 13 sources ~/.config/environment.d/*.conf into the script shell before `systemctl --user import-environment` so MESA_LOADER_DRIVER_OVERRIDE / GSK_RENDERER / QT_QPA_PLATFORM are actually imported (no-args import-environment captures the calling shell's env, not environment.d files).

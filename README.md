@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.4-blue)
+![version](https://img.shields.io/badge/version-8.0.5-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
@@ -180,7 +180,7 @@ codename references in APT sources and running `apt full-upgrade`.
 
 | Behavior | Detail |
 |----------|--------|
-| Codename replacement | Line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved. |
+| Codename replacement | Line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved. Legacy `/etc/apt/sources.list` is processed only when present; deb822-only containers are handled via the `*.sources` loop. |
 | Package holds | Crostini lifecycle packages (`cros-sommelier`, etc.) are held during upgrade and unheld afterward. `cros-guest-tools` remains held permanently (`cros-im` unavailable on Trixie). |
 | Backups | Saved with `.pre-trixie` suffix under `/etc/apt/`. |
 | Validation | `VERSION_CODENAME` checked before any rewrite; containers already on Trixie receive a normal `update`/`upgrade`. |
@@ -194,7 +194,7 @@ codename references in APT sources and running `apt full-upgrade`.
 
 | Property | Implementation |
 |----------|---------------|
-| Idempotent | Configuration files skip if already present; the 5 files with `# ry-crostini:VERSION` markers self-heal when SCRIPT_VERSION advances |
+| Idempotent | Configuration files skip if already present; the 6 files with `# ry-crostini:VERSION` markers self-heal when SCRIPT_VERSION advances |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644/600/700) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |

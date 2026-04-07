@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.4
+# Version: 8.0.5
 # Date:    2026-04-06
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -20,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.4"
+readonly SCRIPT_VERSION="8.0.5"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -271,7 +271,7 @@ _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
-    chmod 600 "$_tmp" 2>/dev/null || true
+    # mktemp on Linux already creates with 0600 — no chmod needed
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07\x1b]*\x07//g' -e 's/\x1b\][^\x1b]*\x1b\\//g' -e 's/\x1b[0-9A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f -- "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
@@ -587,11 +587,15 @@ _parallel_check_tools() {
         while IFS= read -r _pct_line; do
             if [[ "$_pct_line" == $'\x01'* ]]; then
                 read -r _pct_p _pct_fl _pct_w <<< "${_pct_line#$'\x01'}"
+                # shellcheck disable=SC2031  # main-shell scope; subshell taint at line 571 is contained
                 ((_verify_pass += _pct_p)) || true
+                # shellcheck disable=SC2031
                 ((_verify_fail += _pct_fl)) || true
+                # shellcheck disable=SC2031
                 ((_verify_warn += _pct_w)) || true
             else
                 printf '%s\n' "$_pct_line"
+                # shellcheck disable=SC2031  # LOG_FILE is main-shell here
                 printf '%s\n' "$_pct_line" >> "$LOG_FILE" 2>/dev/null || true
             fi
         done < "$_pct_f"
@@ -766,12 +770,15 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     fi
     unset _old_pid
 fi
+# Mark ownership immediately after successful mkdir — closes the window where a
+# signal between mkdir and PID-file write would orphan the lock dir. cleanup()
+# will now remove it on any failure path below.
+_LOCK_ACQUIRED=true
 _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
     || die "Cannot create PID tmpfile"
 printf '%s\n' "$$" > "$_pid_tmp"
 mv -- "$_pid_tmp" "$LOCK_FILE/pid" \
     || { rm -f -- "$_pid_tmp"; die "Cannot write PID file"; }
-_LOCK_ACQUIRED=true
 unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock to avoid race with concurrent instances)
@@ -972,7 +979,7 @@ if should_run_step 1; then
         die "/etc/os-release missing — cannot determine Debian release"
     fi
 
-    # 1e. Disk space check (need at least 2 GB free)
+    # 1e. Disk space check (need at least 2 GB free) — cached for reuse in 1o
     AVAIL_KB="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
     if [[ ! "$AVAIL_KB" =~ ^[0-9]+$ ]]; then
         die "Cannot determine available disk space (df returned '${AVAIL_KB:-empty}')"
@@ -1018,7 +1025,7 @@ if should_run_step 1; then
         log "Sommelier not yet active — will start on terminal restart ✓"
     fi
 
-    unset CURRENT_ARCH AVAIL_KB AVAIL_MB _os_codename
+    unset CURRENT_ARCH AVAIL_KB _os_codename
 
     # 1j. GPU acceleration + pointer lock (ChromeOS integration)
     if [[ -e /dev/dri/renderD128 ]]; then
@@ -1124,16 +1131,8 @@ if should_run_step 1; then
         log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
-    # 1o. Disk size check
-    _avail_raw="$(df --output=avail / 2>/dev/null | tail -1 | tr -d ' ')" || true
-    if [[ "$_avail_raw" =~ ^[0-9]+$ ]]; then
-        AVAIL_MB_NOW=$((_avail_raw / 1024))
-    else
-        warn "Cannot determine available disk space"
-        # Skip resize advisory on df failure
-        AVAIL_MB_NOW=99999
-    fi
-    unset _avail_raw
+    # 1o. Disk size advisory (reuses cached AVAIL_MB from 1e)
+    AVAIL_MB_NOW="$AVAIL_MB"
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
         if ! $DRY_RUN && ! $UNATTENDED; then
@@ -1149,7 +1148,7 @@ if should_run_step 1; then
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
     fi
 
-    unset AVAIL_MB_NOW
+    unset AVAIL_MB AVAIL_MB_NOW
     set_checkpoint 1
     log "Step 1 complete."
 fi
@@ -1192,22 +1191,29 @@ EOF
     if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         if $DRY_RUN; then
-            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie"
-            log "[DRY-RUN] sed -i on deb/deb-src lines: ${_cur_codename} → trixie in /etc/apt/sources.list"
+            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie (if present)"
+            log "[DRY-RUN] sed -i on deb/deb-src lines: ${_cur_codename} → trixie in /etc/apt/sources.list (if present)"
             log "[DRY-RUN] sed -i on repo lines: ${_cur_codename} → trixie in cros.list and additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
         else
-            # Back up sources before rewriting
-            if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
-                die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+            # Legacy /etc/apt/sources.list is OPTIONAL — recent Crostini bookworm
+            # containers ship deb822-only (debian.sources, no legacy file). The
+            # *.sources loop below handles those. Only process the legacy file
+            # when it actually exists.
+            if [[ -f /etc/apt/sources.list ]]; then
+                if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+                    die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+                fi
+                # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
+                if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+                    warn "sources.list rewrite failed — restoring backup"
+                    run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
+                        || die "Cannot restore sources.list backup — manual fix required"
+                    die "Trixie upgrade aborted"
+                fi
+                log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
+            else
+                log "No legacy /etc/apt/sources.list — deb822-only layout; deferring to *.sources loop"
             fi
-            # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
-            if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
-                warn "sources.list rewrite failed — restoring backup"
-                run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
-                    || die "Cannot restore sources.list backup — manual fix required"
-                die "Trixie upgrade aborted"
-            fi
-            log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
             # Also update cros-packages repo if present (resets on container restart)
             if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
                 run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
@@ -1439,10 +1445,11 @@ if should_run_step 3; then
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y earlyoom; then
         if ! $DRY_RUN; then
             _EARLYOOM_CONF="/etc/default/earlyoom"
-            # @@WHY: marker check is self-healing — apt upgrade loss or fresh install both trigger re-write
-            if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
-                write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
+            # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
+            if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
+                sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'EOOMEOF' | write_file_sudo "$_EARLYOOM_CONF"
 # earlyoom config — managed by ry-crostini.sh
+# ry-crostini:@@VERSION@@
 EARLYOOM_ARGS="-m 10 -s 10 -p --prefer (retroarch|box64|wine|dosbox-x|scummvm) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)$ --sort-by-rss -r 3600"
 EOOMEOF
             fi
@@ -1528,7 +1535,7 @@ if should_run_step 5; then
 
     # GPU environment variables
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
-    if [[ ! -f "$GPU_ENV_FILE" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$GPU_ENV_FILE" 2>/dev/null; then
+    if [[ ! -f "$GPU_ENV_FILE" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$GPU_ENV_FILE" 2>/dev/null; then
         _gpu_conf_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$GPU_ENV_FILE"
     else
         log "GPU env up-to-date — skipping"
@@ -1600,7 +1607,7 @@ if should_run_step 6; then
 
     # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
-    if [[ ! -f "$_PW_GAMING" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_PW_GAMING" 2>/dev/null; then
+    if [[ ! -f "$_PW_GAMING" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_PW_GAMING" 2>/dev/null; then
         _pw_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_GAMING"
     else
         log "PipeWire gaming config up-to-date"
@@ -1609,7 +1616,7 @@ if should_run_step 6; then
 
     # PipeWire-Pulse user-level gaming override — disable pulse-layer VM quantum override
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
-    if [[ ! -f "$_PW_PULSE_GAMING" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_PW_PULSE_GAMING" 2>/dev/null; then
+    if [[ ! -f "$_PW_PULSE_GAMING" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_PW_PULSE_GAMING" 2>/dev/null; then
         _pw_pulse_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_PULSE_GAMING"
     else
         log "PipeWire-Pulse gaming config up-to-date"
@@ -1618,7 +1625,7 @@ if should_run_step 6; then
 
     # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
-    if [[ ! -f "$_WP_ALSA" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_WP_ALSA" 2>/dev/null; then
+    if [[ ! -f "$_WP_ALSA" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_WP_ALSA" 2>/dev/null; then
         sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'WPEOF' | write_file "$_WP_ALSA"
 # WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
 # ry-crostini:@@VERSION@@
@@ -1763,7 +1770,7 @@ EOF
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
-    if [[ ! -f "$FC_LOCAL" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$FC_LOCAL" 2>/dev/null; then
+    if [[ ! -f "$FC_LOCAL" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$FC_LOCAL" 2>/dev/null; then
         sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'FCEOF' | write_file "$FC_LOCAL"
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
@@ -2734,6 +2741,7 @@ if should_run_step 13; then
     logprintf '  • Gaming (box64/Wine/GOG/cloud): see README.md § Gaming\n'
     logprintf '\n'
 
+    # shellcheck disable=SC2031  # LOG_FILE is main-shell here
     logprintf '%bLog file:%b %s\n' "$BOLD" "$RESET" "$LOG_FILE"
 
     # Verification summary
