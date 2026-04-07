@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.0
+# Version: 8.1.2
 # Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.0"
+readonly SCRIPT_VERSION="8.1.2"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -39,7 +39,6 @@ unset _start_epoch
 
 DRY_RUN=false
 UNATTENDED=true
-SKIP_TRIXIE=true   # legacy var name; now default true (bookworm is primary target)
 UPGRADE_TRIXIE=false  # set by --upgrade-trixie to opt INTO codename rewrite
 IS_BOOKWORM=false  # set true at global init when codename=bookworm
 _DEFERRED_CHECKPOINT=""
@@ -706,8 +705,8 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --interactive) UNATTENDED=false ;;
-        --upgrade-trixie) UPGRADE_TRIXIE=true; SKIP_TRIXIE=false ;;
-        --skip-trixie) SKIP_TRIXIE=true ;;  # accepted for backward compat (now default)
+        --upgrade-trixie) UPGRADE_TRIXIE=true ;;
+        --skip-trixie) ;;  # accepted as no-op for backward compat (bookworm-stay is now default)
         --from-step=*)
             if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
                 die "Cannot specify --from-step more than once, or combine with --verify"
@@ -873,8 +872,10 @@ fi
 # Initialize progress bar (requires terminal, checkpoint, and color globals)
 _progress_init
 
-# Rotate old log files — keep last 7 days
-find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null || true
+# Rotate old log files — keep last 7 days (skipped in dry-run to avoid touching disk)
+if ! $DRY_RUN; then
+    find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null || true
+fi
 
 # _gpu_conf_content: emit gpu.conf heredoc. Called by step 5 (fresh-write and upgrade-path).
 _gpu_conf_content() {
@@ -1052,6 +1053,7 @@ if should_run_step 1; then
     fi
 
     # 1g. Network connectivity (uses detected codename for repo URL)
+    # Worst-case budget: 3 attempts × max-time 5s + 2 × retry-delay 1s ≈ 17s
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
     elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
@@ -1252,9 +1254,7 @@ EOF
                     log "[DRY-RUN] write ${_BPO_LIST} with bookworm-backports main"
                 else
                     printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
-                        | run sudo tee "$_BPO_LIST" >/dev/null \
-                        || warn "Failed to write ${_BPO_LIST} — backports unavailable"
-                    log "Wrote ${_BPO_LIST}"
+                        | write_file_sudo "$_BPO_LIST"
                 fi
             else
                 log "bookworm-backports already configured"
@@ -1400,23 +1400,23 @@ EOF
     if $IS_BOOKWORM; then
         log "Skipping /tmp tmpfs cap on bookworm (disk-backed /tmp)"
     else
-    _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
-    if [[ ! -f "$_TMP_DROPIN" ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in"
-        else
-            write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
+        _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
+        if [[ ! -f "$_TMP_DROPIN" ]]; then
+            if $DRY_RUN; then
+                log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in"
+            else
+                write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
 [Mount]
 Options=mode=1777,strictatime,nosuid,nodev,size=512M,nr_inodes=1m
 TMPEOF
-            run sudo systemctl daemon-reload \
-                || warn "daemon-reload failed — /tmp cap takes effect on next container start"
-            log "/tmp tmpfs capped at 512M (OOM mitigation)"
+                run sudo systemctl daemon-reload \
+                    || warn "daemon-reload failed — /tmp cap takes effect on next container start"
+                log "/tmp tmpfs capped at 512M (OOM mitigation)"
+            fi
+        else
+            log "tmp.mount drop-in already exists"
         fi
-    else
-        log "tmp.mount drop-in already exists"
-    fi
-    unset _TMP_DROPIN
+        unset _TMP_DROPIN
     fi
 
     # 2e. Migrate APT sources to deb822 format
@@ -1544,11 +1544,20 @@ if should_run_step 3; then
             $IS_BOOKWORM && _EOOM_PREFER="retroarch|wine|dosbox|scummvm"
             # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
             if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
-                sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s|@@PREFER@@|${_EOOM_PREFER}|" <<'EOOMEOF' | write_file_sudo "$_EARLYOOM_CONF"
-# earlyoom config — managed by ry-crostini.sh
-# ry-crostini:@@VERSION@@
-EARLYOOM_ARGS="-m 10 -s 10 -p --prefer (@@PREFER@@) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)$ --sort-by-rss -r 3600"
-EOOMEOF
+                # Direct interpolation — sed substitution corrupted the value because
+                # _EOOM_PREFER contains the sed delimiter character `|`. Build the
+                # file with printf and write atomically via write_file_sudo's stdin.
+                printf '%s\n' \
+                    "# earlyoom config — managed by ry-crostini.sh" \
+                    "# ry-crostini:${SCRIPT_VERSION}" \
+                    "EARLYOOM_ARGS=\"-m 10 -s 10 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss -r 3600\"" \
+                    | write_file_sudo "$_EARLYOOM_CONF"
+                # Post-write validation — guards against future template regressions
+                if ! $DRY_RUN; then
+                    if ! sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
+                        die "earlyoom config malformed after write — --prefer regex missing or truncated: $_EARLYOOM_CONF"
+                    fi
+                fi
             fi
             run sudo systemctl enable --now earlyoom.service \
                 || warn "earlyoom enable failed"
@@ -2543,6 +2552,9 @@ if [[ -d /sys/devices/system/cpu/cpu0 ]]; then
     if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '0x804|0xd0b' /proc/cpuinfo 2>/dev/null; then
         # Collect core indices whose part matches Kryo Gold (0x804) or Cortex-A76 (0xd0b)
         _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x(804|d0b)/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
+        # Reject anything that isn't a clean comma-separated digit list
+        # (defends against awk emitting empty p, stray whitespace, or unexpected lines)
+        [[ "$_big_cores" =~ ^[0-9]+(,[0-9]+)*$ ]] || _big_cores=""
     fi
 fi
 if [[ -n "$_big_cores" ]]; then
@@ -2829,7 +2841,8 @@ if should_run_step 11; then
     check_config "/etc/default/earlyoom"                                                           "earlyoom OOM config"
     # earlyoom may have been killed during heavy apt operations; restart if needed
     if ! $DRY_RUN && ! systemctl is-active earlyoom.service &>/dev/null; then
-        sudo systemctl start earlyoom.service 2>/dev/null || true
+        sudo systemctl start earlyoom.service 2>>"$LOG_FILE" \
+            || warn "earlyoom auto-restart failed — check /etc/default/earlyoom and 'systemctl status earlyoom'"
     fi
     if systemctl is-active earlyoom.service &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
@@ -2860,7 +2873,7 @@ if should_run_step 11; then
 
     set_checkpoint 11
     # Snapshot failure count so cleanup() prints the correct message if an
-    # exit occurs between here and step 13's final assignment at line ~2755.
+    # exit occurs between here and step 13's final assignment to _had_failures.
     _had_failures="$_verify_fail"
     log "Step 11 complete."
 fi
@@ -2955,20 +2968,41 @@ if should_run_step 13; then
 
     # Live-reload environment.d vars and restart sommelier so changes apply without container restart
     if ! $DRY_RUN; then
-        # Source environment.d files into the current shell so import-environment picks them up
-        # (systemd's user manager only re-reads environment.d on session restart otherwise)
+        # Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing
+        # them as shell. Sourcing breaks values containing shell metachars — e.g.
+        # qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the
+        # exported value would be just "wayland". The on-disk file is parsed
+        # correctly by systemd-environment-d-generator on next session start; this
+        # block exists only to make the changes live in the current session.
         if [[ -d "${HOME}/.config/environment.d" ]]; then
             _had_nullglob_env=false
             shopt -q nullglob && _had_nullglob_env=true
             shopt -s nullglob
-            set -a
             for _envf in "${HOME}/.config/environment.d/"*.conf; do
-                # shellcheck disable=SC1090
-                . "$_envf" 2>/dev/null || true
+                while IFS= read -r _eline || [[ -n "$_eline" ]]; do
+                    # Skip blank lines and comments
+                    [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
+                    # Require KEY=VALUE shape; strip leading whitespace
+                    _eline="${_eline#"${_eline%%[![:space:]]*}"}"
+                    [[ "$_eline" == *=* ]] || continue
+                    _ek="${_eline%%=*}"
+                    _ev="${_eline#*=}"
+                    # Validate key: identifier chars only (defends against pathological lines)
+                    [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+                    # Strip optional surrounding double quotes (systemd accepts both forms)
+                    if [[ "$_ev" == \"*\" && ${#_ev} -ge 2 ]]; then
+                        _ev="${_ev:1:${#_ev}-2}"
+                    fi
+                    # Expand ${HOME} / $HOME — the only variable reference systemd
+                    # environment.d files in this script use (gpu.conf MESA_SHADER_CACHE_DIR).
+                    # Done as literal string substitution to avoid re-invoking the shell parser.
+                    _ev="${_ev//\$\{HOME\}/$HOME}"
+                    _ev="${_ev//\$HOME/$HOME}"
+                    export "$_ek=$_ev"
+                done < "$_envf"
             done
-            set +a
             $_had_nullglob_env || shopt -u nullglob
-            unset _envf _had_nullglob_env
+            unset _envf _eline _ek _ev _had_nullglob_env
         fi
         # Import updated environment.d variables into the systemd user session
         if systemctl --user import-environment 2>/dev/null; then

@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.1.0-blue)
+![version](https://img.shields.io/badge/version-8.1.2-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
@@ -146,6 +146,9 @@ installed with mode 700.
 
 ### System (6 files, requires sudo)
 
+On **bookworm** only 5 of these are written — `tmp.mount.d/override.conf` is
+trixie-only (bookworm `/tmp` is disk-backed, not tmpfs).
+
 | Path | Step | Purpose |
 |------|------|---------|
 | `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
@@ -156,6 +159,10 @@ installed with mode 700.
 | `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 
 ### User (19 files)
+
+On **bookworm** only 17 of these are written — `~/.config/dosbox-x/dosbox-x.conf`
+and `~/.box64rc` are trixie-only (bookworm uses vanilla `dosbox` and falls back
+to `qemu-user`; `dosbox-x` and `box64` are not in any bookworm repo).
 
 | Path | Step | Purpose |
 |------|------|---------|

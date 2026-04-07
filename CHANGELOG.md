@@ -2,6 +2,25 @@ ry-crostini changelog
 
 2026-04-07  Ryan Musante
 
+- Tagged as v8.1.2
+- fix(MED): step 13 live-reload of `~/.config/environment.d/*.conf` no longer corrupts values containing shell metacharacters. The previous `set -a; . "$f"; set +a` block ran each file through the bash parser, which treats `;` as a statement separator — so qt.conf's `QT_QPA_PLATFORM=wayland;xcb` exported `QT_QPA_PLATFORM=wayland` and silently ran `xcb` as a command (swallowed by `2>/dev/null || true`). The xcb fallback was unavailable in the freshly imported user session until the next container restart, at which point systemd-environment-d-generator parsed the on-disk file correctly and self-healed. Replaced with an explicit per-line KEY=VALUE parser: skips blanks/comments, validates key as a POSIX identifier, strips optional surrounding double quotes, expands `${HOME}` / `$HOME` via literal string substitution (the only variable reference any of the script's environment.d files use), and `export`s the result without re-invoking the shell parser. Reproduced both the broken sourcing and the corrected parser before committing.
+- fix(LOW): removed unused `SKIP_TRIXIE` global (SC2034). The variable was assigned at init, by `--upgrade-trixie`, and by `--skip-trixie`, but never read anywhere — `UPGRADE_TRIXIE` is the actual gate. The `--skip-trixie` flag is preserved as a pure no-op alias for backward compat.
+
+2026-04-07  Ryan Musante
+
+- Tagged as v8.1.1
+- fix(CRITICAL): step 3 earlyoom config write no longer corrupts the `--prefer` regex. The previous `sed -e "s|@@PREFER@@|${_EOOM_PREFER}|"` template used `|` as the sed delimiter while `_EOOM_PREFER` itself contained `|` separators (`retroarch|wine|...`). On bookworm sed silently truncated the substitution to the first field, so earlyoom ran with `--prefer (retroarch)` only — wine, dosbox, scummvm were never preferred for OOM kill. On trixie the five-field replacement collided with sed's flag parser and exited 1 with `unknown option to s`, leaving an empty `/etc/default/earlyoom` (`check_config` only WARNs on empty files, so the failure was invisible). Fix: drop sed entirely and build the file with `printf` + direct shell interpolation, then validate the written file with `grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)'` and `die` on malformed output. Reproduced both broken cases and the corrected output before committing.
+- fix(MED): step 2a bookworm-backports `.list` is now written via `write_file_sudo` (atomic tmpfile + mv + symlink-refusal) instead of `printf | run sudo tee`, restoring parity with every other system-file write in the script.
+- fix(MED): step 2d `/tmp` tmpfs cap `else` branch was indented one level too shallow (body at column 4, matching the `if/else/fi` itself), making the nesting unreadable. Reindented the entire body to column 8.
+- fix(MED): step 11 verification's silent earlyoom auto-restart (`sudo systemctl start earlyoom.service 2>/dev/null || true`) now routes stderr to the log file and emits a `warn` on failure. Combined with the F1 fix above, broken earlyoom configs are no longer invisible to the user.
+- fix(MED): stale comment at the step 11 `_had_failures` snapshot referenced "line ~2755" — the actual final assignment is ~160 lines later. Replaced the brittle line number with a stable description ("step 13's final assignment to _had_failures").
+- fix(LOW): `run-game` core-affinity parser now validates `_big_cores` against `^[0-9]+(,[0-9]+)*$` before passing it to `taskset -c`. Defends against the awk pipeline emitting whitespace-only output if `/proc/cpuinfo` ever orders `CPU part` lines before `processor` lines.
+- fix(LOW): old log file rotation (`find ~ -name 'ry-crostini-*.log' -mtime +7 -delete`) is now gated on `! $DRY_RUN`. Previously `--dry-run` runs still deleted prior logs from disk.
+- fix(LOW): step 1g network-check budget comment now documents the true ~17s worst-case (3 attempts × max-time 5s + retry-delay) instead of leaving the apparent 5s to be misread.
+- doc: README System and User generated-files tables now document the bookworm deltas (5 system files instead of 6: `tmp.mount.d/override.conf` is trixie-only; 17 user files instead of 19: `dosbox-x.conf` and `.box64rc` are trixie-only).
+
+2026-04-07  Ryan Musante
+
 - Tagged as v8.1.0
 - feat(MAJOR): bookworm is now the primary target. The default flow stays on the current codename (no `bookworm`→`trixie` rewrite, no mandatory container restart). Trixie upgrade is opt-in via `--upgrade-trixie`. Already-on-trixie containers are unaffected — the script detects the codename and runs the existing trixie path. Bookworm-on-arrival is the documented Crostini default in 2026.
 - feat(HIGH): step 2 enables `bookworm-backports` automatically when running on bookworm. Step 6 then refreshes `pipewire-audio` + `wireplumber` from backports (1.4.2 / 0.5.8) so the WirePlumber 0.5+ JSON `.conf` written by step 6 is honored. Without this, bookworm's stock wireplumber 0.4.13 (Lua-only) silently ignores the gaming-tuning config.
