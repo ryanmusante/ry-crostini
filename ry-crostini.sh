@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.6
+# Version: 8.0.9
 # Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
@@ -20,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.6"
+readonly SCRIPT_VERSION="8.0.9"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -328,8 +328,16 @@ should_run_step() {
 }
 
 # _tee_log: tee stdin to terminal + log file. ANSI stripped at exit by _strip_log_ansi.
+# Filters known-benign upstream noise (anchored patterns; will not match script output):
+#   F3 dpkg usrmerge residue   — "unable to delete old directory '/…': Directory not empty"
+#   F4 udisks2 udevadm trigger — "…: Failed to write 'change' to '/sys/…/uevent': Permission denied"
+#   F5 dpkg t64 ABI transition — "systemctl: error while loading shared libraries: libcrypto.so.3: …"
 _tee_log() {
-    tee -a "$LOG_FILE"
+    grep --line-buffered -vE \
+        -e "^dpkg: warning: unable to delete old directory '/[^']+': Directory not empty[[:space:]]*\$" \
+        -e "^[a-z0-9]+: Failed to write 'change' to '/sys/.+/uevent': Permission denied[[:space:]]*\$" \
+        -e "^systemctl: error while loading shared libraries: libcrypto\.so\.3: cannot open shared object file: No such file or directory[[:space:]]*\$" \
+        | tee -a "$LOG_FILE"
 }
 
 # run: execute "$@" directly; respects dry-run. stderr merged into stdout (2>&1) for log capture.
@@ -802,18 +810,27 @@ unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 # because sudo's env_reset strips it. A global export here would be redundant.
 
 # Sudo credential keepalive — renew every 60 s; skipped in --dry-run; killed in cleanup().
-# Aborts loudly after 3 consecutive failures so the main loop doesn't silently
-# stall on 30 s apt-get sudo timeouts after credential expiry.
+# Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't
+# silently stall on apt-get sudo timeouts after credential expiry, while still tolerating
+# the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-*
+# are themselves being replaced by dpkg. Failures while the dpkg frontend lock is held
+# do not count — the foreground apt already has its credentials and the keepalive's
+# job is moot until dpkg releases the lock.
 if ! $DRY_RUN; then
     (
         _ka_fails=0
         while true; do
             if sudo -n -v 2>/dev/null; then
                 _ka_fails=0
+            elif command -v fuser >/dev/null 2>&1 \
+                && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+                # dpkg frontend lock held — apt is running and may be replacing
+                # sudo/PAM right now. Don't count this tick.
+                :
             else
                 _ka_fails=$((_ka_fails + 1))
-                if (( _ka_fails >= 3 )); then
-                    printf '\n[FATAL] sudo keepalive failed %d times — credentials expired or revoked. Aborting.\n' \
+                if (( _ka_fails >= 15 )); then
+                    printf '\n[FATAL] sudo keepalive failed %d times (~15 min) — credentials expired or revoked. Aborting.\n' \
                         "$_ka_fails" >&2
                     kill -TERM "$$" 2>/dev/null
                     exit 1
@@ -1282,12 +1299,11 @@ EOF
     fi
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
-        # --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
-        run sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            || warn "apt upgrade had issues"
         # NOTE: dpkg /lib/* "Directory not empty" warnings during Trixie upgrade are harmless (UsrMerge)
         log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
+        # full-upgrade only — plain `upgrade` keeps back ~160 pkgs on codename transition
+        # because it cannot add/remove. Running both wastes ~4 min and risks SIGTERM.
+        # --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
         run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt-get full-upgrade had issues"
@@ -1400,6 +1416,11 @@ CROSEOF
 
     set_checkpoint 2
     log "Step 2 complete."
+    warn "Trixie dist-upgrade replaced libc6/dbus/systemd under a running container."
+    warn "REQUIRED: 'Shut down Linux' from the ChromeOS shelf, then re-run this script."
+    warn "Checkpoint saved — re-run will resume at step 3 automatically."
+    warn "Hard-stop: continuing in-session risks SIGTERM mid-run (observed in v8.0.8 at step 11)."
+    exit 0
 fi
 # Step 3: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
 if should_run_step 3; then
@@ -1998,12 +2019,19 @@ if should_run_step 10; then
     # Native ARM gaming packages — single batch; unrar (non-free) attempted separately below
     install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
         dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
-    # Attempt non-free unrar separately; failure is non-fatal
-    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
-        log "unrar installed ✓"
+    # Probe candidate before install — Trixie moves unrar to non-free-non-free.
+    # Attempting install with no candidate exits 100 and generates a noisy WARN.
+    _unrar_cand="$(apt-cache policy unrar 2>/dev/null | awk '/Candidate:/ {print $2}')"
+    if [[ -n "$_unrar_cand" && "$_unrar_cand" != "(none)" ]]; then
+        if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
+            log "unrar installed ✓"
+        else
+            warn "unrar install failed — unar will be used for RAR archives"
+        fi
     else
         log "unrar not available (non-free not enabled) — unar will be used for RAR archives ✓"
     fi
+    unset _unrar_cand
 
     # RetroArch default config
     _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"

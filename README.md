@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.6-blue)
+![version](https://img.shields.io/badge/version-8.0.9-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
@@ -187,6 +187,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | cros-pin service | `ry-crostini-cros-pin.service` removes stale regenerated `cros.list` on each container start, preventing duplicate APT sources. |
 | deb822 migration | After `apt modernize-sources`, any duplicate `cros.list` is removed if a `.sources` equivalent was created. |
 | `/tmp` tmpfs | Trixie mounts `/tmp` as tmpfs; step 2 caps it at 512 MB to prevent OOM on 4 GB RAM. |
+| Hard-stop after upgrade | Trixie dist-upgrade replaces libc6/dbus/systemd under the running container. Step 2 saves the checkpoint and exits 0 on completion. **Required:** `Shut down Linux` from the ChromeOS shelf, then re-run; the script resumes at step 3. Continuing in-session was observed to trigger SIGTERM mid-run (v8.0.8 exit 143 at step 11). |
 
 ## Design
 

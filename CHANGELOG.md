@@ -2,6 +2,24 @@ ry-crostini changelog
 
 2026-04-07  Ryan Musante
 
+- Tagged as v8.0.9
+- fix(HIGH): step 2 now hard-exits after the Trixie dist-upgrade instead of emitting a soft WARN. Root cause of the v8.0.8 +14m03s SIGTERM (exit 143) during step 11 verification: dpkg replaces libc6/dbus/systemd mid-run, and any subsequent long-lived interaction with stale processes (dbus, sommelier, session manager) can trip the container into killing the script. The v8.0.7 recommendation was advisory and ignorable; v8.0.9 saves the checkpoint, prints the required action, and exits 0. Re-running resumes cleanly at step 3.
+- fix(LOW): step 10 now probes `apt-cache policy unrar` before attempting install. Trixie moves unrar to `non-free-non-free`; the previous unconditional attempt exited 100 and produced a noisy `Command exited 100` WARN in every log. The probe is silent when no candidate exists and the script falls through to `unar` as before.
+- chore(LOW): `_tee_log` now filters three anchored upstream-benign noise patterns before logging — (a) dpkg `unable to delete old directory '/…': Directory not empty` (Trixie usrmerge residue), (b) `…: Failed to write 'change' to '/sys/…/uevent': Permission denied` (udisks2 postinst `udevadm trigger` against read-only Crostini /sys), (c) `systemctl: error while loading shared libraries: libcrypto.so.3: …` (transient libssl3 → libssl3t64 t64 ABI transition). Patterns are line-anchored and will not match unrelated dpkg warnings or other systemctl errors.
+
+2026-04-07  Ryan Musante
+
+- Tagged as v8.0.8
+- fix(HIGH): sudo keepalive no longer kills the script mid-`apt-get full-upgrade`. Root cause of the +4m20s (v8.0.6) and +8m53s (v8.0.7) SIGTERMs: during the Trixie dist-upgrade, dpkg replaces sudo + libpam-modules + libpam-modules-bin + libpam-runtime + libpam-systemd, and `sudo -n -v` legitimately fails for a stretch in the middle. The 3-strike (~3 min) tolerance tripped and the keepalive sent SIGTERM to the very apt operation it was supposed to protect. Now: (a) failures are not counted while `/var/lib/dpkg/lock-frontend` is held — the foreground apt already has its credentials; (b) threshold raised from 3 to 15 (~15 min) so the safety net only fires when sudo is genuinely dead.
+
+2026-04-07  Ryan Musante
+
+- Tagged as v8.0.7
+- fix(HIGH): step 2 dropped the redundant `apt-get upgrade` that preceded `apt-get full-upgrade`. On a bookworm→trixie codename transition `upgrade` keeps back ~160 packages because it cannot add/remove, so the work was redone seconds later by `full-upgrade`. The wasted ~4 min of duplicate dpkg activity caused the in-container wall-clock SIGTERM observed at +4m20s.
+- fix(MED): step 2 now emits a prominent WARN at completion recommending `Shut down Linux` from the ChromeOS shelf before resuming. Trixie dist-upgrade replaces libc6/dbus/systemd under the running container (dpkg itself prints `A reboot is required to replace the running dbus-daemon`); subsequent steps in the same session can interact with stale long-running processes.
+
+2026-04-07  Ryan Musante
+
 - Tagged as v8.0.6
 - fix(LOW): cleanup() now prints the correct "Verification failed — run --verify" message when an exit occurs inside step 11 or 12. `_had_failures` is snapshotted from `$_verify_fail` at the end of each verification step instead of only at step 13, closing a window where the trap saw `_had_failures=0` despite non-zero `_verify_fail` and fell through to the generic "resume from checkpoint" path.
 - fix(LOW): bare `--force` (without `--reset`) now emits a warning instead of being silently consumed as a no-op. Catches typos like `--forced` collapsing to `--force`.
