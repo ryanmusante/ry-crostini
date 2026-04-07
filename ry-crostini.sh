@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.2
-# Date:    2026-04-05
+# Version: 8.0.4
+# Date:    2026-04-06
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
-# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset] [--help] [--version] [--]
+# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~70 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
@@ -20,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.2"
+readonly SCRIPT_VERSION="8.0.4"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -32,11 +32,7 @@ _start_epoch="$(date +%s)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 readonly _START_EPOCH="$_start_epoch"
 unset _start_epoch
 
-# Create log file with restrictive permissions before any writes
-if ! touch "$LOG_FILE" || ! chmod 600 "$LOG_FILE"; then
-    printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2
-    exit 1
-fi
+# Log file creation deferred until after --help/--version short-circuit (see arg parse)
 
 DRY_RUN=false
 UNATTENDED=true
@@ -49,9 +45,19 @@ _SUDO_KEEPALIVE_PID=""
 _PARALLEL_TMPDIR=""
 _SUDO_TMPFILE=""
 
-# Signal handler — stores signal name, triggers EXIT trap via exit
+# Signal handler — stores signal name, triggers EXIT trap via exit (POSIX 128+N)
 # shellcheck disable=SC2317,SC2329
-_handle_signal() { _received_signal="$1"; exit 1; }
+_handle_signal() {
+    _received_signal="$1"
+    case "$1" in
+        HUP)  exit 129 ;;
+        INT)  exit 130 ;;
+        QUIT) exit 131 ;;
+        PIPE) exit 141 ;;
+        TERM) exit 143 ;;
+        *)    exit 1   ;;
+    esac
+}
 
 # Cleanup trap
 # shellcheck disable=SC2317,SC2329
@@ -59,7 +65,8 @@ cleanup() {
     local rc=$?
     # Prevent recursive cleanup from nested signals
     trap - EXIT INT TERM HUP PIPE QUIT WINCH
-    # Disable set -e inside cleanup to guarantee full execution
+    # Disable set -e inside cleanup to guarantee full execution.
+    # Safe: cleanup is the final code path before exit; no restore needed.
     set +e
     # Restore terminal scroll region before any output
     _progress_cleanup
@@ -97,9 +104,13 @@ cleanup() {
             _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
         fi
     fi
-    # Re-raise caught signal for correct 128+N exit code to parent
+    # Re-raise caught signal for correct 128+N exit code to parent.
+    # Allowlist defends against $_received_signal being clobbered.
     if [[ -n "${_received_signal:-}" ]]; then
-        kill -"$_received_signal" "$$"
+        case "$_received_signal" in
+            INT|TERM|HUP|PIPE|QUIT) kill -"$_received_signal" "$$" ;;
+            *) : ;;
+        esac
     fi
     exit "$rc"
 }
@@ -214,6 +225,19 @@ err() {
     printf '%s\n' "$msg" >&2
 }
 die()  { err "$*"; exit 1; }
+
+# _read_os_release: print a single /etc/os-release field, with fallback.
+# Usage: _read_os_release FIELD [FALLBACK]
+# Sources /etc/os-release in a subshell to avoid polluting caller scope.
+_read_os_release() {
+    local field="$1" fallback="${2:-}"
+    [[ -f /etc/os-release ]] || { printf '%s' "$fallback"; return 0; }
+    (
+        # shellcheck disable=SC1091
+        . /etc/os-release 2>/dev/null || true
+        printf '%s' "${!field:-$fallback}"
+    )
+}
 
 # logprintf: printf to stdout and log. Callers MUST use literal format strings.
 logprintf() {
@@ -350,6 +374,8 @@ _write_file_impl() {
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
+    # Refuse to write through a symlink (TOCTOU defence)
+    [[ -L "$tmp" ]] && { rm -f -- "$tmp"; die "Refusing to write $dest: tmpfile is a symlink"; }
     cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
     chmod "$mode" "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
     mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
@@ -379,6 +405,11 @@ write_file_sudo() {
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     # Track for cleanup trap — signal between mktemp and mv would leak this file
     _SUDO_TMPFILE="$tmp"
+    # Refuse to write through a symlink (TOCTOU defence — parity with ry-install)
+    if ! sudo test ! -L "$tmp"; then
+        sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""
+        die "Refusing to write $dest: tmpfile is a symlink"
+    fi
     sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot write $dest"; }
     sudo chmod 644 "$tmp" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot chmod tmpfile for $dest"; }
     sudo mv -- "$tmp" "$dest" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot move $dest into place"; }
@@ -534,7 +565,9 @@ _parallel_check_tools() {
     for _pct_entry in "$@"; do
         printf -v _pct_idx '%04d' "$_pct_n"
         (
-            # Suppress LOG_FILE writes inside subshell — replay handles logging
+            # Suppress LOG_FILE writes inside subshell — replay handles logging.
+            # Note: this assignment is subshell-local (SC2030/2031); parent's
+            # LOG_FILE binding is unaffected, so the "clobber" is purely scoped.
             LOG_FILE=/dev/null
             _verify_pass=0; _verify_fail=0; _verify_warn=0
             check_tool "${_pct_entry%%|*}" "${_pct_entry#*|}"
@@ -583,7 +616,8 @@ OPTIONS:
     --verify       Run only steps 11-13 (verification and summary)
     --help         Show this help message
     --version      Show version
-    --reset        Clear checkpoint and start from step 1
+    --reset        Clear checkpoint and start from step 1 (prompts; add --force to skip)
+    --force        With --reset: skip confirmation (required when stdin is not a tty)
     --             Stop processing options (remaining args ignored)
 
 STEPS PERFORMED:
@@ -623,7 +657,27 @@ EOF
     exit 0
 }
 
+# Pre-scan argv for --help / --version before any LOG_FILE creation so they
+# work in read-only $HOME and never leave a stray log file behind. Also catches
+# them ahead of die() calls in the full arg-parse loop (which would create the
+# log file at default umask via err()'s >> redirection).
+for _arg in "$@"; do
+    case "$_arg" in
+        --help)    usage ;;
+        --version) echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
+    esac
+done
+unset _arg
+
+# Create log file with restrictive permissions (deferred past --help/--version)
+# shellcheck disable=SC2031  # LOG_FILE is main-shell here; taint from the legitimate subshell at line 571
+if ! touch "$LOG_FILE" || ! chmod 600 "$LOG_FILE"; then
+    printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2
+    exit 1
+fi
+
 # Argument parsing
+# shellcheck disable=SC2031  # LOG_FILE references in this loop are main-shell, not subshell
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
@@ -649,9 +703,14 @@ for arg in "$@"; do
             _DEFERRED_CHECKPOINT="10"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only (steps 11-13)."
             ;;
-        --help)    rm -f -- "$LOG_FILE" 2>/dev/null; usage ;;
-        --version) rm -f -- "$LOG_FILE" 2>/dev/null; echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
+        --help|--version) ;;  # already handled by pre-scan above
         --reset)
+            # Detect --force anywhere in argv (order-independent)
+            _reset_force=false
+            for _a in "$@"; do
+                [[ "$_a" == "--force" ]] && { _reset_force=true; break; }
+            done
+            unset _a
             if [[ -d "$LOCK_FILE" ]]; then
                 _rpid="$(cat "$LOCK_FILE/pid" 2>/dev/null || echo "")"
                 if [[ -n "$_rpid" ]] && kill -0 "$_rpid" 2>/dev/null; then
@@ -662,8 +721,24 @@ for arg in "$@"; do
                 rmdir "$LOCK_FILE" 2>/dev/null || die "Cannot remove lock dir ${LOCK_FILE} — remove manually"
                 unset _rpid
             fi
+            # Confirm before destroying checkpoint + log unless --force or non-interactive without tty
+            if ! $_reset_force; then
+                if [[ -t 0 ]]; then
+                    printf '%s\n' "About to delete:"
+                    [[ -f "$STEP_FILE" ]] && printf '  %s\n' "$STEP_FILE"
+                    [[ -f "$LOG_FILE"  ]] && printf '  %s\n' "$LOG_FILE"
+                    printf 'Proceed? [y/N] '
+                    read -r _ans
+                    [[ "$_ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+                    unset _ans
+                else
+                    die "--reset is destructive; pass --force to confirm in non-interactive mode"
+                fi
+            fi
+            unset _reset_force
             rm -f -- "$STEP_FILE"; rm -f -- "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
             ;;
+        --force)   : ;;  # consumed by --reset; no-op standalone
         --)        break ;;
         --from-step)
             die "--from-step requires =N syntax, e.g. --from-step=5" ;;
@@ -708,12 +783,30 @@ if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
-# Set noninteractive for direct dpkg/apt invocations (sudo strips this via env_reset)
-export DEBIAN_FRONTEND=noninteractive
+# Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...`
+# because sudo's env_reset strips it. A global export here would be redundant.
 
-# Sudo credential keepalive — renew every 60 s; skipped in --dry-run; killed in cleanup()
+# Sudo credential keepalive — renew every 60 s; skipped in --dry-run; killed in cleanup().
+# Aborts loudly after 3 consecutive failures so the main loop doesn't silently
+# stall on 30 s apt-get sudo timeouts after credential expiry.
 if ! $DRY_RUN; then
-    (while true; do sudo -v 2>/dev/null || true; sleep 60; done) &
+    (
+        _ka_fails=0
+        while true; do
+            if sudo -n -v 2>/dev/null; then
+                _ka_fails=0
+            else
+                _ka_fails=$((_ka_fails + 1))
+                if (( _ka_fails >= 3 )); then
+                    printf '\n[FATAL] sudo keepalive failed %d times — credentials expired or revoked. Aborting.\n' \
+                        "$_ka_fails" >&2
+                    kill -TERM "$$" 2>/dev/null
+                    exit 1
+                fi
+            fi
+            sleep 60
+        done
+    ) &
     _SUDO_KEEPALIVE_PID=$!
     disown "$_SUDO_KEEPALIVE_PID"
 fi
@@ -728,7 +821,7 @@ find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null
 _gpu_conf_content() {
     cat <<'EOF'
 # Crostini GPU acceleration environment — managed by ry-crostini.sh
-# ry-crostini:8.0.2
+# ry-crostini:@@VERSION@@
 # Wayland EGL
 EGL_PLATFORM=wayland
 # GTK4 dark mode
@@ -764,7 +857,7 @@ EOF
 _pw_gaming_content() {
     cat <<'PWEOF'
 # PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:8.0.2
+# ry-crostini:@@VERSION@@
 # Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms).
 # Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with
 # variable audio rates (N64, PSX). RetroArch PipeWire driver may override system
@@ -802,7 +895,7 @@ PWEOF
 _pw_pulse_gaming_content() {
     cat <<'PPEOF'
 # PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# ry-crostini:8.0.2
+# ry-crostini:@@VERSION@@
 # pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
@@ -865,16 +958,18 @@ if should_run_step 1; then
 
     # 1d. Debian version
     if [[ -f /etc/os-release ]]; then
-        _os_pretty="$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-unknown}")"
-        _os_codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-bookworm}")"
+        _os_pretty="$(_read_os_release PRETTY_NAME unknown)"
+        _os_codename="$(_read_os_release VERSION_CODENAME)"
+        if [[ -z "$_os_codename" ]]; then
+            die "VERSION_CODENAME missing from /etc/os-release — aborting (step 2 cannot proceed)"
+        fi
         if [[ ! "$_os_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
-            warn "VERSION_CODENAME '${_os_codename}' looks suspicious — defaulting to bookworm"
-            _os_codename="bookworm"
+            die "VERSION_CODENAME '${_os_codename}' contains unexpected characters — aborting"
         fi
         log "Container OS: ${_os_pretty} (${_os_codename}) ✓"
         unset _os_pretty
     else
-        _os_codename="bookworm"
+        die "/etc/os-release missing — cannot determine Debian release"
     fi
 
     # 1e. Disk space check (need at least 2 GB free)
@@ -900,7 +995,7 @@ if should_run_step 1; then
     # 1g. Network connectivity (uses detected codename for repo URL)
     if $DRY_RUN; then
         log "[DRY-RUN] skip network check"
-    elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
+    elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -1062,7 +1157,7 @@ fi
 if should_run_step 2; then
     step_banner 2 "System update (apt tuning, man-db trigger disable, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
 
-    # Enable parallel downloads and HTTP pipelining (Pipeline-Depth applies to HTTP only)
+    # APT tuning: retries + skip translations + per-scheme connection queue
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
     if [[ ! -f "$APT_PARALLEL" ]]; then
         write_file_sudo "$APT_PARALLEL" <<'EOF'
@@ -1074,7 +1169,7 @@ Acquire::Languages "none";
 Acquire::Retries "3";
 EOF
     else
-        log "Parallel apt config already exists"
+        log "APT tuning config already exists"
     fi
     unset APT_PARALLEL
 
@@ -1090,7 +1185,7 @@ EOF
     fi
 
     # 2a. Upgrade to Trixie if not already running it
-    _cur_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+    _cur_codename="$(_read_os_release VERSION_CODENAME)"
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
@@ -1208,9 +1303,9 @@ EOF
 
     # 2c. Verify upgrade landed on Trixie
     if ! $DRY_RUN; then
-        _post_codename="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")" || true
+        _post_codename="$(_read_os_release VERSION_CODENAME)"
         if [[ "$_post_codename" == "trixie" ]]; then
-            log "Trixie upgrade verified: $(. /etc/os-release && printf '%s' "${PRETTY_NAME:-Debian 13}")"
+            log "Trixie upgrade verified: $(_read_os_release PRETTY_NAME 'Debian 13')"
         elif [[ -n "$_post_codename" ]]; then
             warn "Expected trixie after upgrade, got ${_post_codename} — partial upgrade?"
             warn "Re-run the script or manually: sudo apt update && sudo apt full-upgrade"
@@ -1226,7 +1321,7 @@ EOF
         else
             write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
 [Mount]
-Options=mode=1777,nosuid,nodev,size=512M
+Options=mode=1777,strictatime,nosuid,nodev,size=512M,nr_inodes=1m
 TMPEOF
             run sudo systemctl daemon-reload \
                 || warn "daemon-reload failed — /tmp cap takes effect on next container start"
@@ -1348,7 +1443,7 @@ if should_run_step 3; then
             if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -q 'ry-crostini' "$_EARLYOOM_CONF"; then
                 write_file_sudo "$_EARLYOOM_CONF" <<'EOOMEOF'
 # earlyoom config — managed by ry-crostini.sh
-EARLYOOM_ARGS="-m 10 -s 10 -p --prefer '(retroarch|box64|wine|dosbox-x|scummvm)' --avoid '(^|/)(init|systemd|dbus-daemon|garcon|sommelier)$' --sort-by-rss -r 3600"
+EARLYOOM_ARGS="-m 10 -s 10 -p --prefer (retroarch|box64|wine|dosbox-x|scummvm) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)$ --sort-by-rss -r 3600"
 EOOMEOF
             fi
             run sudo systemctl enable --now earlyoom.service \
@@ -1433,10 +1528,10 @@ if should_run_step 5; then
 
     # GPU environment variables
     GPU_ENV_FILE="${HOME}/.config/environment.d/gpu.conf"
-    if [[ ! -f "$GPU_ENV_FILE" ]]; then
-        _gpu_conf_content | write_file "$GPU_ENV_FILE"
+    if [[ ! -f "$GPU_ENV_FILE" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$GPU_ENV_FILE" 2>/dev/null; then
+        _gpu_conf_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$GPU_ENV_FILE"
     else
-        log "GPU env already exists — skipping"
+        log "GPU env up-to-date — skipping"
     fi
 
     unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
@@ -1505,28 +1600,28 @@ if should_run_step 6; then
 
     # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
-    if [[ ! -f "$_PW_GAMING" ]]; then
-        _pw_gaming_content | write_file "$_PW_GAMING"
+    if [[ ! -f "$_PW_GAMING" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_PW_GAMING" 2>/dev/null; then
+        _pw_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_GAMING"
     else
-        log "PipeWire gaming config already exists"
+        log "PipeWire gaming config up-to-date"
     fi
     unset _PW_GAMING
 
     # PipeWire-Pulse user-level gaming override — disable pulse-layer VM quantum override
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
-    if [[ ! -f "$_PW_PULSE_GAMING" ]]; then
-        _pw_pulse_gaming_content | write_file "$_PW_PULSE_GAMING"
+    if [[ ! -f "$_PW_PULSE_GAMING" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_PW_PULSE_GAMING" 2>/dev/null; then
+        _pw_pulse_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_PULSE_GAMING"
     else
-        log "PipeWire-Pulse gaming config already exists"
+        log "PipeWire-Pulse gaming config up-to-date"
     fi
     unset _PW_PULSE_GAMING
 
     # WirePlumber ALSA tuning — optimizes ALSA node buffer parameters for gaming latency
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
-    if [[ ! -f "$_WP_ALSA" ]]; then
-        write_file "$_WP_ALSA" <<'WPEOF'
+    if [[ ! -f "$_WP_ALSA" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$_WP_ALSA" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'WPEOF' | write_file "$_WP_ALSA"
 # WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:8.0.2
+# ry-crostini:@@VERSION@@
 # Optimizes ALSA node buffer parameters; disables auto-suspend.
 # WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8).
 # Virtio-snd is a batch device — do NOT set api.alsa.disable-batch=true,
@@ -1548,7 +1643,7 @@ monitor.alsa.rules = [
 ]
 WPEOF
     else
-        log "WirePlumber ALSA config already exists"
+        log "WirePlumber ALSA config up-to-date"
     fi
     unset _WP_ALSA
 
@@ -1668,11 +1763,11 @@ EOF
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
-    if [[ ! -f "$FC_LOCAL" ]]; then
-        write_file "$FC_LOCAL" <<'FCEOF'
+    if [[ ! -f "$FC_LOCAL" ]] || ! grep -q "ry-crostini:${SCRIPT_VERSION}" "$FC_LOCAL" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'FCEOF' | write_file "$FC_LOCAL"
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<!-- ry-crostini:8.0.2 -->
+<!-- ry-crostini:@@VERSION@@ -->
 <fontconfig>
   <!-- Grayscale antialiasing for OLED display (no LCD subpixel stripe) -->
   <match target="font">
@@ -1701,7 +1796,7 @@ EOF
 </fontconfig>
 FCEOF
     else
-        log "Fontconfig already exists — skipping"
+        log "Fontconfig up-to-date — skipping"
     fi
     if command -v fc-cache &>/dev/null; then
         if run timeout 60 fc-cache -f; then
@@ -2294,15 +2389,15 @@ fi
 
 # Build command with optional affinity and priority
 _cmd=("$@")
-# Pin to big cores on SC7180P (Cortex-A76 = part 0x804, cores 6-7).
+# Pin to big cores: SC7180P Kryo Gold = part 0x804, generic Cortex-A76 = 0xd0b.
 # Only applies when both conditions hold: heterogeneous parts detected AND
-# Cortex-A76 (0x804) is present. On non-SC7180P SoCs, skips affinity entirely.
+# a known A76-class part is present. Otherwise skips affinity entirely.
 _big_cores=""
 if [[ -d /sys/devices/system/cpu/cpu0 ]]; then
     _nparts="$(awk '/^CPU part/ {print $4}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
-    if [[ "${_nparts:-0}" -ge 2 ]] && grep -q '0x804' /proc/cpuinfo 2>/dev/null; then
-        # Collect core indices whose part matches Cortex-A76 (0x804)
-        _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x804/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
+    if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '0x804|0xd0b' /proc/cpuinfo 2>/dev/null; then
+        # Collect core indices whose part matches Kryo Gold (0x804) or Cortex-A76 (0xd0b)
+        _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x(804|d0b)/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
     fi
 fi
 if [[ -n "$_big_cores" ]]; then
@@ -2355,7 +2450,7 @@ if should_run_step 11; then
     logprintf '%bSystem:%b\n' "$BOLD" "$RESET"
     logprintf '  Architecture:  %s\n' "$(uname -m)"
     logprintf '  Kernel:        %s\n' "$(uname -r)"
-    logprintf '  OS:            %s\n' "$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-unknown}")"
+    logprintf '  OS:            %s\n' "$(_read_os_release PRETTY_NAME unknown)"
     # ChromeOS milestone
     if [[ -f /dev/.cros_milestone ]]; then
         logprintf '  ChromeOS:      milestone %s\n' "$(cat /dev/.cros_milestone)"
@@ -2525,12 +2620,19 @@ if should_run_step 11; then
     check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
-    # Step 7: Qt GTK platform themes (at least one should be present)
-    if dpkg -s qt5-gtk-platformtheme &>/dev/null || dpkg -s adwaita-qt &>/dev/null; then
-        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt5 GTK platform theme"
+    # Step 7: Qt GTK platform themes — check qt5-gtk-platformtheme and adwaita-qt independently
+    if dpkg -s qt5-gtk-platformtheme &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "qt5-gtk-platformtheme"
         ((_verify_pass++)) || true
     else
-        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "Qt5 GTK platform theme not found"
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "qt5-gtk-platformtheme not installed"
+        ((_verify_warn++)) || true
+    fi
+    if dpkg -s adwaita-qt &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "adwaita-qt (Qt5 dark theme)"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "adwaita-qt not installed"
         ((_verify_warn++)) || true
     fi
     if dpkg -s qt6-gtk-platformtheme &>/dev/null; then
@@ -2685,6 +2787,21 @@ if should_run_step 13; then
 
     # Live-reload environment.d vars and restart sommelier so changes apply without container restart
     if ! $DRY_RUN; then
+        # Source environment.d files into the current shell so import-environment picks them up
+        # (systemd's user manager only re-reads environment.d on session restart otherwise)
+        if [[ -d "${HOME}/.config/environment.d" ]]; then
+            _had_nullglob_env=false
+            shopt -q nullglob && _had_nullglob_env=true
+            shopt -s nullglob
+            set -a
+            for _envf in "${HOME}/.config/environment.d/"*.conf; do
+                # shellcheck disable=SC1090
+                . "$_envf" 2>/dev/null || true
+            done
+            set +a
+            $_had_nullglob_env || shopt -u nullglob
+            unset _envf _had_nullglob_env
+        fi
         # Import updated environment.d variables into the systemd user session
         if systemctl --user import-environment 2>/dev/null; then
             log "Imported environment.d variables into user session"

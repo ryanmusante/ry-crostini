@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.2-blue)
+![version](https://img.shields.io/badge/version-8.0.4-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
@@ -194,7 +194,7 @@ codename references in APT sources and running `apt full-upgrade`.
 
 | Property | Implementation |
 |----------|---------------|
-| Idempotent | Configuration files skip if already present |
+| Idempotent | Configuration files skip if already present; the 5 files with `# ry-crostini:VERSION` markers self-heal when SCRIPT_VERSION advances |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644/600/700) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
@@ -386,8 +386,9 @@ run-game run-x86 ./some_x86_program    # Chain with x86 emulation
 ```
 
 On non-SC7180P hardware, the wrapper detects big cores dynamically via
-`/proc/cpuinfo` CPU part IDs. If no Cortex-A76 (part 0x804) cores are found,
-affinity is skipped and only priority elevation applies.
+`/proc/cpuinfo` CPU part IDs (Qualcomm Kryo Gold `0x804` or generic ARM
+Cortex-A76 `0xd0b`). If neither is found, affinity is skipped and only
+priority elevation applies.
 
 ### GOG Games
 

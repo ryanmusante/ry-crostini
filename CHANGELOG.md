@@ -1,5 +1,35 @@
 ry-crostini changelog
 
+2026-04-06  Ryan Musante
+
+- Tagged as v8.0.4
+- fix(HIGH): EARLYOOM_ARGS dropped literal single quotes around --prefer/--avoid regexes — systemd EnvironmentFile preserves inner quotes verbatim, so earlyoom regcomp'd "'(retroarch|...)'" and never matched. Prefer/avoid tuning was silently no-op since v7.9.8.
+- fix(MED): step 13 sources ~/.config/environment.d/*.conf into the script shell before `systemctl --user import-environment` so MESA_LOADER_DRIVER_OVERRIDE / GSK_RENDERER / QT_QPA_PLATFORM are actually imported (no-args import-environment captures the calling shell's env, not environment.d files).
+- fix(MED): apt 90parallel comment now matches behaviour ("retries + skip translations + per-scheme queue") — Pipeline-Depth=0 disables pipelining and Queue-Mode=access serializes per scheme; the "parallel/pipelining" claim was wrong.
+- fix(MED): step 1d die()s on missing/empty VERSION_CODENAME instead of silently defaulting to "bookworm" — step 2a already aborted on the same condition; preflight is the right place to fail.
+- fix(LOW): tmp.mount drop-in restores upstream `strictatime` and `nr_inodes=1m` (drop-in replaces Options entirely; the v8.0.0 cap was dropping these).
+- fix(LOW): step 11 splits Qt5 verification into two distinct dpkg -s checks (qt5-gtk-platformtheme, adwaita-qt) — previous OR-fallback logged "Qt5 GTK platform theme ✓" when only adwaita-qt was installed.
+- fix(LOW): self-healing version-marker idempotency on the 5 user files with `# ry-crostini:VERSION` markers (gpu.conf, pipewire gaming, pipewire-pulse gaming, wireplumber alsa, fontconfig fonts.conf). Upgraded users now receive content updates instead of stale 8.0.2 configs forever.
+- fix(LOW): version markers in those 5 heredocs use `@@VERSION@@` placeholder, sed-substituted at write time (parity with run-x86 / gog-extract / run-game wrappers).
+- fix(LOW): added a pre-scan loop for --help / --version that runs before LOG_FILE is touched; main arg-parse loop runs after touch+chmod 600 so any die() in arg-parse still gets a properly-mode-600 log file. --version now works in read-only $HOME and neither --help nor --version leave a stray log file behind.
+- fix(LOW): run-game big-core detection accepts standard ARM Cortex-A76 (part 0xd0b) in addition to Qualcomm Kryo Gold (0x804), enabling affinity on RPi5 and other generic A76 hosts.
+- doc(INFO): shellcheck SC2031 disable comments suppress 3 false positives where LOG_FILE is referenced from main shell after the legitimate subshell taint at line 571.
+
+2026-04-06  Ryan Musante
+
+- Tagged as v8.0.3
+- fix(HIGH): sudo keepalive aborts loudly after 3 consecutive failures instead of silently spinning forever after credential expiry (was masking 30s apt-get sudo timeouts in main loop).
+- fix(MED): write_file_sudo refuses to write through a symlink — `sudo test ! -L "$tmp"` guard between mktemp and tee (parity with ry-install).
+- fix(MED): _write_file_impl gets the same symlink guard for $HOME writes.
+- fix(MED): --reset now prompts for confirmation before deleting checkpoint+log; require --force in non-interactive mode.
+- fix(MED): Trixie network probe gains `--retry 2 --retry-delay 1` (was single attempt, no retry, no fallback).
+- fix(MED): remove redundant global `export DEBIAN_FRONTEND=noninteractive`; already re-exported per sudo callsite (sudo strips it via env_reset).
+- fix(LOW): _handle_signal exits 128+N per POSIX (HUP=129, INT=130, QUIT=131, PIPE=141, TERM=143) instead of generic exit 1.
+- fix(LOW): cleanup re-raise gains explicit signal allowlist (defence-in-depth against $_received_signal clobber).
+- refactor(LOW): extract _read_os_release helper; consolidates 6 duplicate `. /etc/os-release` call sites.
+- doc(LOW): clarifying comment on `set +e` in cleanup (safe — final code path before exit).
+- doc(LOW): clarifying comment on subshell-local LOG_FILE in _parallel_check_tools (SC2030/2031 — not a clobber).
+
 2026-04-05  Ryan Musante
 
 - Tagged as v8.0.2
