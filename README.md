@@ -1,13 +1,18 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.0.9-blue)
+![version](https://img.shields.io/badge/version-8.1.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Provisions a fresh Debian container into a fully configured
-Trixie (Debian 13) desktop environment in a single unattended run. Bookworm
-containers are upgraded to Trixie automatically during installation.
+desktop environment in a single unattended run. **Bookworm (Debian 12) is the
+primary target**; the script automatically enables `bookworm-backports` for
+modern PipeWire/WirePlumber and falls back to vanilla `dosbox` + `qemu-user`
+where `dosbox-x` / `box64` are unavailable. Trixie (Debian 13) is supported
+as a secondary target — already-trixie containers run the trixie path
+unmodified, and bookworm containers can opt into the legacy
+`bookworm`→`trixie` codename upgrade via `--upgrade-trixie`.
 
 [changelog](CHANGELOG.md)
 
@@ -21,7 +26,7 @@ containers are upgraded to Trixie automatically during installation.
 - [Generated Files](#generated-files)
   - [System (6 files, requires sudo)](#system-6-files-requires-sudo)
   - [User (19 files)](#user-19-files)
-- [Trixie Upgrade](#trixie-upgrade)
+- [Trixie Upgrade (optional)](#trixie-upgrade-optional)
 - [Design](#design)
   - [Safety and Reliability](#safety-and-reliability)
   - [User Experience](#user-experience)
@@ -62,7 +67,7 @@ bash ry-crostini.sh
 | RAM | 4 GB LPDDR4x |
 | Storage | 128 GB eMMC |
 | Display | 13.3″ 1920×1080 OLED |
-| Container | Debian Trixie arm64, bash |
+| Container | Debian Bookworm arm64 (primary) or Trixie arm64, bash |
 
 ## Prerequisites
 
@@ -90,7 +95,8 @@ bash ry-crostini.sh [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| *(none)* | Unattended full install (default) |
+| *(none)* | Unattended full install on the current codename (default = bookworm-primary) |
+| `--upgrade-trixie` | Opt INTO `bookworm`→`trixie` codename rewrite in step 2. Triggers a mandatory container restart mid-script. No-op if already on trixie. |
 | `--interactive` | Prompt for ChromeOS toggles |
 | `--dry-run` | Print commands without executing |
 | `--from-step=N` | Resume from step N (1–13; N=11 equivalent to `--verify`) |
@@ -119,15 +125,15 @@ errors. Verification failures preserve the checkpoint so that
 | Step | Category | Description |
 |------|----------|-------------|
 | 1 | Preflight | Architecture, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive` |
-| 2 | System | APT tuning, man-db trigger disable, Trixie upgrade, cros package hold, deb822 migration, `/tmp` tmpfs cap, cros-pin service |
-| 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, and others |
+| 2 | System | APT tuning, man-db trigger disable, `bookworm-backports` enable (bookworm only), optional `bookworm`→`trixie` upgrade with `--upgrade-trixie`, cros package hold, deb822 migration, `/tmp` tmpfs cap (trixie only), cros-pin service |
+| 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, `p7zip-full` on bookworm |
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
-| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning |
+| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning. On bookworm, `pipewire-audio` + `wireplumber` are refreshed from `bookworm-backports` (1.4.2 / 0.5.8) so the JSON `.conf` is honored. |
 | 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor |
-| 8 | GUI | xterm, session support, fonts, icons |
+| 8 | GUI | xterm, session support, fonts, icons, `adwaita-icon-theme-full` on bookworm |
 | 9 | Environment | Locale, journald volatile, timer cleanup, environment variables, XDG directories, PATH |
-| 10 | Gaming | DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher |
+| 10 | Gaming | DOSBox-X (trixie) or vanilla `dosbox` (bookworm), ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, `box64` + qemu-user (trixie) or qemu-user only (bookworm), gaming configs, `run-game` launcher |
 | 11 | Verify | Tools and configuration files |
 | 12 | Verify | Scripts and assets |
 | 13 | Summary | Verification summary and elapsed time |
@@ -173,21 +179,23 @@ installed with mode 700.
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
 | `~/.local/bin/run-game` | 10 | CPU affinity + priority game launcher, `MALLOC_ARENA_MAX` |
 
-## Trixie Upgrade
+## Trixie Upgrade (optional)
 
-Step 2 upgrades Bookworm containers to Debian 13 (Trixie) by rewriting
-codename references in APT sources and running `apt full-upgrade`.
+The default flow stays on the current codename. Pass `--upgrade-trixie` to
+opt INTO the legacy `bookworm`→`trixie` codename rewrite. Already-trixie
+containers are unaffected; the flag is a no-op there.
 
 | Behavior | Detail |
 |----------|--------|
+| Default (no flag) | Step 2 stays on the current codename. On bookworm, `bookworm-backports` is enabled and step 6 refreshes pipewire/wireplumber from it. No container restart required. |
+| `--upgrade-trixie` on bookworm | Step 2 rewrites codename references in APT sources, runs `apt full-upgrade`, then **hard-stops with an exit 0** so the user can `Shut down Linux` from the ChromeOS shelf. Continuing in-session was observed to trigger SIGTERM mid-run (v8.0.8 exit 143 at step 11). On rerun the script resumes at step 3 against the upgraded trixie container. |
 | Codename replacement | Line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved. Legacy `/etc/apt/sources.list` is processed only when present; deb822-only containers are handled via the `*.sources` loop. |
-| Package holds | Crostini lifecycle packages (`cros-sommelier`, etc.) are held during upgrade and unheld afterward. `cros-guest-tools` remains held permanently (`cros-im` unavailable on Trixie). |
+| Package holds | Crostini lifecycle packages (`cros-sommelier`, etc.) are held during the upgrade and unheld afterward. `cros-guest-tools` remains held permanently when targeting trixie (`cros-im` unavailable on trixie); on bookworm-default it is unheld with the rest. |
 | Backups | Saved with `.pre-trixie` suffix under `/etc/apt/`. |
-| Validation | `VERSION_CODENAME` checked before any rewrite; containers already on Trixie receive a normal `update`/`upgrade`. |
+| Validation | `VERSION_CODENAME` checked before any rewrite; the hard-stop only fires when sources were genuinely rewritten (`_did_trixie_rewrite=true`). |
 | cros-pin service | `ry-crostini-cros-pin.service` removes stale regenerated `cros.list` on each container start, preventing duplicate APT sources. |
 | deb822 migration | After `apt modernize-sources`, any duplicate `cros.list` is removed if a `.sources` equivalent was created. |
-| `/tmp` tmpfs | Trixie mounts `/tmp` as tmpfs; step 2 caps it at 512 MB to prevent OOM on 4 GB RAM. |
-| Hard-stop after upgrade | Trixie dist-upgrade replaces libc6/dbus/systemd under the running container. Step 2 saves the checkpoint and exits 0 on completion. **Required:** `Shut down Linux` from the ChromeOS shelf, then re-run; the script resumes at step 3. Continuing in-session was observed to trigger SIGTERM mid-run (v8.0.8 exit 143 at step 11). |
+| `/tmp` tmpfs cap | Trixie mounts `/tmp` as tmpfs; step 2d caps it at 512 MB to prevent OOM on 4 GB RAM. **Skipped on bookworm** (disk-backed `/tmp`). |
 
 ## Design
 
@@ -228,7 +236,7 @@ codename references in APT sources and running `apt full-upgrade`.
 | Limitation | Detail |
 |------------|--------|
 | sysctl read-only | All kernel tuning parameters (`fs.inotify.max_user_watches`, `vm.max_map_count`, etc.) are blocked by the ChromeOS Termina VM namespace. Writing to `/etc/sysctl.d/` has no effect from inside the container. |
-| WirePlumber 0.5 format | Trixie ships WirePlumber 0.5.8 which uses JSON `.conf` files, not Lua scripts. User-created Lua configurations in `~/.config/wireplumber/` are silently ignored. |
+| WirePlumber 0.5 format | Trixie ships WirePlumber 0.5.8 natively; bookworm gets the same version via `bookworm-backports` (enabled automatically by step 2). Both use JSON `.conf` files, not Lua scripts. User-created Lua configurations in `~/.config/wireplumber/` are silently ignored. If the backports refresh fails on bookworm, the stock 0.4.13 daemon will silently ignore the gaming-tuning JSON config and step 6 logs a WARN. |
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
 | Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak runtime Mesa compositor crashes (Zink regression), doubled RAM during install/update, and all gaming targets are available as native arm64 `.deb` packages. |
 | `BOX64_DYNAREC_ALIGNED_ATOMICS` | Enabled globally (`=1`) — Cortex-A76 LSE atomics produce faster, smaller code. Programs with unaligned LOCK ops may SIGBUS; disable per-game via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=0`. |

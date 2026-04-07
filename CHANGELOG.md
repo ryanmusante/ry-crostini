@@ -2,6 +2,23 @@ ry-crostini changelog
 
 2026-04-07  Ryan Musante
 
+- Tagged as v8.1.0
+- feat(MAJOR): bookworm is now the primary target. The default flow stays on the current codename (no `bookworm`→`trixie` rewrite, no mandatory container restart). Trixie upgrade is opt-in via `--upgrade-trixie`. Already-on-trixie containers are unaffected — the script detects the codename and runs the existing trixie path. Bookworm-on-arrival is the documented Crostini default in 2026.
+- feat(HIGH): step 2 enables `bookworm-backports` automatically when running on bookworm. Step 6 then refreshes `pipewire-audio` + `wireplumber` from backports (1.4.2 / 0.5.8) so the WirePlumber 0.5+ JSON `.conf` written by step 6 is honored. Without this, bookworm's stock wireplumber 0.4.13 (Lua-only) silently ignores the gaming-tuning config.
+- feat(HIGH): step 3 adds `p7zip-full` on bookworm to provide the `7z` command. Bookworm's `7zip` package only ships `7zz`; the existing verification check for `7z` would otherwise fail.
+- feat(HIGH): step 8 adds `adwaita-icon-theme-full` on bookworm. Bookworm's `adwaita-icon-theme` 43-1 does not include the full set; trixie's 45.0-4+ does and the package is unnecessary there.
+- feat(HIGH): step 10 falls back to vanilla `dosbox` 0.74 on bookworm (`dosbox-x` is not in bookworm main or backports). The DOSBox-X config heredoc is skipped on bookworm since the format is incompatible. The earlyoom `--prefer` regex is templated and uses `dosbox` on bookworm, `dosbox-x` on trixie. The dosbox version probe in step 10 verification is dispatched to the right binary name.
+- feat(HIGH): step 10 skips `box64` on bookworm with an informational log instead of a noisy WARN (`box64` is not in any Debian repo). `run-x86` already falls back to `qemu-user`. The `.box64rc` heredoc is skipped on bookworm.
+- feat(MED): step 2 cros-package hold gating is now bookworm-aware. `cros-guest-tools` is unheld with the rest on bookworm (cros-im is available there); the permanent hold remains for trixie.
+- feat(MED): step 2d `/tmp` tmpfs cap is skipped on bookworm. Bookworm's `/tmp` is disk-backed; the cap is only meaningful on trixie's tmpfs `/tmp`.
+- feat(MED): step 11 verification adapts to the codename: tool-presence checks for `dosbox` vs `dosbox-x`, drops `box64` on bookworm, and skips the `tmp.mount` / `dosbox-x.conf` / `.box64rc` config-file checks on bookworm.
+- feat(LOW): new `IS_BOOKWORM` global is set at script init (after argument parsing, before any `should_run_step` gate) so resume runs (`--from-step=N`, `--verify`) and standalone verify runs see the same value as fresh runs. Detection is gated on `! $UPGRADE_TRIXIE` so bookworm-with-upgrade-flag still applies trixie-targeted behavior in step 2 (cros hold, `/tmp` cap) before the rewrite.
+- feat(LOW): step 2 hard-stop is now driven by `_did_trixie_rewrite`, set true only inside the actual rewrite branch. Previously the original v8.0.9 hard-stopped unconditionally even on already-trixie containers; v8.1.0 hard-stops only when sources were genuinely rewritten (i.e., the libc6/dbus/systemd swap actually happened).
+- doc: header comments, `usage()` text, and step 2 banner reframed bookworm-primary. `--skip-trixie` is accepted as a backward-compat alias for the new default behavior.
+- compat: trixie path is preserved bit-for-bit. All bookworm gates fall through to original trixie behavior when `IS_BOOKWORM=false`. Verified across four scenarios: bookworm default, bookworm + `--upgrade-trixie`, trixie default, trixie + `--upgrade-trixie` (no-op).
+
+2026-04-07  Ryan Musante
+
 - Tagged as v8.0.9
 - fix(HIGH): step 2 now hard-exits after the Trixie dist-upgrade instead of emitting a soft WARN. Root cause of the v8.0.8 +14m03s SIGTERM (exit 143) during step 11 verification: dpkg replaces libc6/dbus/systemd mid-run, and any subsequent long-lived interaction with stale processes (dbus, sommelier, session manager) can trip the container into killing the script. The v8.0.7 recommendation was advisory and ignorable; v8.0.9 saves the checkpoint, prints the required action, and exits 0. Re-running resumes cleanly at step 3.
 - fix(LOW): step 10 now probes `apt-cache policy unrar` before attempting install. Trixie moves unrar to `non-free-non-free`; the previous unconditional attempt exited 100 and produced a noisy `Command exited 100` WARN in every log. The probe is silent when no candidate exists and the script falls through to `unar` as before.

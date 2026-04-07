@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.0.9
+# Version: 8.1.0
 # Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
-# Target:  Debian Trixie container under ChromeOS Crostini (Bookworm upgraded automatically)
-# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
+# Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
+#          Trixie upgrade is opt-in via --upgrade-trixie. Bookworm path uses
+#          bookworm-backports for pipewire 1.4 / wireplumber 0.5 and falls back
+#          to vanilla dosbox + qemu-user (no dosbox-x, no box64).
+# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--upgrade-trixie] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~70 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
-# NOTE: Crostini may initially ship Bookworm; step 2 upgrades to Trixie. Package arrays use canonical (non-transitional) names.
-# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed). Downloads to /tmp are transient and small; they are cleaned up in both normal flow and EXIT trap.
+# NOTE: Default flow stays on bookworm and pulls pipewire/wireplumber from bookworm-backports. Pass --upgrade-trixie to perform the legacy bookworm->trixie codename rewrite (requires container restart mid-script).
+# NOTE: Trixie mounts /tmp as tmpfs (RAM-backed); bookworm /tmp is disk-backed. Step 2d gates the tmpfs cap accordingly.
 
 set -euo pipefail
 # Propagate ERR trap to functions/subshells; inherit errexit in $(command substitution)
@@ -20,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.0.9"
+readonly SCRIPT_VERSION="8.1.0"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -36,6 +39,9 @@ unset _start_epoch
 
 DRY_RUN=false
 UNATTENDED=true
+SKIP_TRIXIE=true   # legacy var name; now default true (bookworm is primary target)
+UPGRADE_TRIXIE=false  # set by --upgrade-trixie to opt INTO codename rewrite
+IS_BOOKWORM=false  # set true at global init when codename=bookworm
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
@@ -471,6 +477,7 @@ declare -gA _TOOL_VER_FLAG=(
     [glxinfo]=""
     [xterm]="-v"
     [dosbox-x]=""
+    [dosbox]=""
     [gnome-disks]=""
     [vulkaninfo]="--version"
 )
@@ -624,6 +631,10 @@ USAGE:
 OPTIONS:
     --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
+    --upgrade-trixie  Opt INTO Debian Trixie codename upgrade in step 2.
+                      Default behavior is to stay on the current codename
+                      (bookworm). Trixie upgrade requires a container restart
+                      mid-script.
     --from-step=N  Start (or restart) from step N (1-13; N=11 is same as --verify)
     --verify       Run only steps 11-13 (verification and summary)
     --help         Show this help message
@@ -636,9 +647,10 @@ STEPS PERFORMED:
      1  Preflight + ChromeOS integration (arch, bash ≥5.0, Crostini,
         Debian version, disk, GPU, network, root, sommelier, mic, USB,
         folders, ports, disk-resize; --interactive)
-     2  System update (apt tuning, man-db trigger disable, Trixie
-        upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap,
-        cros-pin service)
+     2  System update (apt tuning, man-db trigger disable, bookworm-
+        backports enable; optional bookworm->trixie upgrade with
+        --upgrade-trixie, cros pkg hold, deb822 migration, /tmp tmpfs
+        cap, cros-pin service)
      3  Core CLI utilities (curl, jq, tmux, htop, wl-clipboard,
         ripgrep, fd, fzf, bat, earlyoom, ...)
      4  Build essentials and development headers
@@ -694,6 +706,8 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=true ;;
         --interactive) UNATTENDED=false ;;
+        --upgrade-trixie) UPGRADE_TRIXIE=true; SKIP_TRIXIE=false ;;
+        --skip-trixie) SKIP_TRIXIE=true ;;  # accepted for backward compat (now default)
         --from-step=*)
             if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
                 die "Cannot specify --from-step more than once, or combine with --verify"
@@ -805,6 +819,19 @@ if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
+
+# Global IS_BOOKWORM detection — runs every invocation (resume, --verify, --from-step).
+# Bookworm is the primary target; trixie is opt-in via --upgrade-trixie.
+_global_codename="$(_read_os_release VERSION_CODENAME)"
+if [[ "$_global_codename" == "bookworm" ]] && ! $UPGRADE_TRIXIE; then
+    IS_BOOKWORM=true
+    log "Detected: Debian bookworm (primary target)"
+elif [[ "$_global_codename" == "bookworm" ]] && $UPGRADE_TRIXIE; then
+    log "Detected: Debian bookworm; --upgrade-trixie set, step 2 will rewrite sources -> trixie and exit"
+elif [[ "$_global_codename" == "trixie" ]]; then
+    log "Detected: Debian trixie (secondary target)"
+fi
+unset _global_codename
 
 # Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...`
 # because sudo's env_reset strips it. A global export here would be redundant.
@@ -1179,7 +1206,7 @@ if should_run_step 1; then
 fi
 # Step 2: System update
 if should_run_step 2; then
-    step_banner 2 "System update (apt tuning, man-db trigger disable, Trixie upgrade, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
+    step_banner 2 "System update (apt tuning, man-db trigger disable, optional Trixie upgrade with --upgrade-trixie, bookworm-backports enable, cros pkg hold, deb822 migration, /tmp tmpfs cap, cros-pin service)"
 
     # APT tuning: retries + skip translations + per-scheme connection queue
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
@@ -1208,13 +1235,35 @@ EOF
         fi
     fi
 
-    # 2a. Upgrade to Trixie if not already running it
+    # 2a. Bookworm-primary path: stay on current codename unless --upgrade-trixie
+    _did_trixie_rewrite=false
     _cur_codename="$(_read_os_release VERSION_CODENAME)"
     if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
-    if [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
+    if ! $UPGRADE_TRIXIE; then
+        log "Staying on ${_cur_codename:-unknown}; --upgrade-trixie not set, skipping codename rewrite"
+        if [[ "$_cur_codename" == "bookworm" ]]; then
+            IS_BOOKWORM=true
+            log "Enabling bookworm-backports for pipewire 1.4 / wireplumber 0.5"
+            _BPO_LIST="/etc/apt/sources.list.d/bookworm-backports.list"
+            if [[ ! -f "$_BPO_LIST" ]] && ! grep -rq "bookworm-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+                if $DRY_RUN; then
+                    log "[DRY-RUN] write ${_BPO_LIST} with bookworm-backports main"
+                else
+                    printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
+                        | run sudo tee "$_BPO_LIST" >/dev/null \
+                        || warn "Failed to write ${_BPO_LIST} — backports unavailable"
+                    log "Wrote ${_BPO_LIST}"
+                fi
+            else
+                log "bookworm-backports already configured"
+            fi
+            unset _BPO_LIST
+        fi
+    elif [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
+        _did_trixie_rewrite=true
         if $DRY_RUN; then
             log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie (if present)"
             log "[DRY-RUN] sed -i on deb/deb-src lines: ${_cur_codename} → trixie in /etc/apt/sources.list (if present)"
@@ -1312,9 +1361,12 @@ EOF
     fi
 
     # @@WHY: cros-guest-tools stays held permanently (cros-im unavailable on Trixie)
+    # On bookworm, cros-im IS available — unhold everything.
     _CROS_UNHOLD_PKGS=()
     for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
-        [[ "$_cpkg" == "cros-guest-tools" ]] && continue
+        if ! $IS_BOOKWORM; then
+            [[ "$_cpkg" == "cros-guest-tools" ]] && continue
+        fi
         _CROS_UNHOLD_PKGS+=("$_cpkg")
     done
     if [[ "${#_CROS_UNHOLD_PKGS[@]}" -gt 0 ]]; then
@@ -1344,6 +1396,10 @@ EOF
     fi
 
     # 2d. Cap /tmp tmpfs at 512M (OOM mitigation for 4 GB RAM; write before first Trixie restart)
+    # Skipped on bookworm: bookworm /tmp is disk-backed, not tmpfs.
+    if $IS_BOOKWORM; then
+        log "Skipping /tmp tmpfs cap on bookworm (disk-backed /tmp)"
+    else
     _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
     if [[ ! -f "$_TMP_DROPIN" ]]; then
         if $DRY_RUN; then
@@ -1361,6 +1417,7 @@ TMPEOF
         log "tmp.mount drop-in already exists"
     fi
     unset _TMP_DROPIN
+    fi
 
     # 2e. Migrate APT sources to deb822 format
     if $DRY_RUN; then
@@ -1416,11 +1473,14 @@ CROSEOF
 
     set_checkpoint 2
     log "Step 2 complete."
-    warn "Trixie dist-upgrade replaced libc6/dbus/systemd under a running container."
-    warn "REQUIRED: 'Shut down Linux' from the ChromeOS shelf, then re-run this script."
-    warn "Checkpoint saved — re-run will resume at step 3 automatically."
-    warn "Hard-stop: continuing in-session risks SIGTERM mid-run (observed in v8.0.8 at step 11)."
-    exit 0
+    if $_did_trixie_rewrite; then
+        warn "Trixie dist-upgrade replaced libc6/dbus/systemd under a running container."
+        warn "REQUIRED: 'Shut down Linux' from the ChromeOS shelf, then re-run this script."
+        warn "Checkpoint saved — re-run will resume at step 3 automatically."
+        warn "Hard-stop: continuing in-session risks SIGTERM mid-run (observed in v8.0.8 at step 11)."
+        exit 0
+    fi
+    log "No codename rewrite performed: continuing in-session to step 3 (no restart required)."
 fi
 # Step 3: Core CLI utilities (curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, ...)
 if should_run_step 3; then
@@ -1452,6 +1512,11 @@ if should_run_step 3; then
 
     install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
 
+    # bookworm: 7zip package provides 7zz, not 7z. Add p7zip-full for the canonical `7z` command.
+    if $IS_BOOKWORM; then
+        install_pkgs_best_effort p7zip-full || warn "p7zip-full install failed — 7z command may be unavailable"
+    fi
+
     # Create common symlinks for renamed Debian packages
     if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
         if run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd; then
@@ -1474,18 +1539,21 @@ if should_run_step 3; then
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y earlyoom; then
         if ! $DRY_RUN; then
             _EARLYOOM_CONF="/etc/default/earlyoom"
+            # bookworm: no box64/dosbox-x; use vanilla dosbox in the prefer regex
+            _EOOM_PREFER="retroarch|box64|wine|dosbox-x|scummvm"
+            $IS_BOOKWORM && _EOOM_PREFER="retroarch|wine|dosbox|scummvm"
             # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
             if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
-                sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'EOOMEOF' | write_file_sudo "$_EARLYOOM_CONF"
+                sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s|@@PREFER@@|${_EOOM_PREFER}|" <<'EOOMEOF' | write_file_sudo "$_EARLYOOM_CONF"
 # earlyoom config — managed by ry-crostini.sh
 # ry-crostini:@@VERSION@@
-EARLYOOM_ARGS="-m 10 -s 10 -p --prefer (retroarch|box64|wine|dosbox-x|scummvm) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)$ --sort-by-rss -r 3600"
+EARLYOOM_ARGS="-m 10 -s 10 -p --prefer (@@PREFER@@) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)$ --sort-by-rss -r 3600"
 EOOMEOF
             fi
             run sudo systemctl enable --now earlyoom.service \
                 || warn "earlyoom enable failed"
             log "earlyoom installed and enabled"
-            unset _EARLYOOM_CONF
+            unset _EARLYOOM_CONF _EOOM_PREFER
         fi
     else
         warn "earlyoom install failed — OOM protection unavailable"
@@ -1599,6 +1667,17 @@ if should_run_step 6; then
     AUDIO_PKGS+=(libavcodec-extra)
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
+
+    # bookworm: refresh pipewire-audio + wireplumber from bookworm-backports (1.4.x / 0.5.x).
+    # Required because the WirePlumber JSON .conf written below needs >= 0.5.
+    if $IS_BOOKWORM; then
+        if run sudo DEBIAN_FRONTEND=noninteractive apt-get -y -t bookworm-backports install \
+                pipewire-audio wireplumber; then
+            log "PipeWire + WirePlumber upgraded from bookworm-backports"
+        else
+            warn "bookworm-backports pipewire/wireplumber install failed — JSON WP config will be ignored by 0.4.x"
+        fi
+    fi
 
     # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active
     if ! $DRY_RUN; then
@@ -1886,6 +1965,11 @@ if should_run_step 8; then
 
     install_pkgs_best_effort "${GUI_PKGS[@]}" || warn "Some GUI packages unavailable — non-fatal"
 
+    # bookworm: adwaita-icon-theme 43-1 does NOT include the full set; add separate package.
+    if $IS_BOOKWORM; then
+        install_pkgs_best_effort adwaita-icon-theme-full || warn "adwaita-icon-theme-full unavailable on bookworm"
+    fi
+
     # gnome-disk-utility — heavy GNOME deps but useful for disk management
     run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-disk-utility \
         || warn "gnome-disk-utility install failed"
@@ -2017,8 +2101,15 @@ if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher)"
 
     # Native ARM gaming packages — single batch; unrar (non-free) attempted separately below
-    install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
-        dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
+    # bookworm: dosbox-x is not in main or backports — fall back to vanilla `dosbox` (0.74).
+    if $IS_BOOKWORM; then
+        install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
+            dosbox retroarch retroarch-assets || warn "Some gaming packages failed"
+        log "bookworm: installed vanilla dosbox in place of dosbox-x (dosbox-x not available)"
+    else
+        install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
+            dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
+    fi
     # Probe candidate before install — Trixie moves unrar to non-free-non-free.
     # Attempting install with no candidate exits 100 and generates a noisy WARN.
     _unrar_cand="$(apt-cache policy unrar 2>/dev/null | awk '/Candidate:/ {print $2}')"
@@ -2110,7 +2201,9 @@ SVMCFG
 
     # DOSBox-X default config
     _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
-    if [[ ! -f "$_DBX_CFG" ]]; then
+    if $IS_BOOKWORM; then
+        log "bookworm: skipping DOSBox-X config write (dosbox-x not installed; vanilla dosbox uses incompatible format)"
+    elif [[ ! -f "$_DBX_CFG" ]]; then
         write_file_private "$_DBX_CFG" <<'DBXCFG'
 # DOSBox-X Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2137,13 +2230,17 @@ DBXCFG
 
     # Verify (skip in dry-run — packages were not actually installed)
     if ! $DRY_RUN; then
-        if command -v dosbox-x &>/dev/null; then
-            _dosbox_ver="$(timeout 3 dosbox-x --version 2>/dev/null | head -1 || true)"
-            log "dosbox-x: ${_dosbox_ver:-installed} ✓"
+        # bookworm: vanilla dosbox; trixie: dosbox-x
+        _dbx_bin=dosbox-x
+        $IS_BOOKWORM && _dbx_bin=dosbox
+        if command -v "$_dbx_bin" &>/dev/null; then
+            _dosbox_ver="$(timeout 3 "$_dbx_bin" --version 2>/dev/null | head -1 || true)"
+            log "${_dbx_bin}: ${_dosbox_ver:-installed} ✓"
             unset _dosbox_ver
         else
-            warn "dosbox-x not found"
+            warn "${_dbx_bin} not found"
         fi
+        unset _dbx_bin
         if command -v scummvm &>/dev/null; then
             _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
             log "scummvm: ${_scummvm_ver:-installed} ✓"
@@ -2168,7 +2265,10 @@ DBXCFG
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
     # box64: x86_64 DynaRec emulator (binfmt blocked in unprivileged Crostini; invoke explicitly)
-    if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
+    # Not in Debian main; bookworm has no candidate. Skip quietly there — run-x86 falls back to qemu-user.
+    if $IS_BOOKWORM; then
+        log "bookworm: skipping box64 (not in Debian repos); run-x86 will use qemu-user"
+    elif run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
         log "box64 installed ✓"
     else
         warn "box64 install failed"
@@ -2177,9 +2277,11 @@ DBXCFG
     # qemu-user: TCG x86/i386 emulation (do NOT install qemu-user-binfmt — EPERM in unprivileged)
     install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
 
-    # Write ~/.box64rc with SC7180P-tuned defaults
+    # Write ~/.box64rc with SC7180P-tuned defaults (skip on bookworm — box64 not installed)
     _BOX64_RC="${HOME}/.box64rc"
-    if [[ ! -f "$_BOX64_RC" ]]; then
+    if $IS_BOOKWORM; then
+        log "bookworm: skipping .box64rc write (box64 not installed)"
+    elif [[ ! -f "$_BOX64_RC" ]]; then
         write_file_private "$_BOX64_RC" <<'RCEOF'
 # box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
@@ -2623,6 +2725,10 @@ if should_run_step 11; then
     _fd_cmd=fdfind;  command -v fd  &>/dev/null && _fd_cmd=fd
     _bat_cmd=batcat; command -v bat &>/dev/null && _bat_cmd=bat
 
+    # bookworm uses vanilla dosbox; trixie uses dosbox-x
+    _dbx_check="dosbox-x|dosbox-x"
+    $IS_BOOKWORM && _dbx_check="dosbox|dosbox"
+
     # Parallel tool checks — all version probes run concurrently (~48 tools)
     _parallel_check_tools \
         "vim|vim" "nano|nano" "curl|curl" "wget|wget" "less|less" \
@@ -2635,8 +2741,8 @@ if should_run_step 11; then
         "glxinfo|glxinfo" "vulkaninfo|vulkaninfo" \
         "pactl|pactl" "pavucontrol|pavucontrol" \
         "xterm|xterm" "gnome-disks|gnome-disks" \
-        "dosbox-x|dosbox-x" "scummvm|scummvm" "retroarch|retroarch" "innoextract|innoextract"
-    unset _fd_cmd _bat_cmd
+        "${_dbx_check}" "scummvm|scummvm" "retroarch|retroarch" "innoextract|innoextract"
+    unset _fd_cmd _bat_cmd _dbx_check
 
     # unrar: non-free; unar is a functional equivalent — handle separately
     if command -v unrar &>/dev/null; then
@@ -2651,10 +2757,18 @@ if should_run_step 11; then
     fi
 
     # Remaining tools (parallel — fast commands; unrar handled conditionally above)
-    _parallel_check_tools \
-        "unar|unar" "box64|box64" "qemu-x86_64|qemu-x86_64" \
-        "run-x86|run-x86" "gog-extract|gog-extract" "run-game|run-game" \
-        "earlyoom|earlyoom"
+    # bookworm: box64 not installed (not in Debian repos)
+    if $IS_BOOKWORM; then
+        _parallel_check_tools \
+            "unar|unar" "qemu-x86_64|qemu-x86_64" \
+            "run-x86|run-x86" "gog-extract|gog-extract" "run-game|run-game" \
+            "earlyoom|earlyoom"
+    else
+        _parallel_check_tools \
+            "unar|unar" "box64|box64" "qemu-x86_64|qemu-x86_64" \
+            "run-x86|run-x86" "gog-extract|gog-extract" "run-game|run-game" \
+            "earlyoom|earlyoom"
+    fi
     logprintf '\n'
 
     # Config files
@@ -2694,15 +2808,15 @@ if should_run_step 11; then
     check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
     check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
     check_config "/etc/profile.d/ry-crostini-env.sh"                "Shell env + PATH"
-    check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
+    $IS_BOOKWORM || check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
     check_config "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
     check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
-    check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
-    check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
+    $IS_BOOKWORM || check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
+    $IS_BOOKWORM || check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
     # PipeWire audio chain verification
     if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
@@ -2773,7 +2887,11 @@ if should_run_step 13; then
     logprintf '%bQuick-test commands:%b\n' "$BOLD" "$RESET"
     logprintf '  GPU/Audio:   glxgears / vulkaninfo --summary / pactl info\n'
     logprintf '  Display:     xdpyinfo | grep resolution / fc-match sans-serif / fc-match monospace\n'
-    logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox-x --version\n'
+    if $IS_BOOKWORM; then
+        logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox --version\n'
+    else
+        logprintf '  Gaming:      glxinfo | grep renderer / printenv MESA_NO_ERROR / pw-top / dosbox-x --version\n'
+    fi
     logprintf '\n'
 
     # Reminders
