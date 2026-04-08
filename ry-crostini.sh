@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.6
+# Version: 8.1.7
 # Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.6"
+readonly SCRIPT_VERSION="8.1.7"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -1196,8 +1196,8 @@ EOF
             fi
         fi
         # Also handle additional .list/.sources files; backups in /etc/apt/ (not sources.list.d/)
-        _had_nullglob=false
-        shopt -q nullglob && _had_nullglob=true
+        _nullglob_was_set=false
+        shopt -q nullglob && _nullglob_was_set=true
         shopt -s nullglob
         for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
             [[ -f "$_sfile" ]] || continue
@@ -1215,8 +1215,8 @@ EOF
                 fi
             fi
         done
-        $_had_nullglob || shopt -u nullglob
-        unset _sfile _sfile_bak _had_nullglob
+        $_nullglob_was_set || shopt -u nullglob
+        unset _sfile _sfile_bak _nullglob_was_set
     elif [[ "$_cur_codename" == "trixie" ]]; then
         log "Already running Trixie — no upgrade needed"
     else
@@ -1296,7 +1296,7 @@ TMPEOF
     fi
 
     # 2e. Migrate APT sources to deb822 format
-    if apt --help 2>/dev/null | grep -q 'modernize-sources'; then
+    if apt modernize-sources --help &>/dev/null; then
         if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
             log "APT sources migrated to deb822 format"
             # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries.
@@ -1393,18 +1393,22 @@ if should_run_step 3; then
 
     # Create common symlinks for renamed Debian packages
     if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
-        if run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd; then
+        _fd_path="$(command -v fdfind)"
+        if run sudo ln -sf "$_fd_path" /usr/local/bin/fd; then
             log "Symlinked fdfind → fd"
         else
             warn "Symlink fdfind → fd failed"
         fi
+        unset _fd_path
     fi
     if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
-        if run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat; then
+        _bat_path="$(command -v batcat)"
+        if run sudo ln -sf "$_bat_path" /usr/local/bin/bat; then
             log "Symlinked batcat → bat"
         else
             warn "Symlink batcat → bat failed"
         fi
+        unset _bat_path
     fi
 
     unset CORE_PKGS
@@ -1493,11 +1497,17 @@ if should_run_step 5; then
     if [[ -e /dev/dri/renderD128 ]]; then
         log "GPU render node: /dev/dri/renderD128 ✓"
         if command -v glxinfo &>/dev/null; then
-            _glx_out="$(glxinfo 2>/dev/null || true)"
-            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs -r || true)"
-            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs -r || true)"
-            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs -r || true)"
-            unset _glx_out
+            # Single awk pass extracts vendor/renderer/version in one fork
+            {
+                read -r GL_VENDOR
+                read -r GL_RENDERER
+                read -r GL_VERSION
+            } < <(glxinfo 2>/dev/null | awk -F': ' '
+                /^OpenGL vendor string/   {v=$2}
+                /^OpenGL renderer string/ {r=$2}
+                /^OpenGL version string/  {ver=$2}
+                END {print v; print r; print ver}
+            ' || printf '\n\n\n')
             log "GL vendor:   ${GL_VENDOR:-unknown}"
             log "GL renderer: ${GL_RENDERER:-unknown}"
             log "GL version:  ${GL_VERSION:-unknown}"
@@ -1738,13 +1748,15 @@ EOF
     else
         log ".Xresources already exists — skipping"
     fi
-    # Apply Xresources
-    if command -v xrdb &>/dev/null; then
+    # Apply Xresources — only if an X display is reachable (sommelier may not be up yet on first install)
+    if [[ -n "${DISPLAY:-}" ]] && command -v xrdb &>/dev/null; then
         if run xrdb -merge "$XRESOURCES"; then
             log "Xresources merged"
         else
             warn "xrdb merge failed — Xresources not applied until next session"
         fi
+    else
+        log "Skipping xrdb merge — no DISPLAY (will apply on next terminal session)"
     fi
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
@@ -1864,7 +1876,7 @@ if should_run_step 9; then
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — cp failure means no rollback
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
-            if run sudo sed -i 's/^# *en_US\.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
+            if run sudo sed -i 's/^#[[:space:]]*\(en_US\.UTF-8\)/\1/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
                     run sudo rm -f -- /etc/locale.gen.bak || true
                     log "en_US.UTF-8 locale generated"
@@ -1942,13 +1954,13 @@ ENVEOF
     unset PROFILE_D
 
     # 9e. Disable background timers (compete for I/O/RAM during gaming)
-    # apt-daily.timer: kept enabled — refreshes package lists so `apt upgrade` shows pending security fixes. apt-daily-upgrade.timer: disabled — prevents unattended installs that compete for I/O during gaming.
-    run sudo systemctl disable apt-daily-upgrade.timer \
-        || warn "Cannot disable apt-daily-upgrade timer"
-    # Batch mask — guard with list-unit-files to avoid dead symlinks
+    # apt-daily.timer: kept enabled — refreshes package lists so `apt upgrade` shows pending security fixes. apt-daily-upgrade.timer: masked (not just disabled) so a future package upgrade preset cannot re-enable it.
+    run sudo systemctl mask apt-daily-upgrade.timer \
+        || warn "Cannot mask apt-daily-upgrade timer"
+    # Batch mask — guard with `systemctl cat` to avoid attempts on absent units
     _mask_timers=()
     for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
-        systemctl list-unit-files --no-legend "$_timer" 2>/dev/null | grep -q . && _mask_timers+=("$_timer")
+        systemctl cat "$_timer" &>/dev/null && _mask_timers+=("$_timer")
     done
     if [[ "${#_mask_timers[@]}" -gt 0 ]]; then
         run sudo systemctl mask "${_mask_timers[@]}" || true
@@ -2126,10 +2138,19 @@ DBXCFG
     # box64: x86_64 DynaRec emulator (binfmt blocked in unprivileged Crostini; invoke explicitly) Not in Debian main; bookworm has no candidate. Skip quietly there — run-x86 falls back to qemu-user.
     if $IS_BOOKWORM; then
         log "bookworm: skipping box64 (not in Debian repos); run-x86 will use qemu-user"
-    elif run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
-        log "box64 installed ✓"
     else
-        warn "box64 install failed"
+        # Probe candidate before install — symmetric with unrar handling above
+        _box64_cand="$(apt-cache policy box64 2>/dev/null | awk '/Candidate:/ {print $2}')"
+        if [[ -n "$_box64_cand" && "$_box64_cand" != "(none)" ]]; then
+            if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
+                log "box64 installed ✓"
+            else
+                warn "box64 install failed"
+            fi
+        else
+            log "box64 not available in current repos — run-x86 will use qemu-user"
+        fi
+        unset _box64_cand
     fi
 
     # qemu-user: TCG x86/i386 emulation (do NOT install qemu-user-binfmt — EPERM in unprivileged)
@@ -2153,11 +2174,10 @@ BOX64_DYNAREC_CALLRET=1
 # Purge stale dynarec blocks — reclaims RAM on 4 GB device
 BOX64_DYNAREC_PURGE=1
 # DynaRec disk cache — saves generated native code for faster subsequent loads.
-# 0=off, 1=generate+use, 2=use existing only (default). Requires box64 ≥ v0.3.8.
-# Canonical name since v0.3.8; older builds use BOX64_DYNAREC_CACHE.
-# Fresh install: no cache exists yet; change to 1 after first run to generate,
-# then revert to 2 for faster startup without regeneration overhead.
-BOX64_DYNACACHE=2
+# 0=off, 1=generate+use, 2=use existing only. Requires box64 ≥ v0.3.8.
+# Default 1: generate on first run AND reuse. Switch to 2 only if you want a
+# read-only cache (no new entries written) — useful after a known-good warmup.
+BOX64_DYNACACHE=1
 # Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
 BOX64_DYNAREC_NATIVEFLAGS=1
 # Larger forward gap for DynaRec blocks — default 128; 512 builds bigger
@@ -2259,12 +2279,10 @@ case "$arch" in
         fi
         ;;
     "")
-        printf 'run-x86: arch detection failed for %s — assuming x86_64\n' "$prog" >&2
-        if command -v box64 &>/dev/null; then
-            exec box64 "$@"
-        elif command -v qemu-x86_64 &>/dev/null; then
-            exec qemu-x86_64 "$@"
-        fi
+        printf 'run-x86: arch detection failed for %s\n' "$prog" >&2
+        printf 'run-x86: refusing to guess — file is not a recognized x86_64 or i386 ELF.\n' >&2
+        printf 'run-x86: verify with: file %s\n' "$prog" >&2
+        exit 2
         ;;
 esac
 
@@ -2330,14 +2348,15 @@ case "$installer" in
         ;;
     *.sh|*.SH)
         # Validate makeself archive structure — require ≥2 structural markers
-        # (keyword-only checks are bypassable by hostile scripts embedding "makeself")
+        # (keyword-only checks are bypassable by hostile scripts embedding "makeself").
+        # Patterns cover legacy makeself (≤2.4 backtick `head`) and modern (≥2.5 $(head), _offset_).
         _ms_score=0
         _ms_head="$(head -200 -- "$installer" 2>/dev/null)" || _ms_head=""
         [[ "$_ms_head" == *'MS_dd='* || "$_ms_head" == *'MS_dd_Progress='* ]] && ((_ms_score++)) || true
         [[ "$_ms_head" == *'label='* ]]     && ((_ms_score++)) || true
         [[ "$_ms_head" == *'filesizes='* ]] && ((_ms_score++)) || true
         [[ "$_ms_head" == *'TMPROOT='* ]]   && ((_ms_score++)) || true
-        [[ "$_ms_head" == *'offset=`head'* ]] && ((_ms_score++)) || true
+        [[ "$_ms_head" == *'offset=`head'* || "$_ms_head" == *'offset=$(head'* || "$_ms_head" == *'_offset_='* ]] && ((_ms_score++)) || true
         if [[ "$_ms_score" -lt 2 ]]; then
             printf 'gog-extract: %s does not appear to be a makeself archive (GOG Linux installer)\n' "$installer" >&2
             printf 'Expected a GOG .sh installer (makeself archive). Aborting for safety.\n' >&2
@@ -2347,6 +2366,8 @@ case "$installer" in
         unset _ms_score _ms_head
         printf 'Extracting GOG Linux installer: %s\n' "$installer"
         mkdir -p -- "$outdir"
+        # NOTE: marker check is a sanity check, not a security boundary.
+        # Only invoke gog-extract on installers from trusted sources.
         # GOG Linux installers are makeself archives; invoke via bash to avoid modifying the original file's permissions
         bash "$installer" --noexec --target="$outdir"
         printf 'Extracted to: %s/\n' "$outdir"
@@ -2473,11 +2494,16 @@ if should_run_step 11; then
         logprintf '  Render node:   %b✓%b /dev/dri/renderD128\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
         if command -v glxinfo &>/dev/null; then
-            _glx_out="$(glxinfo 2>/dev/null || true)"
-            GL_VENDOR="$(printf '%s\n' "$_glx_out" | grep "OpenGL vendor" | head -1 | cut -d: -f2 | xargs -r || true)"
-            GL_RENDERER="$(printf '%s\n' "$_glx_out" | grep "OpenGL renderer" | head -1 | cut -d: -f2 | xargs -r || true)"
-            GL_VERSION="$(printf '%s\n' "$_glx_out" | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs -r || true)"
-            unset _glx_out
+            {
+                read -r GL_VENDOR
+                read -r GL_RENDERER
+                read -r GL_VERSION
+            } < <(glxinfo 2>/dev/null | awk -F': ' '
+                /^OpenGL vendor string/   {v=$2}
+                /^OpenGL renderer string/ {r=$2}
+                /^OpenGL version string/  {ver=$2}
+                END {print v; print r; print ver}
+            ' || printf '\n\n\n')
             [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
             [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
             [[ -n "$GL_VERSION" ]]  && logprintf '  GL version:    %s\n' "$GL_VERSION"
@@ -2715,7 +2741,7 @@ if should_run_step 11; then
     # file could be corrupted later by manual edit, dpkg-overlay, or apt-purge restoring stock.
     # Same anchor pattern as the post-write check in step 3.
     if [[ -s /etc/default/earlyoom ]]; then
-        if sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
+        if grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
             logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom --prefer regex valid"
             ((_verify_pass++)) || true
         else
@@ -2725,6 +2751,7 @@ if should_run_step 11; then
     fi
     # earlyoom may have been killed during heavy apt operations; restart if needed
     if ! systemctl is-active earlyoom.service &>/dev/null; then
+        # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 549 is contained
         sudo systemctl start earlyoom.service 2>>"$LOG_FILE" \
             || warn "earlyoom auto-restart failed — check /etc/default/earlyoom and 'systemctl status earlyoom'"
     fi
@@ -2735,12 +2762,12 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "earlyoom not running"
         ((_verify_warn++)) || true
     fi
-    # apt-daily-upgrade timer (unattended installs disabled; apt-daily list refresh kept)
-    if ! systemctl is-enabled apt-daily-upgrade.timer &>/dev/null; then
-        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily-upgrade.timer disabled"
+    # apt-daily-upgrade timer (unattended installs masked; apt-daily list refresh kept)
+    if [[ "$(systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null)" == "masked" ]]; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily-upgrade.timer masked"
         ((_verify_pass++)) || true
     else
-        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer still enabled"
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer not masked"
         ((_verify_warn++)) || true
     fi
     # apt-daily.timer (kept enabled — refreshes package lists for security visibility)
@@ -2886,22 +2913,42 @@ if should_run_step 13; then
         $_had_nullglob_env || shopt -u nullglob
         unset _envf _eline _ek _ev _had_nullglob_env
     fi
-    # Import updated environment.d variables into the systemd user session
-    if systemctl --user import-environment 2>/dev/null; then
-        log "Imported environment.d variables into user session"
+    # Import only the keys actually defined in environment.d files into the systemd user session.
+    # Unscoped `import-environment` would leak script-internal vars (LOG_FILE, _verify_*, IS_BOOKWORM, etc.).
+    if [[ -d "${HOME}/.config/environment.d" ]]; then
+        _import_keys=()
+        _had_nullglob_imp=false
+        shopt -q nullglob && _had_nullglob_imp=true
+        shopt -s nullglob
+        for _envf in "${HOME}/.config/environment.d/"*.conf; do
+            while IFS= read -r _eline || [[ -n "$_eline" ]]; do
+                [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
+                _eline="${_eline#"${_eline%%[![:space:]]*}"}"
+                [[ "$_eline" == *=* ]] || continue
+                _ek="${_eline%%=*}"
+                [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && _import_keys+=("$_ek")
+            done < "$_envf"
+        done
+        $_had_nullglob_imp || shopt -u nullglob
+        if [[ "${#_import_keys[@]}" -gt 0 ]] && systemctl --user import-environment "${_import_keys[@]}" 2>/dev/null; then
+            log "Imported ${#_import_keys[@]} environment.d key(s) into user session"
+        fi
+        unset _envf _eline _ek _import_keys _had_nullglob_imp
     fi
-    # Restart sommelier (Wayland + X11 bridge) to pick up new env vars
-    if systemctl --user restart sommelier@0.service sommelier-x@0.service 2>/dev/null; then
+    # Restart sommelier — enumerate active instances rather than hardcoding @0
+    mapfile -t _somm_units < <(systemctl --user list-units --type=service --state=active --no-legend 'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | awk '{print $1}')
+    if [[ "${#_somm_units[@]}" -gt 0 ]] && systemctl --user restart "${_somm_units[@]}" 2>/dev/null; then
         # Brief settle — sommelier needs ~1 s to re-establish the display socket
         sleep 1
         if pgrep -x sommelier &>/dev/null; then
-            log "Sommelier restarted — environment changes are live"
+            log "Sommelier restarted (${_somm_units[*]}) — environment changes are live"
         else
             logprintf '\n%bSommelier restart failed — shut down Linux (Settings → Developers) and reopen Terminal.%b\n\n' "$BOLD" "$RESET"
         fi
     else
         logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
     fi
+    unset _somm_units
     log "Step 13 complete."
 fi
 

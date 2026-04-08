@@ -2,6 +2,25 @@ ry-crostini changelog
 
 2026-04-07  Ryan Musante
 
+- Tagged as v8.1.7
+- Step 10 `run-x86` arch fallback hardened. The wrapper previously printed "arch detection failed — assuming x86_64" and exec'd box64 anyway, producing confusing emulator-level errors when the file was actually i386, ARM64-native, or non-ELF. Now exits 2 with a clear message instructing the user to verify with `file <prog>`. No more silent guesses.
+- Step 10 `gog-extract` makeself marker check broadened. The legacy `offset=\`head` pattern only matched makeself ≤2.4 archives; modern installers (makeself ≥2.5) use `offset=$(head` or `_offset_=`. Both new patterns are now accepted, fixing false-negative refusals on current GOG Linux installers. Added explicit comment that the marker check is a sanity check and not a security boundary.
+- Step 13 `import-environment` scoped to explicit keys. Previously called with no arguments, which imported the *entire* current shell environment into the systemd user session — leaking script-internal vars (`LOG_FILE`, `_verify_*`, `IS_BOOKWORM`, `_PROGRESS_*`, etc.) into every user-session service launched afterward. Now parses `~/.config/environment.d/*.conf` for KEY names and passes only those to `systemctl --user import-environment`.
+- Step 13 sommelier restart enumerates active instances. The hardcoded `sommelier@0.service sommelier-x@0.service` pair was a no-op on any session that landed on a different instance number. Now uses `systemctl --user list-units --type=service --state=active 'sommelier@*.service' 'sommelier-x@*.service'` to find all live units and restarts the actual set.
+- Step 9 `apt-daily-upgrade.timer` is now masked, not just disabled. A future package upgrade preset can re-enable a disabled unit but cannot re-enable a masked one. Step 11 verification updated to check for the `masked` state.
+- Step 5 + step 11 glxinfo parse collapsed to a single awk pass. Previously read the glxinfo output through three separate `grep | head | cut | xargs` pipelines; now reads it once and emits all three fields. Cosmetic, but removes 6 forks per verify run.
+- Step 7 `xrdb -merge` now gated on `[[ -n "$DISPLAY" ]]`. The merge always failed silently on first install when sommelier had not yet brought up an X display, producing a benign-but-confusing WARN in the log. Logs a clean "skipping" message instead.
+- Step 9 locale.gen sed pattern broadened to `^#[[:space:]]*` so a tab between `#` and `en_US.UTF-8` (rare but possible after manual edit) no longer prevents uncommenting.
+- Step 9 timer existence probe replaced. `systemctl list-unit-files --no-legend "$_timer" | grep -q .` works but is non-canonical; `systemctl cat "$_timer" &>/dev/null` is the standard form.
+- Step 10 `box64` install now gated on `apt-cache policy` candidate probe (parity with the `unrar` handling at step 10). Bare `apt-get install` produced a noisy WARN on any future Debian release where box64 lacks a candidate; the probe makes it a clean log line.
+- Step 10 `.box64rc` `BOX64_DYNACACHE` default flipped from 2 (use existing only) to 1 (generate+use). The previous default required manual user intervention to ever populate the cache on a fresh install — flipping to 1 is correct for first-run and the comment now documents flipping to 2 only as a read-only mode.
+- Step 11 dropped unnecessary `sudo` on `grep` of `/etc/default/earlyoom`. The file is mode 644 by default; `sudo` was wasteful.
+- Step 11 silenced the last SC2031 false positive at the earlyoom restart line. `LOG_FILE` here is main-shell scope; the subshell taint at line 549 (parallel verify) is contained and was already disabled at the re-aggregation site.
+- Step 2 `apt modernize-sources` probe replaced fragile `apt --help | grep` with the canonical `apt modernize-sources --help &>/dev/null` subcommand probe.
+- Internal cleanup: cached `command -v fdfind/batcat` results before symlinking (no double resolution); renamed `_had_nullglob` → `_nullglob_was_set` in the deb822 loop for clarity. No behavior change.
+
+2026-04-07  Ryan Musante
+
 - Tagged as v8.1.6
 - Step 11 Vulkan parse fixed. The previous code grepped `vulkaninfo --summary` for `"GPU name"` and `"apiVersion"`, but the actual field name is `deviceName` (the wrong grep meant `VK_GPU` was always empty and the script unconditionally reported "Vulkan: not available (virgl does not support Vulkan)" — even on systems where Vulkan was actually present). Changed to `grep "deviceName"`. The apiVersion grep was always correct.
 - Step 11 RetroArch threaded check now warns on the missing-line case. Previously the check had two branches (`video_threaded="false"` ✓, `video_threaded="true"` ⚠) and silently no-op'd if the line was absent entirely — masking the gap. Added a third branch that warns "video_threaded line missing from config".
