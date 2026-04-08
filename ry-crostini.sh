@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.8
+# Version: 8.1.9
 # Date:    2026-04-08
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.8"
+readonly SCRIPT_VERSION="8.1.9"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -59,7 +59,6 @@ _handle_signal() {
         HUP)  exit 129 ;;
         INT)  exit 130 ;;
         QUIT) exit 131 ;;
-        PIPE) exit 141 ;;
         TERM) exit 143 ;;
         *)    exit 1   ;;
     esac
@@ -70,7 +69,7 @@ _handle_signal() {
 cleanup() {
     local rc=$?
     # Prevent recursive cleanup from nested signals
-    trap - EXIT INT TERM HUP PIPE QUIT WINCH
+    trap - EXIT INT TERM HUP QUIT WINCH
     # Disable set -e inside cleanup to guarantee full execution. Safe: cleanup is the final code path before exit; no restore needed.
     set +e
     # Restore terminal scroll region before any output
@@ -111,7 +110,7 @@ cleanup() {
     # Re-raise caught signal for correct 128+N exit code to parent. Allowlist defends against $_received_signal being clobbered.
     if [[ -n "${_received_signal:-}" ]]; then
         case "$_received_signal" in
-            INT|TERM|HUP|PIPE|QUIT) kill -"$_received_signal" "$$" ;;
+            INT|TERM|HUP|QUIT) kill -"$_received_signal" "$$" ;;
             *) : ;;
         esac
     fi
@@ -124,7 +123,6 @@ trap cleanup EXIT
 trap '_handle_signal INT' INT
 trap '_handle_signal TERM' TERM
 trap '_handle_signal HUP' HUP
-trap '_handle_signal PIPE' PIPE
 trap '_handle_signal QUIT' QUIT
 trap '_progress_resize' WINCH
 
@@ -551,6 +549,12 @@ _parallel_check_tools() {
     local _pct_entry _pct_idx
     for _pct_entry in "$@"; do
         printf -v _pct_idx '%04d' "$_pct_n"
+        # NOTE: the following subshell intentionally reassigns LOG_FILE and the
+        # _verify_* counters. These reassignments are scope-contained to the
+        # subshell by design — replay in the parent re-aggregates counters via
+        # the SOH-prefixed sentinel line at the end of each subshell's output.
+        # The resulting SC2030/2031 notes from shellcheck are documented noise;
+        # do not "fix" them by hoisting the assignments into the parent.
         (
             # Suppress LOG_FILE writes inside subshell — replay handles logging. Note: this assignment is subshell-local (SC2030/2031); parent's LOG_FILE binding is unaffected, so the "clobber" is purely scoped.
             LOG_FILE=/dev/null
@@ -659,9 +663,11 @@ for _arg in "$@"; do
 done
 unset _arg
 
-# Create log file with restrictive permissions (deferred past --help/--version)
+# Create log file at mode 600 atomically (deferred past --help/--version). Using a
+# umask subshell so the file is born 0600 rather than 0644-then-chmod, closing the
+# brief readable window that the prior touch+chmod pattern allowed.
 # shellcheck disable=SC2031  # LOG_FILE is main-shell here; taint from the legitimate subshell at line 571
-if ! touch "$LOG_FILE" || ! chmod 600 "$LOG_FILE"; then
+if ! ( umask 077; : > "$LOG_FILE" ) 2>/dev/null; then
     printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2
     exit 1
 fi
@@ -796,15 +802,26 @@ unset _global_codename
 
 # Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...` because sudo's env_reset strips it. A global export here would be redundant.
 
-# Sudo credential keepalive — renew every 60 s; killed in cleanup(). Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't silently stall on apt-get sudo timeouts after credential expiry, while still tolerating the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-* are themselves being replaced by dpkg. Failures while the dpkg frontend lock is held do not count — the foreground apt already has its credentials and the keepalive's job is moot until dpkg releases the lock.
+# Sudo credential keepalive — renew every 60 s; killed in cleanup(). Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't silently stall on apt-get sudo timeouts after credential expiry, while still tolerating the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-* are themselves being replaced by dpkg. Failures while an apt/dpkg transaction is running do not count — the foreground apt already has its credentials and the keepalive's job is moot until the transaction finishes.
+#
+# Transaction detection uses pgrep, which is from procps (Priority: important
+# on Debian — installed on every non-trivial container, no chicken-and-egg).
+# Earlier versions used `fuser /var/lib/dpkg/lock-frontend`, which
+# short-circuits false on any container missing psmisc — and psmisc isn't
+# installed until step 3, so the guard was inert during step 2's libpam/libc6
+# replacement on --upgrade-trixie. pgrep avoids that entirely. We intentionally
+# do NOT flock the lock file directly: /var/lib/dpkg/lock-frontend is mode 640
+# root:root, so an unprivileged flock always fails on permission and would
+# falsely report "held" forever, masking real credential failures.
 (
     _ka_fails=0
     while true; do
         if sudo -n -v 2>/dev/null; then
             _ka_fails=0
-        elif command -v fuser >/dev/null 2>&1 \
-            && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-            # dpkg frontend lock held — apt is running and may be replacing sudo/PAM right now. Don't count this tick.
+        elif pgrep -x apt-get >/dev/null 2>&1 \
+            || pgrep -x apt     >/dev/null 2>&1 \
+            || pgrep -x dpkg    >/dev/null 2>&1; then
+            # apt/dpkg transaction in progress — sudo/PAM may be under replacement. Don't count this tick.
             :
         else
             _ka_fails=$((_ka_fails + 1))
@@ -937,6 +954,28 @@ gtk-xft-hintstyle=hintslight
 gtk-xft-rgba=none
 GTKEOF
 }
+
+# Release any cros-* holds left behind by a prior crashed run (idempotent).
+# Runs on every invocation — not gated on should_run_step 2 — because the whole
+# point is to recover when the user resumes with --from-step=3+ after a mid-step-2
+# crash, which skips step 2 entirely. apt-mark unhold on unheld packages is a
+# no-op; the showhold filter is anchored so only our own step-2 hold set is
+# touched. On trixie, cros-guest-tools is excluded from the sweep because step 2
+# intentionally keeps it held there (cros-im unavailable on trixie).
+if command -v apt-mark >/dev/null 2>&1; then
+    if $IS_BOOKWORM; then
+        _CROS_STALE_PAT='^cros-(guest-tools|garcon|notificationd|sftp|sommelier|sommelier-config|wayland|pulse-config|apt-config)$'
+    else
+        _CROS_STALE_PAT='^cros-(garcon|notificationd|sftp|sommelier|sommelier-config|wayland|pulse-config|apt-config)$'
+    fi
+    mapfile -t _CROS_STALE_HOLDS < <(apt-mark showhold 2>/dev/null | grep -E "$_CROS_STALE_PAT" || true)
+    if [[ "${#_CROS_STALE_HOLDS[@]}" -gt 0 ]]; then
+        log "Releasing stale cros-* holds from prior run: ${_CROS_STALE_HOLDS[*]}"
+        run sudo apt-mark unhold "${_CROS_STALE_HOLDS[@]}" \
+            || warn "Stale hold release failed — continuing"
+    fi
+    unset _CROS_STALE_HOLDS _CROS_STALE_PAT
+fi
 
 # Step 1: Preflight + ChromeOS integration
 if should_run_step 1; then
@@ -1184,7 +1223,7 @@ EOF
                 die "Cannot back up /etc/apt/sources.list — aborting upgrade"
             fi
             # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
-            if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+            if ! run sudo sed -i "/^deb/s/\\<${_cur_codename}\\>/trixie/g" /etc/apt/sources.list; then
                 warn "sources.list rewrite failed — restoring backup"
                 run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
                     || die "Cannot restore sources.list backup — manual fix required"
@@ -1197,7 +1236,7 @@ EOF
         # Also update cros-packages repo if present (resets on container restart)
         if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
             run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
-            if run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+            if run sudo sed -i "/^deb/s/\\<${_cur_codename}\\>/trixie/g" /etc/apt/sources.list.d/cros.list; then
                 log "Rewrote cros.list: ${_cur_codename} → trixie"
                 log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
                 log "Debian repos in sources.list are permanent — only cros-packages affected"
@@ -1221,10 +1260,10 @@ EOF
                     || { warn "Cannot back up ${_sfile} — skipping"; continue; }
                 # .list format: replace on deb/deb-src lines; .sources (deb822): replace on Suites: lines
                 if [[ "$_sfile" == *.sources ]]; then
-                    run sudo sed -i "/^Suites:/s/${_cur_codename}/trixie/g" "$_sfile" \
+                    run sudo sed -i "/^Suites:/s/\\<${_cur_codename}\\>/trixie/g" "$_sfile" \
                         || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
                 else
-                    run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" "$_sfile" \
+                    run sudo sed -i "/^deb/s/\\<${_cur_codename}\\>/trixie/g" "$_sfile" \
                         || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
                 fi
             fi
@@ -1273,7 +1312,11 @@ EOF
     done
     if [[ "${#_CROS_UNHOLD_PKGS[@]}" -gt 0 ]]; then
         run sudo apt-mark unhold "${_CROS_UNHOLD_PKGS[@]}" || warn "apt-mark unhold failed"
-        log "cros-guest-tools remains held (cros-im unavailable on Trixie)"
+        if $IS_BOOKWORM; then
+            log "All Crostini package holds released (bookworm: cros-im available)"
+        else
+            log "cros-guest-tools remains held (cros-im unavailable on Trixie)"
+        fi
     fi
     unset _CROS_HOLD_PKGS _CROS_UNHOLD_PKGS _cpkg
 
@@ -1387,7 +1430,9 @@ if should_run_step 3; then
 
         # System monitoring
         htop ncdu lsof strace
-        # psmisc: provides fuser — used by sudo-keepalive to detect dpkg frontend lock
+        # psmisc: provides fuser/killall/pstree. No longer required by the sudo
+        # keepalive (which now uses pgrep from procps, priority=important),
+        # but kept for general sysadmin use.
         psmisc
 
         # Misc
@@ -1443,8 +1488,9 @@ if should_run_step 3; then
                 "# ry-crostini:${SCRIPT_VERSION}" \
                 "EARLYOOM_ARGS=\"-m 10 -s 10 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss -r 3600\"" \
                 | write_file_sudo "$_EARLYOOM_CONF"
-            # Post-write validation — guards against future template regressions
-            if ! sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
+            # Post-write validation — guards against future template regressions.
+            # No sudo: write_file_sudo chmods the file to 644, readable by our user.
+            if ! grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
                 die "earlyoom config malformed after write — --prefer regex missing or truncated: $_EARLYOOM_CONF"
             fi
         fi
@@ -1870,11 +1916,12 @@ if should_run_step 8; then
     fi
 
     # gnome-disk-utility — heavy GNOME deps but useful for disk management
-    run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gnome-disk-utility \
+    install_pkgs_best_effort gnome-disk-utility \
         || warn "gnome-disk-utility install failed"
 
     # Ensure desktop applications directory exists (garcon integration)
-    if run mkdir -p "${HOME}/.local/share/applications"; then
+    # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 560 is contained
+    if mkdir -p "${HOME}/.local/share/applications" 2>>"$LOG_FILE"; then
         log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
     else
         warn "Cannot create desktop applications directory"
@@ -1957,7 +2004,8 @@ ENVEOF
     fi
 
     # 9d. Ensure XDG dirs exist
-    run mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" \
+    # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 560 is contained
+    mkdir -p "${HOME}/.local/share" "${HOME}/.local/bin" "${HOME}/.config" "${HOME}/.cache" 2>>"$LOG_FILE" \
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
         if run xdg-user-dirs-update; then
@@ -2122,7 +2170,7 @@ DBXCFG
     _dbx_bin=dosbox-x
     $IS_BOOKWORM && _dbx_bin=dosbox
     if command -v "$_dbx_bin" &>/dev/null; then
-        _dosbox_ver="$(timeout 3 "$_dbx_bin" --version 2>/dev/null | head -1 || true)"
+        _dosbox_ver="$(timeout 5 "$_dbx_bin" --version 2>/dev/null | head -1 || true)"
         log "${_dbx_bin}: ${_dosbox_ver:-installed} ✓"
         unset _dosbox_ver
     else
@@ -2130,14 +2178,14 @@ DBXCFG
     fi
     unset _dbx_bin
     if command -v scummvm &>/dev/null; then
-        _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
+        _scummvm_ver="$(timeout 5 scummvm --version 2>/dev/null | head -1 || true)"
         log "scummvm: ${_scummvm_ver:-installed} ✓"
         unset _scummvm_ver
     else
         warn "scummvm not found"
     fi
     if command -v innoextract &>/dev/null; then
-        _innoextract_ver="$(timeout 3 innoextract --version 2>/dev/null | head -1 || true)"
+        _innoextract_ver="$(timeout 5 innoextract --version 2>/dev/null | head -1 || true)"
         log "innoextract: ${_innoextract_ver:-installed} ✓"
         unset _innoextract_ver
     else
@@ -2719,7 +2767,7 @@ if should_run_step 11; then
     # `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"),
     # not line 1 — grep across the full output, don't head it first.
     if command -v wireplumber &>/dev/null; then
-        _wp_ver="$(timeout 3 wireplumber --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        _wp_ver="$(timeout 5 wireplumber --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
         if [[ -n "$_wp_ver" ]]; then
             _wp_major="${_wp_ver%%.*}"
             _wp_rest="${_wp_ver#*.}"
@@ -2767,8 +2815,7 @@ if should_run_step 11; then
     fi
     # earlyoom may have been killed during heavy apt operations; restart if needed
     if ! systemctl is-active earlyoom.service &>/dev/null; then
-        # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 549 is contained
-        sudo systemctl start earlyoom.service 2>>"$LOG_FILE" \
+        run sudo systemctl start earlyoom.service \
             || warn "earlyoom auto-restart failed — check /etc/default/earlyoom and 'systemctl status earlyoom'"
     fi
     if systemctl is-active earlyoom.service &>/dev/null; then
@@ -2950,8 +2997,13 @@ if should_run_step 13; then
             done < "$_envf"
         done
         $_had_nullglob_imp || shopt -u nullglob
-        if [[ "${#_import_keys[@]}" -gt 0 ]] && systemctl --user import-environment "${_import_keys[@]}" 2>/dev/null; then
-            log "Imported ${#_import_keys[@]} environment.d key(s) into user session"
+        if [[ "${#_import_keys[@]}" -gt 0 ]]; then
+            # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 560 is contained
+            if systemctl --user import-environment "${_import_keys[@]}" 2>>"$LOG_FILE"; then
+                log "Imported ${#_import_keys[@]} environment.d key(s) into user session"
+            else
+                warn "systemctl --user import-environment failed — changes apply on next terminal session"
+            fi
         fi
         unset _envf _eline _ek _import_keys _had_nullglob_imp
     fi
