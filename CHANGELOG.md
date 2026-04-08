@@ -1,5 +1,17 @@
 ry-crostini changelog
 
+2026-04-08  Ryan Musante
+
+- Tagged as v8.1.8
+- Step 2 `VERSION_CODENAME` empty-check hoisted above the `--upgrade-trixie` branch. Step 1 dies on empty codename but `--from-step=2` skips step 1 entirely — the prior empty-guard at step 2 only fired on NON-empty invalid values, so an empty codename fell through to `log "Staying on ;"` and silently skipped the `bookworm-backports` enable. Now dies explicitly at step 2 entry; the downstream `else die "Cannot determine..."` branch is reworded to "Unhandled release codename" since it's no longer reachable via empty.
+- Step 2 trixie suite-rewrite loop now skips `*backports*` source files. On a re-run where step 2a previously wrote `bookworm-backports.list`, `--upgrade-trixie` would mechanically rewrite it to `trixie-backports`, which may not exist at upgrade time and breaks the subsequent `apt-get update`. The backports source is now logged and skipped; user can re-enable trixie-backports manually after upgrade.
+- Step 3 adds `psmisc` to CORE_PKGS. The sudo-keepalive's `fuser /var/lib/dpkg/lock-frontend` probe silently false-negatives on minimal Debian containers where psmisc is not preinstalled, causing the keepalive to count dpkg-lock-held ticks as failures during long Trixie upgrades. `psmisc` is small and its absence was a latent dependency.
+- Steps 1/6/11 microphone capture detection replaced with a `_has_capture_dev` helper using `find /dev/snd -name 'pcmC*D*c'`. The prior literal `pcmC0D0c || pcmC1D0c` check missed any card index ≥2 — rare in Crostini but possible after USB audio pass-through.
+- Step 13 environment.d parser fixes: (1) blank-line check now matches `^[[:space:]]*$` instead of `${_eline// }` so tab-only lines are correctly skipped; (2) surrounding single-quote stripping added alongside double-quote stripping — systemd environment.d accepts both forms and the prior parser fed quoted values through verbatim.
+- Step 10 `run-game` CPU-part grep anchored to `^CPU part[[:space:]]*:` so a stray `0x804`/`0xd0b` substring elsewhere in `/proc/cpuinfo` cannot false-positive the big.LITTLE detection.
+- `check_tool` version-probe timeout raised from 3s to 5s (3 call sites). Cold `vulkaninfo --version` on first run after Mesa shader-cache invalidation can exceed 3s on SC7180P, producing a spurious "version unverified" warn in step 11.
+- Changelog footer: removed stale `dry-run` reference; the `--dry-run` mode was fully removed in v8.1.5.
+
 2026-04-07  Ryan Musante
 
 - Tagged as v8.1.7

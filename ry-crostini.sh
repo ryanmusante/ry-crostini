@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.7
-# Date:    2026-04-07
+# Version: 8.1.8
+# Date:    2026-04-08
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
 #          Trixie upgrade is opt-in via --upgrade-trixie. Bookworm path uses
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.7"
+readonly SCRIPT_VERSION="8.1.8"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -238,6 +238,12 @@ _read_os_release() {
         . /etc/os-release 2>/dev/null || true
         printf '%s' "${!field:-$fallback}"
     )
+}
+
+# _has_capture_dev: true if /dev/snd has any ALSA capture node (pcmC*D*c). Covers card indices ≥2 that the prior C0/C1 literal check missed.
+_has_capture_dev() {
+    [[ -d /dev/snd ]] || return 1
+    find /dev/snd -maxdepth 1 -name 'pcmC*D*c' 2>/dev/null | grep -q .
 }
 
 # logprintf: printf to stdout and log. Callers MUST use literal format strings.
@@ -461,17 +467,17 @@ check_tool() {
         if [[ -n "$flag" ]]; then
             # Some tools (java, scummvm) output version to stderr; try stdout first
             # shellcheck disable=SC2086
-            ver="$(timeout 3 "$cmd" $flag 2>/dev/null | head -1)" || true
+            ver="$(timeout 5 "$cmd" $flag 2>/dev/null | head -1)" || true
             # Some tools (e.g. 7z i on older p7zip) emit a blank first line before the version banner.
             if [[ -z "$ver" ]]; then
                 # shellcheck disable=SC2086
-                ver="$(timeout 3 "$cmd" $flag 2>/dev/null | grep -m1 .)" || true
+                ver="$(timeout 5 "$cmd" $flag 2>/dev/null | grep -m1 .)" || true
             fi
             if [[ -z "$ver" ]]; then
                 # Capture stderr-only (no pipe — avoids SIGPIPE on large output)
                 local _raw
                 # shellcheck disable=SC2086
-                _raw="$(timeout 3 "$cmd" $flag 2>&1 1>/dev/null)" || true
+                _raw="$(timeout 5 "$cmd" $flag 2>&1 1>/dev/null)" || true
                 ver="${_raw%%$'\n'*}"
                 # Skip leading noise (e.g. unzip "caution:" or label-only version lines)
                 if [[ "$ver" == caution:* || "$ver" == [Ww]arning:* || \
@@ -1040,7 +1046,7 @@ if should_run_step 1; then
     fi
 
     # 1k. Microphone access
-    if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+    if _has_capture_dev; then
         log "Microphone capture device: detected ✓"
     else
         log "Microphone not detected."
@@ -1051,7 +1057,7 @@ if should_run_step 1; then
             _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
             read -r -t 300 _ </dev/tty || true
         fi
-        if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+        if _has_capture_dev; then
             log "Microphone now available ✓"
         else
             warn "Microphone still not detected. May need container restart."
@@ -1148,7 +1154,11 @@ EOF
     # 2a. Bookworm-primary path: stay on current codename unless --upgrade-trixie
     _did_trixie_rewrite=false
     _cur_codename="$(_read_os_release VERSION_CODENAME)"
-    if [[ -n "$_cur_codename" ]] && [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
+    # Empty check: step 1 normally dies on empty VERSION_CODENAME, but --from-step=2 skips step 1 entirely. Re-validate here so step 2 cannot fall through with an empty codename (previously: silent "Staying on unknown" + missed backports-enable).
+    if [[ -z "$_cur_codename" ]]; then
+        die "VERSION_CODENAME missing from /etc/os-release — cannot proceed with step 2"
+    fi
+    if [[ ! "$_cur_codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
     if ! $UPGRADE_TRIXIE; then
@@ -1201,6 +1211,10 @@ EOF
         shopt -s nullglob
         for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
             [[ -f "$_sfile" ]] || continue
+            # Skip any *-backports source — mechanical rewrite would produce `trixie-backports` which may not yet exist at upgrade time (breaks apt-get update mid-run). The bookworm-backports.list written by step 2a is the common case on re-run.
+            case "$(basename -- "$_sfile")" in
+                *backports*) log "Skipping backports source: ${_sfile}"; continue ;;
+            esac
             if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
                 _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
                 run sudo cp -- "$_sfile" "$_sfile_bak" \
@@ -1220,7 +1234,7 @@ EOF
     elif [[ "$_cur_codename" == "trixie" ]]; then
         log "Already running Trixie — no upgrade needed"
     else
-        die "Cannot determine current release codename — aborting"
+        die "Unhandled release codename '${_cur_codename}' — aborting"
     fi
     unset _cur_codename
 
@@ -1373,6 +1387,8 @@ if should_run_step 3; then
 
         # System monitoring
         htop ncdu lsof strace
+        # psmisc: provides fuser — used by sudo-keepalive to detect dpkg frontend lock
+        psmisc
 
         # Misc
         tmux screen man-db bash-completion locales
@@ -1585,7 +1601,7 @@ if should_run_step 6; then
     if [[ -d /dev/snd ]]; then
         SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 -printf '.' 2>/dev/null | wc -c)" || true
         log "Audio devices in /dev/snd: ${SND_DEV_COUNT} ✓"
-        if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+        if _has_capture_dev; then
             log "Microphone capture device: detected ✓"
         else
             warn "No capture device. Enable mic: Settings → Developers → Linux → Microphone"
@@ -2419,7 +2435,7 @@ _cmd=("$@")
 _big_cores=""
 if [[ -d /sys/devices/system/cpu/cpu0 ]]; then
     _nparts="$(awk '/^CPU part/ {print $4}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
-    if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '0x804|0xd0b' /proc/cpuinfo 2>/dev/null; then
+    if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '^CPU part[[:space:]]*:[[:space:]]*0x(804|d0b)' /proc/cpuinfo 2>/dev/null; then
         # Collect core indices whose part matches Kryo Gold (0x804) or Cortex-A76 (0xd0b)
         _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x(804|d0b)/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
         # Reject anything that isn't a clean comma-separated digit list
@@ -2568,7 +2584,7 @@ if should_run_step 11; then
         logprintf '  ALSA devices:  %b✗%b /dev/snd not found\n' "$RED" "$RESET"
         ((_verify_fail++)) || true
     fi
-    if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+    if _has_capture_dev; then
         logprintf '  Microphone:    %b✓%b capture device present\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
     else
@@ -2891,8 +2907,9 @@ if should_run_step 13; then
         shopt -s nullglob
         for _envf in "${HOME}/.config/environment.d/"*.conf; do
             while IFS= read -r _eline || [[ -n "$_eline" ]]; do
-                # Skip blank lines and comments
-                [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
+                # Skip blank lines (any whitespace) and comments
+                [[ "$_eline" =~ ^[[:space:]]*$ ]] && continue
+                [[ "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
                 # Require KEY=VALUE shape; strip leading whitespace
                 _eline="${_eline#"${_eline%%[![:space:]]*}"}"
                 [[ "$_eline" == *=* ]] || continue
@@ -2900,8 +2917,10 @@ if should_run_step 13; then
                 _ev="${_eline#*=}"
                 # Validate key: identifier chars only (defends against pathological lines)
                 [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-                # Strip optional surrounding double quotes (systemd accepts both forms)
+                # Strip optional surrounding double OR single quotes (systemd environment.d accepts both forms)
                 if [[ "$_ev" == \"*\" && ${#_ev} -ge 2 ]]; then
+                    _ev="${_ev:1:${#_ev}-2}"
+                elif [[ "$_ev" == \'*\' && ${#_ev} -ge 2 ]]; then
                     _ev="${_ev:1:${#_ev}-2}"
                 fi
                 # Expand ${HOME} / $HOME — the only variable reference systemd environment.d files in this script use (gpu.conf MESA_SHADER_CACHE_DIR). Done as literal string substitution to avoid re-invoking the shell parser.
@@ -2922,7 +2941,8 @@ if should_run_step 13; then
         shopt -s nullglob
         for _envf in "${HOME}/.config/environment.d/"*.conf; do
             while IFS= read -r _eline || [[ -n "$_eline" ]]; do
-                [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
+                [[ "$_eline" =~ ^[[:space:]]*$ ]] && continue
+                [[ "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
                 _eline="${_eline#"${_eline%%[![:space:]]*}"}"
                 [[ "$_eline" == *=* ]] || continue
                 _ek="${_eline%%=*}"
