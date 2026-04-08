@@ -1,6 +1,6 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.1.2-blue)
+![version](https://img.shields.io/badge/version-8.1.6-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
 
@@ -24,7 +24,7 @@ unmodified, and bookworm containers can opt into the legacy
 - [Usage](#usage)
 - [Installation Steps](#installation-steps)
 - [Generated Files](#generated-files)
-  - [System (6 files, requires sudo)](#system-6-files-requires-sudo)
+  - [System (7 files, requires sudo)](#system-7-files-requires-sudo)
   - [User (19 files)](#user-19-files)
 - [Trixie Upgrade (optional)](#trixie-upgrade-optional)
 - [Design](#design)
@@ -98,7 +98,6 @@ bash ry-crostini.sh [OPTIONS]
 | *(none)* | Unattended full install on the current codename (default = bookworm-primary) |
 | `--upgrade-trixie` | Opt INTO `bookworm`→`trixie` codename rewrite in step 2. Triggers a mandatory container restart mid-script. No-op if already on trixie. |
 | `--interactive` | Prompt for ChromeOS toggles |
-| `--dry-run` | Print commands without executing |
 | `--from-step=N` | Resume from step N (1–13; N=11 equivalent to `--verify`) |
 | `--verify` | Run only steps 11–13 (verification and summary) |
 | `--reset` | Clear checkpoint and lock file, restart from step 1 |
@@ -144,15 +143,18 @@ All configuration files are written atomically (tmpfile + mv). Existing files
 are skipped to ensure idempotency. Executable wrappers in `~/.local/bin/` are
 installed with mode 700.
 
-### System (6 files, requires sudo)
+### System (7 files, requires sudo)
 
-On **bookworm** only 5 of these are written — `tmp.mount.d/override.conf` is
-trixie-only (bookworm `/tmp` is disk-backed, not tmpfs).
+The `tmp.mount.d/override.conf` row is trixie-only (bookworm `/tmp` is
+disk-backed, not tmpfs). The `bookworm-backports.list` row is bookworm-only
+(it pulls modern PipeWire/WirePlumber). Both default code paths therefore
+write 6 system files, and the union is 7.
 
 | Path | Step | Purpose |
 |------|------|---------|
 | `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
-| `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB |
+| `/etc/apt/sources.list.d/bookworm-backports.list` | 2 | bookworm-backports repo registration (bookworm-only) |
+| `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB (trixie-only) |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
 | `/etc/default/earlyoom` | 3 | earlyoom OOM killer tuning |
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
@@ -195,7 +197,7 @@ containers are unaffected; the flag is a no-op there.
 | Behavior | Detail |
 |----------|--------|
 | Default (no flag) | Step 2 stays on the current codename. On bookworm, `bookworm-backports` is enabled and step 6 refreshes pipewire/wireplumber from it. No container restart required. |
-| `--upgrade-trixie` on bookworm | Step 2 rewrites codename references in APT sources, runs `apt full-upgrade`, then **hard-stops with an exit 0** so the user can `Shut down Linux` from the ChromeOS shelf. Continuing in-session was observed to trigger SIGTERM mid-run (v8.0.8 exit 143 at step 11). On rerun the script resumes at step 3 against the upgraded trixie container. |
+| `--upgrade-trixie` on bookworm | Step 2 rewrites codename references in APT sources, runs `apt full-upgrade`, then **hard-stops with an exit 0** so the user can `Shut down Linux` from the ChromeOS shelf. Continuing in-session risks SIGTERM when dpkg replaces libc6/dbus/systemd under a running container. On rerun the script resumes at step 3 against the upgraded trixie container. |
 | Codename replacement | Line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved. Legacy `/etc/apt/sources.list` is processed only when present; deb822-only containers are handled via the `*.sources` loop. |
 | Package holds | Crostini lifecycle packages (`cros-sommelier`, etc.) are held during the upgrade and unheld afterward. `cros-guest-tools` remains held permanently when targeting trixie (`cros-im` unavailable on trixie); on bookworm-default it is unheld with the rest. |
 | Backups | Saved with `.pre-trixie` suffix under `/etc/apt/`. |
@@ -224,7 +226,6 @@ containers are unaffected; the flag is a no-op there.
 |----------|---------------|
 | Unattended by default | All prompts auto-answered; `--interactive` restores them |
 | Parallel verification | Step 11 tool checks run concurrently with ordered output replay |
-| Dry run | Zero side effects, zero network, zero interaction |
 | Colored output | Respects `NO_COLOR` |
 | Progress bar | Bottom-pinned step counter with percentage; resize-aware (WINCH) |
 | Logging | `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600; rotated after 7 days) |

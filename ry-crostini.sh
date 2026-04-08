@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.2
+# Version: 8.1.6
 # Date:    2026-04-07
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
 #          Trixie upgrade is opt-in via --upgrade-trixie. Bookworm path uses
 #          bookworm-backports for pipewire 1.4 / wireplumber 0.5 and falls back
 #          to vanilla dosbox + qemu-user (no dosbox-x, no box64).
-# Usage:   bash ry-crostini.sh [--dry-run] [--interactive] [--upgrade-trixie] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
+# Usage:   bash ry-crostini.sh [--interactive] [--upgrade-trixie] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 # NOTE: Script uses sudo internally (~70 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl.
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.2"
+readonly SCRIPT_VERSION="8.1.6"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -37,10 +37,11 @@ unset _start_epoch
 
 # Log file creation deferred until after --help/--version short-circuit (see arg parse)
 
-DRY_RUN=false
 UNATTENDED=true
-UPGRADE_TRIXIE=false  # set by --upgrade-trixie to opt INTO codename rewrite
-IS_BOOKWORM=false  # set true at global init when codename=bookworm
+# set by --upgrade-trixie to opt INTO codename rewrite
+UPGRADE_TRIXIE=false
+# set true at global init when codename=bookworm
+IS_BOOKWORM=false
 _DEFERRED_CHECKPOINT=""
 _DEFERRED_CHECKPOINT_MSG=""
 _CHECKPOINT_OVERRIDE=""
@@ -70,17 +71,15 @@ cleanup() {
     local rc=$?
     # Prevent recursive cleanup from nested signals
     trap - EXIT INT TERM HUP PIPE QUIT WINCH
-    # Disable set -e inside cleanup to guarantee full execution.
-    # Safe: cleanup is the final code path before exit; no restore needed.
+    # Disable set -e inside cleanup to guarantee full execution. Safe: cleanup is the final code path before exit; no restore needed.
     set +e
     # Restore terminal scroll region before any output
     _progress_cleanup
     # Strip ANSI escape codes from log file (single-pass; replaces racy per-line sed)
     _strip_log_ansi
-    # Stop sudo credential keepalive (disowned — kill by raw PID)
+    # Stop sudo credential keepalive (disowned — kill by raw PID; wait is impossible because the process is no longer in this shell's job table after disown)
     if [[ -n "${_SUDO_KEEPALIVE_PID:-}" ]] && kill -0 "$_SUDO_KEEPALIVE_PID" 2>/dev/null; then
         kill "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
-        wait "$_SUDO_KEEPALIVE_PID" 2>/dev/null || true
     fi
     # Restore terminal state — keepalive/progress escape sequences can corrupt tty when killed mid-write
     if [[ -t 0 ]]; then stty sane 2>/dev/null || true; fi
@@ -109,8 +108,7 @@ cleanup() {
             _cleanup_warn "Script exited with code $rc. Re-run to resume from checkpoint."
         fi
     fi
-    # Re-raise caught signal for correct 128+N exit code to parent.
-    # Allowlist defends against $_received_signal being clobbered.
+    # Re-raise caught signal for correct 128+N exit code to parent. Allowlist defends against $_received_signal being clobbered.
     if [[ -n "${_received_signal:-}" ]]; then
         case "$_received_signal" in
             INT|TERM|HUP|PIPE|QUIT) kill -"$_received_signal" "$$" ;;
@@ -231,9 +229,7 @@ err() {
 }
 die()  { err "$*"; exit 1; }
 
-# _read_os_release: print a single /etc/os-release field, with fallback.
-# Usage: _read_os_release FIELD [FALLBACK]
-# Sources /etc/os-release in a subshell to avoid polluting caller scope.
+# _read_os_release: print a single /etc/os-release field, with fallback. Usage: _read_os_release FIELD [FALLBACK] Sources /etc/os-release in a subshell to avoid polluting caller scope.
 _read_os_release() {
     local field="$1" fallback="${2:-}"
     [[ -f /etc/os-release ]] || { printf '%s' "$fallback"; return 0; }
@@ -293,7 +289,7 @@ step_banner() {
 
 # Checkpoint system
 get_checkpoint() {
-    # In-memory override for --from-step/--verify (set_checkpoint is a no-op in --dry-run)
+    # In-memory override for --from-step/--verify
     if [[ -n "$_CHECKPOINT_OVERRIDE" ]]; then
         echo "$_CHECKPOINT_OVERRIDE"
         return 0
@@ -314,10 +310,6 @@ get_checkpoint() {
 
 set_checkpoint() {
     _progress_draw "$1"
-    if $DRY_RUN; then
-        log "[DRY-RUN] set checkpoint $1"
-        return 0
-    fi
     # Atomic write: tmpfile + mv prevents empty/partial checkpoint on crash
     local _ckpt_tmp
     _ckpt_tmp="$(mktemp "${STEP_FILE}.tmp_XXXXXXXX")" || { warn "Cannot create checkpoint tmpfile"; return 1; }
@@ -332,11 +324,7 @@ should_run_step() {
     [[ "$step_num" -gt "$checkpoint" ]]
 }
 
-# _tee_log: tee stdin to terminal + log file. ANSI stripped at exit by _strip_log_ansi.
-# Filters known-benign upstream noise (anchored patterns; will not match script output):
-#   F3 dpkg usrmerge residue   — "unable to delete old directory '/…': Directory not empty"
-#   F4 udisks2 udevadm trigger — "…: Failed to write 'change' to '/sys/…/uevent': Permission denied"
-#   F5 dpkg t64 ABI transition — "systemctl: error while loading shared libraries: libcrypto.so.3: …"
+# _tee_log: tee stdin to terminal + log file. ANSI stripped at exit by _strip_log_ansi. Filters known-benign upstream noise: dpkg usrmerge residue, udisks2 udevadm trigger EPERM, dpkg t64 ABI transition libcrypto.so.3 lookup. Patterns are anchored and will not match script output.
 _tee_log() {
     grep --line-buffered -vE \
         -e "^dpkg: warning: unable to delete old directory '/[^']+': Directory not empty[[:space:]]*\$" \
@@ -345,12 +333,8 @@ _tee_log() {
         | tee -a "$LOG_FILE"
 }
 
-# run: execute "$@" directly; respects dry-run. stderr merged into stdout (2>&1) for log capture.
+# run: execute "$@" directly. stderr merged into stdout (2>&1) for log capture.
 run() {
-    if $DRY_RUN; then
-        log "[DRY-RUN] $*"
-        return 0
-    fi
     log "[EXEC] $*"
     local rc _prev_e=false _prev_pf=false
     # Save caller's shell option state before disabling
@@ -375,15 +359,9 @@ run() {
     return "$rc"
 }
 
-# _write_file_impl: atomic write stdin to path with given mode, respects dry-run
+# _write_file_impl: atomic write stdin to path with given mode
 _write_file_impl() {
     local dest="$1" mode="$2"
-    if $DRY_RUN; then
-        log "[DRY-RUN] write $dest"
-        # Consume stdin so heredoc doesn't error
-        cat > /dev/null
-        return 0
-    fi
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
@@ -400,19 +378,12 @@ _write_file_impl() {
 }
 # write_file: atomic write stdin to path, mode 644
 write_file() { _write_file_impl "$1" 644; }
-# write_file_private: atomic write stdin to path, mode 600
-write_file_private() { _write_file_impl "$1" 600; }
 # write_file_exec: atomic write stdin to path, mode 700. For user scripts/wrappers.
 write_file_exec() { _write_file_impl "$1" 700; }
 
-# write_file_sudo: atomic write via sudo, respects dry-run. Output mode 644.
+# write_file_sudo: atomic write via sudo. Output mode 644.
 write_file_sudo() {
     local dest="$1"
-    if $DRY_RUN; then
-        log "[DRY-RUN] sudo write $dest"
-        cat > /dev/null
-        return 0
-    fi
     sudo mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
@@ -432,10 +403,6 @@ write_file_sudo() {
 
 # install_pkgs_best_effort: batch install, fallback to per-package. Returns 1 if any failed.
 install_pkgs_best_effort() {
-    if $DRY_RUN; then
-        log "[DRY-RUN] sudo DEBIAN_FRONTEND=noninteractive apt-get install -y $*"
-        return 0
-    fi
     # Try batch first — succeeds in the common case (O(1) apt call)
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; then
         return 0
@@ -579,9 +546,7 @@ _parallel_check_tools() {
     for _pct_entry in "$@"; do
         printf -v _pct_idx '%04d' "$_pct_n"
         (
-            # Suppress LOG_FILE writes inside subshell — replay handles logging.
-            # Note: this assignment is subshell-local (SC2030/2031); parent's
-            # LOG_FILE binding is unaffected, so the "clobber" is purely scoped.
+            # Suppress LOG_FILE writes inside subshell — replay handles logging. Note: this assignment is subshell-local (SC2030/2031); parent's LOG_FILE binding is unaffected, so the "clobber" is purely scoped.
             LOG_FILE=/dev/null
             _verify_pass=0; _verify_fail=0; _verify_warn=0
             check_tool "${_pct_entry%%|*}" "${_pct_entry#*|}"
@@ -628,7 +593,6 @@ USAGE:
     bash ${SCRIPT_NAME} [OPTIONS]
 
 OPTIONS:
-    --dry-run      Print commands without executing
     --interactive  Prompt for ChromeOS toggles (default: unattended)
     --upgrade-trixie  Opt INTO Debian Trixie codename upgrade in step 2.
                       Default behavior is to stay on the current codename
@@ -680,10 +644,7 @@ EOF
     exit 0
 }
 
-# Pre-scan argv for --help / --version before any LOG_FILE creation so they
-# work in read-only $HOME and never leave a stray log file behind. Also catches
-# them ahead of die() calls in the full arg-parse loop (which would create the
-# log file at default umask via err()'s >> redirection).
+# Pre-scan argv for --help / --version before any LOG_FILE creation so they work in read-only $HOME and never leave a stray log file behind. Also catches them ahead of die() calls in the full arg-parse loop (which would create the log file at default umask via err()'s >> redirection).
 for _arg in "$@"; do
     case "$_arg" in
         --help)    usage ;;
@@ -703,10 +664,8 @@ fi
 # shellcheck disable=SC2031  # LOG_FILE references in this loop are main-shell, not subshell
 for arg in "$@"; do
     case "$arg" in
-        --dry-run) DRY_RUN=true ;;
         --interactive) UNATTENDED=false ;;
         --upgrade-trixie) UPGRADE_TRIXIE=true ;;
-        --skip-trixie) ;;  # accepted as no-op for backward compat (bookworm-stay is now default)
         --from-step=*)
             if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
                 die "Cannot specify --from-step more than once, or combine with --verify"
@@ -728,7 +687,8 @@ for arg in "$@"; do
             _DEFERRED_CHECKPOINT="10"
             _DEFERRED_CHECKPOINT_MSG="Checkpoint set to 10; running verification only (steps 11-13)."
             ;;
-        --help|--version) ;;  # already handled by pre-scan above
+        # already handled by pre-scan above
+        --help|--version) ;;
         --reset)
             # Detect --force anywhere in argv (order-independent)
             _reset_force=false
@@ -764,8 +724,7 @@ for arg in "$@"; do
             rm -f -- "$STEP_FILE"; rm -f -- "$LOG_FILE" 2>/dev/null; echo "Checkpoint and lock cleared."; exit 0
             ;;
         --force)
-            # Only meaningful with --reset; warn if passed standalone so
-            # typos like `--forced` → `--force` don't silently do nothing.
+            # Only meaningful with --reset; warn if passed standalone so typos like `--forced` → `--force` don't silently do nothing.
             _has_reset=false
             for _a in "$@"; do [[ "$_a" == "--reset" ]] && { _has_reset=true; break; }; done
             unset _a
@@ -799,9 +758,7 @@ if ! mkdir "$LOCK_FILE" 2>/dev/null; then
     fi
     unset _old_pid
 fi
-# Mark ownership immediately after successful mkdir — closes the window where a
-# signal between mkdir and PID-file write would orphan the lock dir. cleanup()
-# will now remove it on any failure path below.
+# Mark ownership immediately after successful mkdir — closes the window where a signal between mkdir and PID-file write would orphan the lock dir. cleanup() will now remove it on any failure path below.
 _LOCK_ACQUIRED=true
 _pid_tmp="$(mktemp "$LOCK_FILE/.pid_XXXXXXXX")" \
     || die "Cannot create PID tmpfile"
@@ -812,15 +769,14 @@ unset _pid_tmp
 
 # Apply deferred checkpoint (must be inside lock to avoid race with concurrent instances)
 if [[ -n "$_DEFERRED_CHECKPOINT" ]]; then
-    # In-memory override ensures should_run_step works in --dry-run
+    # In-memory override ensures should_run_step works without needing to read STEP_FILE
     _CHECKPOINT_OVERRIDE="$_DEFERRED_CHECKPOINT"
     set_checkpoint "$_DEFERRED_CHECKPOINT" || die "Cannot write checkpoint file ${STEP_FILE} — is \$HOME writable?"
     log "$_DEFERRED_CHECKPOINT_MSG"
 fi
 unset _DEFERRED_CHECKPOINT _DEFERRED_CHECKPOINT_MSG
 
-# Global IS_BOOKWORM detection — runs every invocation (resume, --verify, --from-step).
-# Bookworm is the primary target; trixie is opt-in via --upgrade-trixie.
+# Global IS_BOOKWORM detection — runs every invocation (resume, --verify, --from-step). Bookworm is the primary target; trixie is opt-in via --upgrade-trixie.
 _global_codename="$(_read_os_release VERSION_CODENAME)"
 if [[ "$_global_codename" == "bookworm" ]] && ! $UPGRADE_TRIXIE; then
     IS_BOOKWORM=true
@@ -832,50 +788,39 @@ elif [[ "$_global_codename" == "trixie" ]]; then
 fi
 unset _global_codename
 
-# Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...`
-# because sudo's env_reset strips it. A global export here would be redundant.
+# Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...` because sudo's env_reset strips it. A global export here would be redundant.
 
-# Sudo credential keepalive — renew every 60 s; skipped in --dry-run; killed in cleanup().
-# Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't
-# silently stall on apt-get sudo timeouts after credential expiry, while still tolerating
-# the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-*
-# are themselves being replaced by dpkg. Failures while the dpkg frontend lock is held
-# do not count — the foreground apt already has its credentials and the keepalive's
-# job is moot until dpkg releases the lock.
-if ! $DRY_RUN; then
-    (
-        _ka_fails=0
-        while true; do
-            if sudo -n -v 2>/dev/null; then
-                _ka_fails=0
-            elif command -v fuser >/dev/null 2>&1 \
-                && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
-                # dpkg frontend lock held — apt is running and may be replacing
-                # sudo/PAM right now. Don't count this tick.
-                :
-            else
-                _ka_fails=$((_ka_fails + 1))
-                if (( _ka_fails >= 15 )); then
-                    printf '\n[FATAL] sudo keepalive failed %d times (~15 min) — credentials expired or revoked. Aborting.\n' \
-                        "$_ka_fails" >&2
-                    kill -TERM "$$" 2>/dev/null
-                    exit 1
-                fi
+# Sudo credential keepalive — renew every 60 s; killed in cleanup(). Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't silently stall on apt-get sudo timeouts after credential expiry, while still tolerating the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-* are themselves being replaced by dpkg. Failures while the dpkg frontend lock is held do not count — the foreground apt already has its credentials and the keepalive's job is moot until dpkg releases the lock.
+(
+    _ka_fails=0
+    while true; do
+        if sudo -n -v 2>/dev/null; then
+            _ka_fails=0
+        elif command -v fuser >/dev/null 2>&1 \
+            && fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            # dpkg frontend lock held — apt is running and may be replacing sudo/PAM right now. Don't count this tick.
+            :
+        else
+            _ka_fails=$((_ka_fails + 1))
+            if (( _ka_fails >= 15 )); then
+                printf '\n[FATAL] sudo keepalive failed %d times (~15 min) — credentials expired or revoked. Aborting.\n' \
+                    "$_ka_fails" >&2
+                kill -TERM "$$" 2>/dev/null
+                exit 1
             fi
-            sleep 60
-        done
-    ) &
-    _SUDO_KEEPALIVE_PID=$!
-    disown "$_SUDO_KEEPALIVE_PID"
-fi
+        fi
+        sleep 60
+    done
+) &
+_SUDO_KEEPALIVE_PID=$!
+disown "$_SUDO_KEEPALIVE_PID"
 
 # Initialize progress bar (requires terminal, checkpoint, and color globals)
 _progress_init
 
-# Rotate old log files — keep last 7 days (skipped in dry-run to avoid touching disk)
-if ! $DRY_RUN; then
-    find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null || true
-fi
+# Rotate old log files — keep last 7 days. Second find sweeps orphaned _strip_log_ansi tmpfiles (.log.strip_XXXXXXXX) that the main glob does not match — these only exist if a prior run was killed mid-strip between mktemp and the success/failure cleanup branches.
+find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log' -mtime +7 -delete 2>/dev/null || true
+find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log.strip_*' -mtime +1 -delete 2>/dev/null || true
 
 # _gpu_conf_content: emit gpu.conf heredoc. Called by step 5 (fresh-write and upgrade-path).
 _gpu_conf_content() {
@@ -994,11 +939,7 @@ if should_run_step 1; then
     # 1a. Architecture
     CURRENT_ARCH="$(uname -m)"
     if [[ "$CURRENT_ARCH" != "$EXPECTED_ARCH" ]]; then
-        if $DRY_RUN; then
-            warn "[DRY-RUN] Architecture mismatch: expected ${EXPECTED_ARCH}, got ${CURRENT_ARCH}. Continuing for preview."
-        else
-            die "Expected architecture ${EXPECTED_ARCH}, got ${CURRENT_ARCH}. This script is for the Duet 5 (ARM64) only."
-        fi
+        die "Expected architecture ${EXPECTED_ARCH}, got ${CURRENT_ARCH}. This script is for the Duet 5 (ARM64) only."
     fi
     log "Architecture: ${CURRENT_ARCH} ✓"
 
@@ -1052,11 +993,8 @@ if should_run_step 1; then
         log "GPU render node: /dev/dri/renderD128 already active ✓"
     fi
 
-    # 1g. Network connectivity (uses detected codename for repo URL)
-    # Worst-case budget: 3 attempts × max-time 5s + 2 × retry-delay 1s ≈ 17s
-    if $DRY_RUN; then
-        log "[DRY-RUN] skip network check"
-    elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
+    # 1g. Network connectivity (uses detected codename for repo URL) Worst-case budget: 3 attempts × max-time 5s + 2 × retry-delay 1s ≈ 17s
+    if curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -1064,11 +1002,7 @@ if should_run_step 1; then
 
     # 1h. Not running as root
     if [[ "$EUID" -eq 0 ]]; then
-        if $DRY_RUN; then
-            warn "[DRY-RUN] Running as root. Would abort in live mode."
-        else
-            die "Do not run this script as root. Run as your normal user (sudo is used internally where needed)."
-        fi
+        die "Do not run this script as root. Run as your normal user (sudo is used internally where needed)."
     fi
     log "Running as user: $(whoami) ✓"
 
@@ -1087,29 +1021,21 @@ if should_run_step 1; then
         log "Pointer lock: verify chrome://flags/#exo-pointer-lock is Enabled (required for mouse capture in games)"
     else
         log "GPU acceleration not detected."
-        if ! $DRY_RUN; then
-            if ! $UNATTENDED; then
-                _prompt '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
-                _prompt '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
-                _prompt '%b  → Also enable "exo-pointer-lock" (required for mouse capture in games).%b\n' "$YELLOW" "$RESET"
-                _prompt '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
-                _prompt '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
-                open_chromeos_url "chrome://flags/#crostini-gpu-support"
-                sleep 2
-                _prompt '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r -t 300 _ </dev/tty || true
-            fi
-            if [[ -e /dev/dri/renderD128 ]]; then
-                log "GPU acceleration now active ✓"
-            else
-                warn "GPU not yet active — requires full Chromebook reboot. Continuing."
-            fi
+        if ! $UNATTENDED; then
+            _prompt '%b  → The chrome://flags page is opening in ChromeOS now.%b\n' "$YELLOW" "$RESET"
+            _prompt '%b  → Search for "crostini-gpu-support" and set to "Enabled".%b\n' "$YELLOW" "$RESET"
+            _prompt '%b  → Also enable "exo-pointer-lock" (required for mouse capture in games).%b\n' "$YELLOW" "$RESET"
+            _prompt '%b  → A full Chromebook reboot is required for GPU to activate.%b\n' "$YELLOW" "$RESET"
+            _prompt '%b  → GPU packages will be installed now regardless.%b\n\n' "$YELLOW" "$RESET"
+            open_chromeos_url "chrome://flags/#crostini-gpu-support"
+            sleep 2
+            _prompt '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
+            read -r -t 300 _ </dev/tty || true
+        fi
+        if [[ -e /dev/dri/renderD128 ]]; then
+            log "GPU acceleration now active ✓"
         else
-            if ! $UNATTENDED; then
-                log "[DRY-RUN] would open chrome://flags/#crostini-gpu-support"
-            else
-                log "[DRY-RUN] GPU flag check skipped (unattended; use --interactive to open chrome://flags)"
-            fi
+            warn "GPU not yet active — requires full Chromebook reboot. Continuing."
         fi
     fi
 
@@ -1118,38 +1044,28 @@ if should_run_step 1; then
         log "Microphone capture device: detected ✓"
     else
         log "Microphone not detected."
-        if ! $DRY_RUN; then
-            if ! $UNATTENDED; then
-                _prompt '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
-                open_chromeos_url "chrome://os-settings/crostini"
-                sleep 2
-                _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
-                read -r -t 300 _ </dev/tty || true
-            fi
-            if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
-                log "Microphone now available ✓"
-            else
-                warn "Microphone still not detected. May need container restart."
-            fi
+        if ! $UNATTENDED; then
+            _prompt '%b  → Toggle "Allow Linux to access your microphone" → On%b\n\n' "$YELLOW" "$RESET"
+            open_chromeos_url "chrome://os-settings/crostini"
+            sleep 2
+            _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
+            read -r -t 300 _ </dev/tty || true
+        fi
+        if [[ -e /dev/snd/pcmC0D0c ]] || [[ -e /dev/snd/pcmC1D0c ]]; then
+            log "Microphone now available ✓"
         else
-            if ! $UNATTENDED; then
-                log "[DRY-RUN] would open chrome://os-settings/crostini for mic toggle"
-            else
-                log "[DRY-RUN] mic toggle skipped (unattended; use --interactive to open settings)"
-            fi
+            warn "Microphone still not detected. May need container restart."
         fi
     fi
 
     # 1l. USB device passthrough
-    if ! $DRY_RUN && ! $UNATTENDED; then
+    if ! $UNATTENDED; then
         log "Opening USB device management..."
         _prompt '%b  → Toggle on any USB devices you need (drives, Arduino, etc.)%b\n\n' "$YELLOW" "$RESET"
         open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN && ! $UNATTENDED; then
-        log "[DRY-RUN] would open chrome://os-settings/crostini/usbPreferences"
     fi
 
     # 1m. Shared folders
@@ -1159,21 +1075,19 @@ if should_run_step 1; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
             log "No shared folders."
-            if ! $DRY_RUN && ! $UNATTENDED; then
+            if ! $UNATTENDED; then
                 _prompt '%b  → Click "Share folder" to make ChromeOS folders visible at /mnt/chromeos/%b\n\n' "$YELLOW" "$RESET"
                 open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
                 sleep 2
                 _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
                 read -r -t 300 _ </dev/tty || true
-            elif $DRY_RUN && ! $UNATTENDED; then
-                log "[DRY-RUN] would open chrome://os-settings/crostini/sharedPaths"
             fi
         fi
         unset SHARED_COUNT
     fi
 
     # 1n. Port forwarding
-    if ! $DRY_RUN && ! $UNATTENDED; then
+    if ! $UNATTENDED; then
         log "Opening port forwarding settings..."
         _prompt '%b  → Add any dev server ports (3000, 5000, 8080, etc.)%b\n' "$YELLOW" "$RESET"
         _prompt '%b  → Crostini also auto-detects listening ports in most cases.%b\n\n' "$YELLOW" "$RESET"
@@ -1181,22 +1095,18 @@ if should_run_step 1; then
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
         read -r -t 300 _ </dev/tty || true
-    elif $DRY_RUN && ! $UNATTENDED; then
-        log "[DRY-RUN] would open chrome://os-settings/crostini/portForwarding"
     fi
 
     # 1o. Disk size advisory (reuses cached AVAIL_MB from 1e)
     AVAIL_MB_NOW="$AVAIL_MB"
     if [[ "$AVAIL_MB_NOW" -lt 10240 ]]; then
         log "Disk under 10 GB free."
-        if ! $DRY_RUN && ! $UNATTENDED; then
+        if ! $UNATTENDED; then
             _prompt '%b  → Consider increasing Linux disk allocation (20-30 GB recommended).%b\n\n' "$YELLOW" "$RESET"
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
             _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
             read -r -t 300 _ </dev/tty || true
-        elif $DRY_RUN && ! $UNATTENDED; then
-            log "[DRY-RUN] would open chrome://os-settings/crostini for disk resize"
         fi
     else
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
@@ -1227,9 +1137,7 @@ EOF
     unset APT_PARALLEL
 
     # Disable man-db auto-update trigger (30-60 s on ARM64 per apt install)
-    if $DRY_RUN; then
-        log "[DRY-RUN] disable man-db auto-update"
-    elif command -v debconf-communicate &>/dev/null; then
+    if command -v debconf-communicate &>/dev/null; then
         if echo "set man-db/auto-update false" | sudo debconf-communicate &>/dev/null; then
             log "man-db auto-update disabled (run 'sudo mandb' manually when needed)"
         else
@@ -1250,12 +1158,8 @@ EOF
             log "Enabling bookworm-backports for pipewire 1.4 / wireplumber 0.5"
             _BPO_LIST="/etc/apt/sources.list.d/bookworm-backports.list"
             if [[ ! -f "$_BPO_LIST" ]] && ! grep -rq "bookworm-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
-                if $DRY_RUN; then
-                    log "[DRY-RUN] write ${_BPO_LIST} with bookworm-backports main"
-                else
-                    printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
-                        | write_file_sudo "$_BPO_LIST"
-                fi
+                printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
+                    | write_file_sudo "$_BPO_LIST"
             else
                 log "bookworm-backports already configured"
             fi
@@ -1264,64 +1168,55 @@ EOF
     elif [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         _did_trixie_rewrite=true
-        if $DRY_RUN; then
-            log "[DRY-RUN] cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie (if present)"
-            log "[DRY-RUN] sed -i on deb/deb-src lines: ${_cur_codename} → trixie in /etc/apt/sources.list (if present)"
-            log "[DRY-RUN] sed -i on repo lines: ${_cur_codename} → trixie in cros.list and additional .list/.sources in sources.list.d/ (with backup to /etc/apt/)"
+        # Legacy /etc/apt/sources.list is OPTIONAL — recent Crostini bookworm containers ship deb822-only (debian.sources, no legacy file). The *.sources loop below handles those. Only process the legacy file when it actually exists.
+        if [[ -f /etc/apt/sources.list ]]; then
+            if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+                die "Cannot back up /etc/apt/sources.list — aborting upgrade"
+            fi
+            # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
+            if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
+                warn "sources.list rewrite failed — restoring backup"
+                run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
+                    || die "Cannot restore sources.list backup — manual fix required"
+                die "Trixie upgrade aborted"
+            fi
+            log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
         else
-            # Legacy /etc/apt/sources.list is OPTIONAL — recent Crostini bookworm
-            # containers ship deb822-only (debian.sources, no legacy file). The
-            # *.sources loop below handles those. Only process the legacy file
-            # when it actually exists.
-            if [[ -f /etc/apt/sources.list ]]; then
-                if ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
-                    die "Cannot back up /etc/apt/sources.list — aborting upgrade"
-                fi
-                # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
-                if ! run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list; then
-                    warn "sources.list rewrite failed — restoring backup"
-                    run sudo cp -- /etc/apt/sources.list.pre-trixie /etc/apt/sources.list \
-                        || die "Cannot restore sources.list backup — manual fix required"
-                    die "Trixie upgrade aborted"
-                fi
-                log "Rewrote /etc/apt/sources.list: ${_cur_codename} → trixie"
-            else
-                log "No legacy /etc/apt/sources.list — deb822-only layout; deferring to *.sources loop"
-            fi
-            # Also update cros-packages repo if present (resets on container restart)
-            if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-                run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
-                if run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
-                    log "Rewrote cros.list: ${_cur_codename} → trixie"
-                    log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
-                    log "Debian repos in sources.list are permanent — only cros-packages affected"
-                else
-                    warn "cros.list rewrite failed — continuing (non-fatal)"
-                fi
-            fi
-            # Also handle additional .list/.sources files; backups in /etc/apt/ (not sources.list.d/)
-            _had_nullglob=false
-            shopt -q nullglob && _had_nullglob=true
-            shopt -s nullglob
-            for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-                [[ -f "$_sfile" ]] || continue
-                if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
-                    _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
-                    run sudo cp -- "$_sfile" "$_sfile_bak" \
-                        || { warn "Cannot back up ${_sfile} — skipping"; continue; }
-                    # .list format: replace on deb/deb-src lines; .sources (deb822): replace on Suites: lines
-                    if [[ "$_sfile" == *.sources ]]; then
-                        run sudo sed -i "/^Suites:/s/${_cur_codename}/trixie/g" "$_sfile" \
-                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
-                    else
-                        run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" "$_sfile" \
-                            || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
-                    fi
-                fi
-            done
-            $_had_nullglob || shopt -u nullglob
-            unset _sfile _sfile_bak _had_nullglob
+            log "No legacy /etc/apt/sources.list — deb822-only layout; deferring to *.sources loop"
         fi
+        # Also update cros-packages repo if present (resets on container restart)
+        if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
+            run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
+            if run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" /etc/apt/sources.list.d/cros.list; then
+                log "Rewrote cros.list: ${_cur_codename} → trixie"
+                log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
+                log "Debian repos in sources.list are permanent — only cros-packages affected"
+            else
+                warn "cros.list rewrite failed — continuing (non-fatal)"
+            fi
+        fi
+        # Also handle additional .list/.sources files; backups in /etc/apt/ (not sources.list.d/)
+        _had_nullglob=false
+        shopt -q nullglob && _had_nullglob=true
+        shopt -s nullglob
+        for _sfile in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [[ -f "$_sfile" ]] || continue
+            if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
+                _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
+                run sudo cp -- "$_sfile" "$_sfile_bak" \
+                    || { warn "Cannot back up ${_sfile} — skipping"; continue; }
+                # .list format: replace on deb/deb-src lines; .sources (deb822): replace on Suites: lines
+                if [[ "$_sfile" == *.sources ]]; then
+                    run sudo sed -i "/^Suites:/s/${_cur_codename}/trixie/g" "$_sfile" \
+                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                else
+                    run sudo sed -i "/^deb/s/${_cur_codename}/trixie/g" "$_sfile" \
+                        || warn "Failed to update ${_sfile} — backup at ${_sfile_bak}"
+                fi
+            fi
+        done
+        $_had_nullglob || shopt -u nullglob
+        unset _sfile _sfile_bak _had_nullglob
     elif [[ "$_cur_codename" == "trixie" ]]; then
         log "Already running Trixie — no upgrade needed"
     else
@@ -1338,21 +1233,15 @@ EOF
         | awk '/^ii/{print $2}'
     )
     if [[ "${#_CROS_HOLD_PKGS[@]}" -gt 0 ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] apt-mark hold ${_CROS_HOLD_PKGS[*]}"
-        else
-            run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
-                || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
-            log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
-        fi
+        run sudo apt-mark hold "${_CROS_HOLD_PKGS[@]}" \
+            || warn "apt-mark hold failed — Crostini packages may be upgraded (risky)"
+        log "Held Crostini packages: ${_CROS_HOLD_PKGS[*]}"
     fi
 
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get update; then
         # NOTE: dpkg /lib/* "Directory not empty" warnings during Trixie upgrade are harmless (UsrMerge)
         log "NOTE: dpkg /lib/* directory warnings during upgrade are expected (UsrMerge transition)"
-        # full-upgrade only — plain `upgrade` keeps back ~160 pkgs on codename transition
-        # because it cannot add/remove. Running both wastes ~4 min and risks SIGTERM.
-        # --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
+        # full-upgrade only — plain `upgrade` keeps back ~160 pkgs on codename transition because it cannot add/remove. Running both wastes ~4 min and risks SIGTERM. --force-confdef --force-confold: prevent interactive dpkg prompts during upgrade
         run sudo DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y \
             -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
             || warn "apt-get full-upgrade had issues"
@@ -1360,8 +1249,7 @@ EOF
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
-    # @@WHY: cros-guest-tools stays held permanently (cros-im unavailable on Trixie)
-    # On bookworm, cros-im IS available — unhold everything.
+    # @@WHY: cros-guest-tools stays held permanently (cros-im unavailable on Trixie) On bookworm, cros-im IS available — unhold everything.
     _CROS_UNHOLD_PKGS=()
     for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
         if ! $IS_BOOKWORM; then
@@ -1370,13 +1258,8 @@ EOF
         _CROS_UNHOLD_PKGS+=("$_cpkg")
     done
     if [[ "${#_CROS_UNHOLD_PKGS[@]}" -gt 0 ]]; then
-        if $DRY_RUN; then
-            log "[DRY-RUN] apt-mark unhold ${_CROS_UNHOLD_PKGS[*]}"
-            log "[DRY-RUN] cros-guest-tools remains held (cros-im unavailable on Trixie)"
-        else
-            run sudo apt-mark unhold "${_CROS_UNHOLD_PKGS[@]}" || warn "apt-mark unhold failed"
-            log "cros-guest-tools remains held (cros-im unavailable on Trixie)"
-        fi
+        run sudo apt-mark unhold "${_CROS_UNHOLD_PKGS[@]}" || warn "apt-mark unhold failed"
+        log "cros-guest-tools remains held (cros-im unavailable on Trixie)"
     fi
     unset _CROS_HOLD_PKGS _CROS_UNHOLD_PKGS _cpkg
 
@@ -1384,35 +1267,28 @@ EOF
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     # 2c. Verify upgrade landed on Trixie
-    if ! $DRY_RUN; then
-        _post_codename="$(_read_os_release VERSION_CODENAME)"
-        if [[ "$_post_codename" == "trixie" ]]; then
-            log "Trixie upgrade verified: $(_read_os_release PRETTY_NAME 'Debian 13')"
-        elif [[ -n "$_post_codename" ]]; then
-            warn "Expected trixie after upgrade, got ${_post_codename} — partial upgrade?"
-            warn "Re-run the script or manually: sudo apt update && sudo apt full-upgrade"
-        fi
-        unset _post_codename
+    _post_codename="$(_read_os_release VERSION_CODENAME)"
+    if [[ "$_post_codename" == "trixie" ]]; then
+        log "Trixie upgrade verified: $(_read_os_release PRETTY_NAME 'Debian 13')"
+    elif [[ -n "$_post_codename" ]]; then
+        warn "Expected trixie after upgrade, got ${_post_codename} — partial upgrade?"
+        warn "Re-run the script or manually: sudo apt update && sudo apt full-upgrade"
     fi
+    unset _post_codename
 
-    # 2d. Cap /tmp tmpfs at 512M (OOM mitigation for 4 GB RAM; write before first Trixie restart)
-    # Skipped on bookworm: bookworm /tmp is disk-backed, not tmpfs.
+    # 2d. Cap /tmp tmpfs at 512M (OOM mitigation for 4 GB RAM; write before first Trixie restart) Skipped on bookworm: bookworm /tmp is disk-backed, not tmpfs.
     if $IS_BOOKWORM; then
         log "Skipping /tmp tmpfs cap on bookworm (disk-backed /tmp)"
     else
         _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
         if [[ ! -f "$_TMP_DROPIN" ]]; then
-            if $DRY_RUN; then
-                log "[DRY-RUN] cap /tmp tmpfs at 512M via drop-in"
-            else
-                write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
+            write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
 [Mount]
 Options=mode=1777,strictatime,nosuid,nodev,size=512M,nr_inodes=1m
 TMPEOF
-                run sudo systemctl daemon-reload \
-                    || warn "daemon-reload failed — /tmp cap takes effect on next container start"
-                log "/tmp tmpfs capped at 512M (OOM mitigation)"
-            fi
+            run sudo systemctl daemon-reload \
+                || warn "daemon-reload failed — /tmp cap takes effect on next container start"
+            log "/tmp tmpfs capped at 512M (OOM mitigation)"
         else
             log "tmp.mount drop-in already exists"
         fi
@@ -1420,9 +1296,7 @@ TMPEOF
     fi
 
     # 2e. Migrate APT sources to deb822 format
-    if $DRY_RUN; then
-        log "[DRY-RUN] apt -y modernize-sources"
-    elif apt --help 2>/dev/null | grep -q 'modernize-sources'; then
+    if apt --help 2>/dev/null | grep -q 'modernize-sources'; then
         if run sudo DEBIAN_FRONTEND=noninteractive apt -y modernize-sources; then
             log "APT sources migrated to deb822 format"
             # Guard: modernize-sources may create cros.sources while cros.list remains, causing duplicate entries.
@@ -1477,7 +1351,7 @@ CROSEOF
         warn "Trixie dist-upgrade replaced libc6/dbus/systemd under a running container."
         warn "REQUIRED: 'Shut down Linux' from the ChromeOS shelf, then re-run this script."
         warn "Checkpoint saved — re-run will resume at step 3 automatically."
-        warn "Hard-stop: continuing in-session risks SIGTERM mid-run (observed in v8.0.8 at step 11)."
+        warn "Hard-stop: continuing in-session risks SIGTERM mid-run when dpkg replaces libc6/dbus/systemd."
         exit 0
     fi
     log "No codename rewrite performed: continuing in-session to step 3 (no restart required)."
@@ -1520,14 +1394,14 @@ if should_run_step 3; then
     # Create common symlinks for renamed Debian packages
     if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
         if run sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd; then
-            $DRY_RUN || log "Symlinked fdfind → fd"
+            log "Symlinked fdfind → fd"
         else
             warn "Symlink fdfind → fd failed"
         fi
     fi
     if command -v batcat &>/dev/null && ! command -v bat &>/dev/null; then
         if run sudo ln -sf "$(command -v batcat)" /usr/local/bin/bat; then
-            $DRY_RUN || log "Symlinked batcat → bat"
+            log "Symlinked batcat → bat"
         else
             warn "Symlink batcat → bat failed"
         fi
@@ -1537,33 +1411,27 @@ if should_run_step 3; then
 
     # earlyoom: userspace OOM killer — kernel OOM too late in containers, systemd-oomd needs cgroup v2
     if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y earlyoom; then
-        if ! $DRY_RUN; then
-            _EARLYOOM_CONF="/etc/default/earlyoom"
-            # bookworm: no box64/dosbox-x; use vanilla dosbox in the prefer regex
-            _EOOM_PREFER="retroarch|box64|wine|dosbox-x|scummvm"
-            $IS_BOOKWORM && _EOOM_PREFER="retroarch|wine|dosbox|scummvm"
-            # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
-            if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
-                # Direct interpolation — sed substitution corrupted the value because
-                # _EOOM_PREFER contains the sed delimiter character `|`. Build the
-                # file with printf and write atomically via write_file_sudo's stdin.
-                printf '%s\n' \
-                    "# earlyoom config — managed by ry-crostini.sh" \
-                    "# ry-crostini:${SCRIPT_VERSION}" \
-                    "EARLYOOM_ARGS=\"-m 10 -s 10 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss -r 3600\"" \
-                    | write_file_sudo "$_EARLYOOM_CONF"
-                # Post-write validation — guards against future template regressions
-                if ! $DRY_RUN; then
-                    if ! sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
-                        die "earlyoom config malformed after write — --prefer regex missing or truncated: $_EARLYOOM_CONF"
-                    fi
-                fi
+        _EARLYOOM_CONF="/etc/default/earlyoom"
+        # bookworm: no box64/dosbox-x; use vanilla dosbox in the prefer regex
+        _EOOM_PREFER="retroarch|box64|wine|dosbox-x|scummvm"
+        $IS_BOOKWORM && _EOOM_PREFER="retroarch|wine|dosbox|scummvm"
+        # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
+        if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
+            # Direct interpolation — sed substitution corrupted the value because _EOOM_PREFER contains the sed delimiter character `|`. Build the file with printf and write atomically via write_file_sudo's stdin.
+            printf '%s\n' \
+                "# earlyoom config — managed by ry-crostini.sh" \
+                "# ry-crostini:${SCRIPT_VERSION}" \
+                "EARLYOOM_ARGS=\"-m 10 -s 10 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss -r 3600\"" \
+                | write_file_sudo "$_EARLYOOM_CONF"
+            # Post-write validation — guards against future template regressions
+            if ! sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
+                die "earlyoom config malformed after write — --prefer regex missing or truncated: $_EARLYOOM_CONF"
             fi
-            run sudo systemctl enable --now earlyoom.service \
-                || warn "earlyoom enable failed"
-            log "earlyoom installed and enabled"
-            unset _EARLYOOM_CONF _EOOM_PREFER
         fi
+        run sudo systemctl enable --now earlyoom.service \
+            || warn "earlyoom enable failed"
+        log "earlyoom installed and enabled"
+        unset _EARLYOOM_CONF _EOOM_PREFER
     else
         warn "earlyoom install failed — OOM protection unavailable"
     fi
@@ -1677,8 +1545,7 @@ if should_run_step 6; then
 
     install_pkgs_best_effort "${AUDIO_PKGS[@]}" || warn "Some audio packages unavailable — non-fatal"
 
-    # bookworm: refresh pipewire-audio + wireplumber from bookworm-backports (1.4.x / 0.5.x).
-    # Required because the WirePlumber JSON .conf written below needs >= 0.5.
+    # bookworm: refresh pipewire-audio + wireplumber from bookworm-backports (1.4.x / 0.5.x). Required because the WirePlumber JSON .conf written below needs >= 0.5.
     if $IS_BOOKWORM; then
         if run sudo DEBIAN_FRONTEND=noninteractive apt-get -y -t bookworm-backports install \
                 pipewire-audio wireplumber; then
@@ -1689,22 +1556,17 @@ if should_run_step 6; then
     fi
 
     # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active
-    if ! $DRY_RUN; then
-        if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
-            if run systemctl --user mask --now pulseaudio.service pulseaudio.socket; then
-                log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
-            else
-                warn "PulseAudio mask failed — PipeWire may conflict"
-            fi
-        fi
-        if run systemctl --user enable --now pipewire.socket pipewire-pulse.socket; then
-            log "PipeWire sockets enabled"
+    if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
+        if run systemctl --user mask --now pulseaudio.service pulseaudio.socket; then
+            log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
         else
-            warn "PipeWire socket enable failed"
+            warn "PulseAudio mask failed — PipeWire may conflict"
         fi
+    fi
+    if run systemctl --user enable --now pipewire.socket pipewire-pulse.socket; then
+        log "PipeWire sockets enabled"
     else
-        log "[DRY-RUN] systemctl --user mask --now pulseaudio.service pulseaudio.socket (if installed)"
-        log "[DRY-RUN] systemctl --user enable --now pipewire.socket pipewire-pulse.socket"
+        warn "PipeWire socket enable failed"
     fi
 
     # libavcodec-extra is now included in AUDIO_PKGS above (same transaction).
@@ -1879,7 +1741,7 @@ EOF
     # Apply Xresources
     if command -v xrdb &>/dev/null; then
         if run xrdb -merge "$XRESOURCES"; then
-            $DRY_RUN || log "Xresources merged"
+            log "Xresources merged"
         else
             warn "xrdb merge failed — Xresources not applied until next session"
         fi
@@ -1924,7 +1786,7 @@ FCEOF
     fi
     if command -v fc-cache &>/dev/null; then
         if run timeout 60 fc-cache -f; then
-            $DRY_RUN || log "Font cache rebuilt"
+            log "Font cache rebuilt"
         else
             warn "fc-cache failed — font cache not rebuilt"
         fi
@@ -1985,7 +1847,7 @@ if should_run_step 8; then
 
     # Ensure desktop applications directory exists (garcon integration)
     if run mkdir -p "${HOME}/.local/share/applications"; then
-        $DRY_RUN || log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
+        log "Desktop applications directory: ${HOME}/.local/share/applications ✓"
     else
         warn "Cannot create desktop applications directory"
     fi
@@ -2004,10 +1866,8 @@ if should_run_step 9; then
         if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^# *en_US\.UTF-8/en_US.UTF-8/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
-                    if ! $DRY_RUN; then
-                        run sudo rm -f -- /etc/locale.gen.bak || true
-                        log "en_US.UTF-8 locale generated"
-                    fi
+                    run sudo rm -f -- /etc/locale.gen.bak || true
+                    log "en_US.UTF-8 locale generated"
                 else
                     warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
                 fi
@@ -2073,7 +1933,7 @@ ENVEOF
         || warn "Cannot create XDG directories"
     if command -v xdg-user-dirs-update &>/dev/null; then
         if run xdg-user-dirs-update; then
-            $DRY_RUN || log "XDG user directories updated"
+            log "XDG user directories updated"
         else
             warn "xdg-user-dirs-update failed"
         fi
@@ -2082,25 +1942,19 @@ ENVEOF
     unset PROFILE_D
 
     # 9e. Disable background timers (compete for I/O/RAM during gaming)
-    if ! $DRY_RUN; then
-        # apt-daily.timer: kept enabled — refreshes package lists so `apt upgrade`
-        # shows pending security fixes. apt-daily-upgrade.timer: disabled — prevents
-        # unattended installs that compete for I/O during gaming.
-        run sudo systemctl disable apt-daily-upgrade.timer \
-            || warn "Cannot disable apt-daily-upgrade timer"
-        # Batch mask — guard with list-unit-files to avoid dead symlinks
-        _mask_timers=()
-        for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
-            systemctl list-unit-files --no-legend "$_timer" 2>/dev/null | grep -q . && _mask_timers+=("$_timer")
-        done
-        if [[ "${#_mask_timers[@]}" -gt 0 ]]; then
-            run sudo systemctl mask "${_mask_timers[@]}" || true
-        fi
-        log "Unnecessary timers disabled/masked"
-        unset _timer _mask_timers
-    else
-        log "[DRY-RUN] disable apt-daily-upgrade, fstrim, e2scrub, man-db timers"
+    # apt-daily.timer: kept enabled — refreshes package lists so `apt upgrade` shows pending security fixes. apt-daily-upgrade.timer: disabled — prevents unattended installs that compete for I/O during gaming.
+    run sudo systemctl disable apt-daily-upgrade.timer \
+        || warn "Cannot disable apt-daily-upgrade timer"
+    # Batch mask — guard with list-unit-files to avoid dead symlinks
+    _mask_timers=()
+    for _timer in fstrim.timer e2scrub_all.timer man-db.timer; do
+        systemctl list-unit-files --no-legend "$_timer" 2>/dev/null | grep -q . && _mask_timers+=("$_timer")
+    done
+    if [[ "${#_mask_timers[@]}" -gt 0 ]]; then
+        run sudo systemctl mask "${_mask_timers[@]}" || true
     fi
+    log "Unnecessary timers disabled/masked"
+    unset _timer _mask_timers
 
     set_checkpoint 9
     log "Step 9 complete."
@@ -2109,8 +1963,7 @@ fi
 if should_run_step 10; then
     step_banner 10 "Gaming packages (DOSBox-X, ScummVM, RetroArch, FluidSynth soundfont, innoextract/GOG, unrar/unar, box64, qemu-user, DOSBox-X config, run-game launcher)"
 
-    # Native ARM gaming packages — single batch; unrar (non-free) attempted separately below
-    # bookworm: dosbox-x is not in main or backports — fall back to vanilla `dosbox` (0.74).
+    # Native ARM gaming packages — single batch; unrar (non-free) attempted separately below bookworm: dosbox-x is not in main or backports — fall back to vanilla `dosbox` (0.74).
     if $IS_BOOKWORM; then
         install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
             dosbox retroarch retroarch-assets || warn "Some gaming packages failed"
@@ -2119,8 +1972,7 @@ if should_run_step 10; then
         install_pkgs_best_effort scummvm fluid-soundfont-gm innoextract unar \
             dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
     fi
-    # Probe candidate before install — Trixie moves unrar to non-free-non-free.
-    # Attempting install with no candidate exits 100 and generates a noisy WARN.
+    # Probe candidate before install — Trixie moves unrar to non-free-non-free. Attempting install with no candidate exits 100 and generates a noisy WARN.
     _unrar_cand="$(apt-cache policy unrar 2>/dev/null | awk '/Candidate:/ {print $2}')"
     if [[ -n "$_unrar_cand" && "$_unrar_cand" != "(none)" ]]; then
         if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
@@ -2136,7 +1988,7 @@ if should_run_step 10; then
     # RetroArch default config
     _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"
     if [[ ! -f "$_RA_CFG" ]]; then
-        write_file_private "$_RA_CFG" <<'RACFG'
+        write_file "$_RA_CFG" <<'RACFG'
 # RetroArch Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
 
@@ -2183,7 +2035,7 @@ RACFG
     # ScummVM default config
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
     if [[ ! -f "$_SVM_CFG" ]]; then
-        write_file_private "$_SVM_CFG" <<'SVMCFG'
+        write_file "$_SVM_CFG" <<'SVMCFG'
 # ScummVM Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
 [scummvm]
@@ -2213,7 +2065,7 @@ SVMCFG
     if $IS_BOOKWORM; then
         log "bookworm: skipping DOSBox-X config write (dosbox-x not installed; vanilla dosbox uses incompatible format)"
     elif [[ ! -f "$_DBX_CFG" ]]; then
-        write_file_private "$_DBX_CFG" <<'DBXCFG'
+        write_file "$_DBX_CFG" <<'DBXCFG'
 # DOSBox-X Crostini config — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
 
@@ -2237,44 +2089,41 @@ DBXCFG
     fi
     unset _DBX_CFG
 
-    # Verify (skip in dry-run — packages were not actually installed)
-    if ! $DRY_RUN; then
-        # bookworm: vanilla dosbox; trixie: dosbox-x
-        _dbx_bin=dosbox-x
-        $IS_BOOKWORM && _dbx_bin=dosbox
-        if command -v "$_dbx_bin" &>/dev/null; then
-            _dosbox_ver="$(timeout 3 "$_dbx_bin" --version 2>/dev/null | head -1 || true)"
-            log "${_dbx_bin}: ${_dosbox_ver:-installed} ✓"
-            unset _dosbox_ver
-        else
-            warn "${_dbx_bin} not found"
-        fi
-        unset _dbx_bin
-        if command -v scummvm &>/dev/null; then
-            _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
-            log "scummvm: ${_scummvm_ver:-installed} ✓"
-            unset _scummvm_ver
-        else
-            warn "scummvm not found"
-        fi
-        if command -v innoextract &>/dev/null; then
-            _innoextract_ver="$(timeout 3 innoextract --version 2>/dev/null | head -1 || true)"
-            log "innoextract: ${_innoextract_ver:-installed} ✓"
-            unset _innoextract_ver
-        else
-            warn "innoextract not found"
-        fi
-        if command -v retroarch &>/dev/null; then
-            log "RetroArch: installed ✓"
-        else
-            warn "RetroArch not found"
-        fi
+    # Verify installed gaming tools
+    # bookworm: vanilla dosbox; trixie: dosbox-x
+    _dbx_bin=dosbox-x
+    $IS_BOOKWORM && _dbx_bin=dosbox
+    if command -v "$_dbx_bin" &>/dev/null; then
+        _dosbox_ver="$(timeout 3 "$_dbx_bin" --version 2>/dev/null | head -1 || true)"
+        log "${_dbx_bin}: ${_dosbox_ver:-installed} ✓"
+        unset _dosbox_ver
+    else
+        warn "${_dbx_bin} not found"
+    fi
+    unset _dbx_bin
+    if command -v scummvm &>/dev/null; then
+        _scummvm_ver="$(timeout 3 scummvm --version 2>/dev/null | head -1 || true)"
+        log "scummvm: ${_scummvm_ver:-installed} ✓"
+        unset _scummvm_ver
+    else
+        warn "scummvm not found"
+    fi
+    if command -v innoextract &>/dev/null; then
+        _innoextract_ver="$(timeout 3 innoextract --version 2>/dev/null | head -1 || true)"
+        log "innoextract: ${_innoextract_ver:-installed} ✓"
+        unset _innoextract_ver
+    else
+        warn "innoextract not found"
+    fi
+    if command -v retroarch &>/dev/null; then
+        log "RetroArch: installed ✓"
+    else
+        warn "RetroArch not found"
     fi
 
     log "For advanced gaming (box64/Wine/GOG/cloud): see README.md § Gaming"
 
-    # box64: x86_64 DynaRec emulator (binfmt blocked in unprivileged Crostini; invoke explicitly)
-    # Not in Debian main; bookworm has no candidate. Skip quietly there — run-x86 falls back to qemu-user.
+    # box64: x86_64 DynaRec emulator (binfmt blocked in unprivileged Crostini; invoke explicitly) Not in Debian main; bookworm has no candidate. Skip quietly there — run-x86 falls back to qemu-user.
     if $IS_BOOKWORM; then
         log "bookworm: skipping box64 (not in Debian repos); run-x86 will use qemu-user"
     elif run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
@@ -2291,7 +2140,7 @@ DBXCFG
     if $IS_BOOKWORM; then
         log "bookworm: skipping .box64rc write (box64 not installed)"
     elif [[ ! -f "$_BOX64_RC" ]]; then
-        write_file_private "$_BOX64_RC" <<'RCEOF'
+        write_file "$_BOX64_RC" <<'RCEOF'
 # box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by ry-crostini.sh
 # Written once on first install; edit freely afterward.
 # Reference: https://github.com/ptitSeb/box64/blob/main/docs/USAGE.md
@@ -2590,15 +2439,10 @@ _verify_pass=0
 _verify_fail=0
 _verify_warn=0
 
-if $DRY_RUN; then
-    log "[DRY-RUN] Verification runs live (checks are read-only; earlyoom restarted if stopped)"
-fi
 
 # Step 11: Verification — tools and config files
 if should_run_step 11; then
-    # Inject install-time paths (profile.d not yet sourced in current shell).
-    # Scoped to step 11 — no value to earlier steps and avoids unnecessary
-    # PATH mutation on --from-step=1..10 runs.
+    # Inject install-time paths (profile.d not yet sourced in current shell). Scoped to step 11 — no value to earlier steps and avoids unnecessary PATH mutation on --from-step=1..10 runs.
     [[ -d "${HOME}/.local/bin" && ":${PATH}:" != *":${HOME}/.local/bin:"* ]] && PATH="${HOME}/.local/bin:${PATH}"
 
     step_banner 11 "Verification — tools and config files"
@@ -2647,7 +2491,11 @@ if should_run_step 11; then
         fi
         if command -v vulkaninfo &>/dev/null; then
             _vk_out="$(vulkaninfo --summary 2>/dev/null || true)"
-            VK_GPU="$(printf '%s\n' "$_vk_out" | grep "GPU name" | head -1 | cut -d= -f2 | xargs -r || true)"
+            # vulkaninfo --summary uses `deviceName = ...` and `apiVersion = ...`
+            # NOT `GPU name = ...` — earlier versions of this check grepped for
+            # the wrong field name and never matched, silently reporting Vulkan
+            # as unavailable even on systems where it works.
+            VK_GPU="$(printf '%s\n' "$_vk_out" | grep "deviceName" | head -1 | cut -d= -f2 | xargs -r || true)"
             VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs -r || true)"
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
@@ -2768,8 +2616,7 @@ if should_run_step 11; then
         ((_verify_fail++)) || true
     fi
 
-    # Remaining tools (parallel — fast commands; unrar handled conditionally above)
-    # bookworm: box64 not installed (not in Debian repos)
+    # Remaining tools (parallel — fast commands; unrar handled conditionally above) bookworm: box64 not installed (not in Debian repos)
     if $IS_BOOKWORM; then
         _parallel_check_tools \
             "unar|unar" "qemu-x86_64|qemu-x86_64" \
@@ -2824,6 +2671,31 @@ if should_run_step 11; then
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
+    # WirePlumber version probe — the JSON .conf above is silently ignored by 0.4.x.
+    # On bookworm this catches the case where the bookworm-backports refresh in step 6
+    # failed and the system is still on stock 0.4.13 (config has no effect).
+    # `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"),
+    # not line 1 — grep across the full output, don't head it first.
+    if command -v wireplumber &>/dev/null; then
+        _wp_ver="$(timeout 3 wireplumber --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        if [[ -n "$_wp_ver" ]]; then
+            _wp_major="${_wp_ver%%.*}"
+            _wp_rest="${_wp_ver#*.}"
+            _wp_minor="${_wp_rest%%.*}"
+            if [[ "$_wp_major" -gt 0 || "$_wp_minor" -ge 5 ]]; then
+                logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "WirePlumber version" "$_wp_ver"
+                ((_verify_pass++)) || true
+            else
+                logprintf '  %b⚠%b  %-44s %s (JSON config ignored — needs ≥ 0.5)\n' "$YELLOW" "$RESET" "WirePlumber version" "$_wp_ver"
+                ((_verify_warn++)) || true
+            fi
+            unset _wp_major _wp_minor _wp_rest
+        else
+            logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "WirePlumber version unparseable"
+            ((_verify_warn++)) || true
+        fi
+        unset _wp_ver
+    fi
     check_config "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
     check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
@@ -2839,8 +2711,20 @@ if should_run_step 11; then
     fi
     # earlyoom OOM killer
     check_config "/etc/default/earlyoom"                                                           "earlyoom OOM config"
+    # Re-validate the --prefer regex shape — step 3 validates at write time, but the
+    # file could be corrupted later by manual edit, dpkg-overlay, or apt-purge restoring stock.
+    # Same anchor pattern as the post-write check in step 3.
+    if [[ -s /etc/default/earlyoom ]]; then
+        if sudo grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
+            logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom --prefer regex valid"
+            ((_verify_pass++)) || true
+        else
+            logprintf '  %b✗%b  %-44s\n' "$RED" "$RESET" "earlyoom --prefer regex missing/corrupt"
+            ((_verify_fail++)) || true
+        fi
+    fi
     # earlyoom may have been killed during heavy apt operations; restart if needed
-    if ! $DRY_RUN && ! systemctl is-active earlyoom.service &>/dev/null; then
+    if ! systemctl is-active earlyoom.service &>/dev/null; then
         sudo systemctl start earlyoom.service 2>>"$LOG_FILE" \
             || warn "earlyoom auto-restart failed — check /etc/default/earlyoom and 'systemctl status earlyoom'"
     fi
@@ -2859,6 +2743,14 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer still enabled"
         ((_verify_warn++)) || true
     fi
+    # apt-daily.timer (kept enabled — refreshes package lists for security visibility)
+    if systemctl is-enabled apt-daily.timer &>/dev/null; then
+        logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily.timer enabled (security refresh)"
+        ((_verify_pass++)) || true
+    else
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily.timer disabled — security refresh inactive"
+        ((_verify_warn++)) || true
+    fi
     # RetroArch video_threaded sanity check
     if [[ -f "${HOME}/.config/retroarch/retroarch.cfg" ]]; then
         if grep -q 'video_threaded *= *"false"' "${HOME}/.config/retroarch/retroarch.cfg"; then
@@ -2867,13 +2759,15 @@ if should_run_step 11; then
         elif grep -q 'video_threaded *= *"true"' "${HOME}/.config/retroarch/retroarch.cfg"; then
             logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "RetroArch video_threaded still true — update config"
             ((_verify_warn++)) || true
+        else
+            logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "RetroArch video_threaded line missing from config"
+            ((_verify_warn++)) || true
         fi
     fi
     logprintf '\n'
 
     set_checkpoint 11
-    # Snapshot failure count so cleanup() prints the correct message if an
-    # exit occurs between here and step 13's final assignment to _had_failures.
+    # Snapshot failure count so cleanup() prints the correct message if an exit occurs between here and step 13's final assignment to _had_failures.
     _had_failures="$_verify_fail"
     log "Step 11 complete."
 fi
@@ -2941,12 +2835,8 @@ if should_run_step 13; then
     elif [[ "$_had_failures" -eq 0 ]]; then
         # All checks passed — mark step 13 complete and remove checkpoint
         set_checkpoint 13
-        if $DRY_RUN; then
-            log "[DRY-RUN] would remove checkpoint file"
-        else
-            rm -f -- "$STEP_FILE"
-            log "Checkpoint file removed. Setup fully complete."
-        fi
+        rm -f -- "$STEP_FILE"
+        log "Checkpoint file removed. Setup fully complete."
     else
         # Verification failed — do not advance checkpoint; --verify re-runs steps 11-13
         log "Verification failures detected. Fix issues above, then run: bash ry-crostini.sh --verify"
@@ -2967,61 +2857,50 @@ if should_run_step 13; then
     unset _now_epoch _elapsed
 
     # Live-reload environment.d vars and restart sommelier so changes apply without container restart
-    if ! $DRY_RUN; then
-        # Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing
-        # them as shell. Sourcing breaks values containing shell metachars — e.g.
-        # qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the
-        # exported value would be just "wayland". The on-disk file is parsed
-        # correctly by systemd-environment-d-generator on next session start; this
-        # block exists only to make the changes live in the current session.
-        if [[ -d "${HOME}/.config/environment.d" ]]; then
-            _had_nullglob_env=false
-            shopt -q nullglob && _had_nullglob_env=true
-            shopt -s nullglob
-            for _envf in "${HOME}/.config/environment.d/"*.conf; do
-                while IFS= read -r _eline || [[ -n "$_eline" ]]; do
-                    # Skip blank lines and comments
-                    [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
-                    # Require KEY=VALUE shape; strip leading whitespace
-                    _eline="${_eline#"${_eline%%[![:space:]]*}"}"
-                    [[ "$_eline" == *=* ]] || continue
-                    _ek="${_eline%%=*}"
-                    _ev="${_eline#*=}"
-                    # Validate key: identifier chars only (defends against pathological lines)
-                    [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-                    # Strip optional surrounding double quotes (systemd accepts both forms)
-                    if [[ "$_ev" == \"*\" && ${#_ev} -ge 2 ]]; then
-                        _ev="${_ev:1:${#_ev}-2}"
-                    fi
-                    # Expand ${HOME} / $HOME — the only variable reference systemd
-                    # environment.d files in this script use (gpu.conf MESA_SHADER_CACHE_DIR).
-                    # Done as literal string substitution to avoid re-invoking the shell parser.
-                    _ev="${_ev//\$\{HOME\}/$HOME}"
-                    _ev="${_ev//\$HOME/$HOME}"
-                    export "$_ek=$_ev"
-                done < "$_envf"
-            done
-            $_had_nullglob_env || shopt -u nullglob
-            unset _envf _eline _ek _ev _had_nullglob_env
-        fi
-        # Import updated environment.d variables into the systemd user session
-        if systemctl --user import-environment 2>/dev/null; then
-            log "Imported environment.d variables into user session"
-        fi
-        # Restart sommelier (Wayland + X11 bridge) to pick up new env vars
-        if systemctl --user restart sommelier@0.service sommelier-x@0.service 2>/dev/null; then
-            # Brief settle — sommelier needs ~1 s to re-establish the display socket
-            sleep 1
-            if pgrep -x sommelier &>/dev/null; then
-                log "Sommelier restarted — environment changes are live"
-            else
-                logprintf '\n%bSommelier restart failed — shut down Linux (Settings → Developers) and reopen Terminal.%b\n\n' "$BOLD" "$RESET"
-            fi
+    # Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing them as shell. Sourcing breaks values containing shell metachars — e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the exported value would be just "wayland". The on-disk file is parsed correctly by systemd-environment-d-generator on next session start; this block exists only to make the changes live in the current session.
+    if [[ -d "${HOME}/.config/environment.d" ]]; then
+        _had_nullglob_env=false
+        shopt -q nullglob && _had_nullglob_env=true
+        shopt -s nullglob
+        for _envf in "${HOME}/.config/environment.d/"*.conf; do
+            while IFS= read -r _eline || [[ -n "$_eline" ]]; do
+                # Skip blank lines and comments
+                [[ -z "${_eline// }" || "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
+                # Require KEY=VALUE shape; strip leading whitespace
+                _eline="${_eline#"${_eline%%[![:space:]]*}"}"
+                [[ "$_eline" == *=* ]] || continue
+                _ek="${_eline%%=*}"
+                _ev="${_eline#*=}"
+                # Validate key: identifier chars only (defends against pathological lines)
+                [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+                # Strip optional surrounding double quotes (systemd accepts both forms)
+                if [[ "$_ev" == \"*\" && ${#_ev} -ge 2 ]]; then
+                    _ev="${_ev:1:${#_ev}-2}"
+                fi
+                # Expand ${HOME} / $HOME — the only variable reference systemd environment.d files in this script use (gpu.conf MESA_SHADER_CACHE_DIR). Done as literal string substitution to avoid re-invoking the shell parser.
+                _ev="${_ev//\$\{HOME\}/$HOME}"
+                _ev="${_ev//\$HOME/$HOME}"
+                export "$_ek=$_ev"
+            done < "$_envf"
+        done
+        $_had_nullglob_env || shopt -u nullglob
+        unset _envf _eline _ek _ev _had_nullglob_env
+    fi
+    # Import updated environment.d variables into the systemd user session
+    if systemctl --user import-environment 2>/dev/null; then
+        log "Imported environment.d variables into user session"
+    fi
+    # Restart sommelier (Wayland + X11 bridge) to pick up new env vars
+    if systemctl --user restart sommelier@0.service sommelier-x@0.service 2>/dev/null; then
+        # Brief settle — sommelier needs ~1 s to re-establish the display socket
+        sleep 1
+        if pgrep -x sommelier &>/dev/null; then
+            log "Sommelier restarted — environment changes are live"
         else
-            logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
+            logprintf '\n%bSommelier restart failed — shut down Linux (Settings → Developers) and reopen Terminal.%b\n\n' "$BOLD" "$RESET"
         fi
     else
-        logprintf '\n%b[DRY-RUN] Would restart sommelier to apply environment changes.%b\n\n' "$BOLD" "$RESET"
+        logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
     fi
     log "Step 13 complete."
 fi
