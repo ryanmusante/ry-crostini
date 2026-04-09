@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.11-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.12-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -22,34 +22,7 @@ runs, codename upgrades, and re-execution. Every configuration file is
 checkpointed, every package install is best-effort, every destructive action
 is reversible.
 
-## What's new in 8.1.x
-
-- **v8.1.11** — README "First Run vs. Re-run" section removed (idempotency
-  is already covered in the Design table). Uninstall / Rollback section
-  confirmed condensed: single footprint table, no manual commands.
-- **v8.1.10** — README rewritten: added Troubleshooting (8 named failure
-  modes), Uninstall / Rollback (footprint reference), Logs subsection,
-  First Run vs. Re-run table, and What's new callout. TOC flattened.
-  No script behavior changes beyond the `SCRIPT_VERSION` bump itself,
-  which triggers a one-time re-write of the 6 self-healing config files
-  (earlyoom, gpu.conf, pipewire gaming, pipewire-pulse gaming, wireplumber
-  alsa, fontconfig) on next run.
-- **v8.1.9** — Sudo keepalive lock-held guard rewritten to use `pgrep` from
-  `procps` (always preinstalled) instead of `fuser` from `psmisc` (not
-  installed until step 3). Fixes a latent abort during long Trixie
-  upgrades. Log file now born at mode 0600 via `umask 077` instead of
-  briefly existing at 0644. `SIGPIPE` removed from the trap set so
-  `bash ry-crostini.sh | head` no longer exits 141.
-- **v8.1.8** — Trixie codename rewrites now skip `*backports*` source files
-  (mechanical rewrite to `trixie-backports` would break `apt update`).
-  Microphone detection generalized via `_has_capture_dev` helper.
-  `check_tool` version-probe timeout raised 3s → 5s.
-- **v8.1.7** — Stale cros-* hold sweep added before step 1, recovering from
-  mid-step-2 crashes that previously left packages permanently held.
-  Step 11 verify de-sudo'd; earlyoom `--prefer` regex re-validated at
-  verify time as well as write time.
-
-[full changelog](CHANGELOG.md)
+[changelog](CHANGELOG.md)
 
 ## Table of Contents
 

@@ -2,6 +2,12 @@ ry-crostini changelog
 
 2026-04-09  Ryan Musante
 
+- Tagged as v8.1.12
+- README "What's new in 8.1.x" callout removed. The information lives in this changelog already; duplicating the top three entries above the TOC was redundant. Restored the inline `[changelog](CHANGELOG.md)` text link in the lead paragraph since it had been collapsed into the What's new section.
+- No script changes from v8.1.11. SCRIPT_VERSION bump still triggers re-write of the 6 self-healing config files on next run.
+
+2026-04-09  Ryan Musante
+
 - Tagged as v8.1.11
 - README "First Run vs. Re-run" section removed. The information was redundant with the existing Design → Safety and Reliability table (Idempotent, Atomic writes, Checkpoint resume rows already cover the same ground) and added 25+ lines without new content. TOC entry also removed.
 - Uninstall / Rollback section confirmed condensed: single 7-row footprint table, no manual rm/sudo/cp commands. Earlier drafts contained step-by-step removal commands which were removed in v8.1.10's rewrite — this entry exists to document that the condensed form is the intentional final state.
