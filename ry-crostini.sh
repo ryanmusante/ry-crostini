@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.17
+# Version: 8.1.18
 # Date:    2026-04-08
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -34,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.17"
+readonly SCRIPT_VERSION="8.1.18"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -1034,7 +1034,13 @@ if should_run_step 1; then
     log "Running as user: $(whoami) ✓"
 
     # 1i. Sommelier (Wayland bridge) — needed for all GUI apps
-    if pgrep -x sommelier &>/dev/null; then
+    # Check via systemctl --user, not pgrep: on aarch64 Crostini sommelier is exec'd
+    # through ld-linux-aarch64.so.1 so the kernel comm is "ld-linux-aarch6" (15-char
+    # truncation) and `pgrep -x sommelier` never matches. systemctl is-active is
+    # authoritative and architecture-agnostic.
+    if systemctl --user is-active --quiet 'sommelier@*.service' 2>/dev/null \
+       || systemctl --user list-units --type=service --state=active --no-legend \
+          'sommelier@*.service' 2>/dev/null | grep -q .; then
         log "Sommelier (Wayland bridge): running ✓"
     else
         log "Sommelier not yet active — will start on terminal restart ✓"
@@ -2544,7 +2550,10 @@ if should_run_step 11; then
 
     # Display
     logprintf '%bDisplay / Wayland:%b\n' "$BOLD" "$RESET"
-    if pgrep -x sommelier &>/dev/null; then
+    # systemctl --user is authoritative; pgrep -x sommelier fails on aarch64 where
+    # the process comm is "ld-linux-aarch6" (truncated dynamic-loader argv0).
+    if systemctl --user list-units --type=service --state=active --no-legend \
+       'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | grep -q .; then
         logprintf '  Sommelier:     %b✓%b running\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
     else
@@ -2938,10 +2947,14 @@ if should_run_step 13; then
     # Restart sommelier — enumerate active instances rather than hardcoding @0
     mapfile -t _somm_units < <(systemctl --user list-units --type=service --state=active --no-legend 'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | awk '{print $1}')
     if [[ "${#_somm_units[@]}" -gt 0 ]] && systemctl --user restart "${_somm_units[@]}" 2>/dev/null; then
-        # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention, OOM recovery) may need >1 s to re-establish the display socket
+        # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention,
+        # OOM recovery) may need >1 s to re-establish the display socket. Check via
+        # systemctl is-active, not pgrep: on aarch64 Crostini the sommelier process
+        # comm is "ld-linux-aarch6" (dynamic-loader argv0 truncation), so
+        # `pgrep -x sommelier` never matches and the poll would always time out.
         _somm_ready=false
         for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-            if pgrep -x sommelier &>/dev/null; then _somm_ready=true; break; fi
+            if systemctl --user is-active --quiet "${_somm_units[@]}"; then _somm_ready=true; break; fi
             sleep 0.2
         done
         unset _i
