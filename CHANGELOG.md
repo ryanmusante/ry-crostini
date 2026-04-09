@@ -1,5 +1,19 @@
 ry-crostini changelog
 
+2026-04-09  Ryan Musante
+
+- Documentation only — script unchanged at v8.1.9.
+- README restructured for completeness and operational clarity. New top-level sections: "What's new in 8.1.x" (changelog highlights under the badges), "First Run vs. Re-Run" (explicit idempotency / self-heal / checkpoint behavior), "Troubleshooting" (eight named failure modes — GPU not active, Trixie hard-stop confusion, lock held, sommelier missing, WirePlumber JSON ignored on bookworm, earlyoom misconfiguration, verification re-run, audio issues), "Uninstall / Rollback" (explicit removal commands for all 26 generated files, cros-pin service disable, timer unmask, hold release, Trixie irreversibility note). New "Logs" subsection under Usage (path, mode, rotation, ANSI handling). New "Get the script" subsection under Quick Start. Quick Start expanded from a 3-line code comment to a numbered procedure with expected behavior and post-run instructions.
+- README badges now link to their referents (version → CHANGELOG.md, license → LICENSE, bash → gnu.org). Added arch=aarch64 and platform=Crostini badges.
+- README License section gained a copyright line (2024–2026 Ryan Musante).
+- README Generated Files table corrections from v8.1.9 audit pass: `/etc/profile.d/ry-crostini-env.sh` purpose corrected from "Locale, XDG, PATH" to "Locale, editor, pager, PATH" — the file contains LANG/EDITOR/VISUAL/PAGER/LESS/PATH but no XDG variables (XDG dirs are mkdir'd in step 9d as a side-effect, not exported here). `~/.local/bin/run-game` purpose expanded to include the per-game `MESA_NO_ERROR=1` and `mesa_glthread=true` exports — both are unsafe globally on virgl and intentionally omitted from `gpu.conf`, but the wrapper sets them per-launch. Design table "modes 644/600/700" corrected — only 644 (configs) and 700 (executables) are produced by `_write_file_impl`; mode 600 is the log file via `umask 077`, not a config write.
+- README Usage flag table gained the missing `--force` row (companion to `--reset`, required when stdin is not a tty). The flag has been documented in the script's `usage()` since v8.1.5; it was simply absent from the README.
+- README "x86 Translation" run-x86 description made explicit about the qemu-x86_64 fallback path. Previously the text only mentioned i386 → qemu, but the wrapper also falls back to qemu-x86_64 when box64 is unavailable (e.g. on bookworm). Bookworm relies on this fallback for x86_64 translation.
+- README "RetroArch Cores" section now opens with a blockquote stating that no libretro cores are pre-installed by the script — only `retroarch` and `retroarch-assets`. The cores listed in the table are recommendations; users must install them via RetroArch's Online Updater. Previously only the PSP row mentioned the Online Updater, leaving readers to infer that the other eight cores were auto-installed.
+- README step 6 row clarified — bookworm-backports pipewire/wireplumber versions are noted as "currently 1.4.2 / 0.5.8" but explicitly unpinned, since the script runs `apt-get -t bookworm-backports install` without version constraints. Defends against silent doc drift if backports advances.
+- CHANGELOG footer (line 103) — removed stale `dry-run` reference. The 8.1.8 entry claimed to remove this, but the fix did not actually take. Now removed for real.
+- TOC trimmed: h3 entries under "Generated Files", "Known Limitations", and "Design" dropped from the table of contents (the sections themselves are unchanged). Net TOC entries: 28 → 23. Gaming Reference h3s preserved because that section is long enough to need them.
+
 2026-04-08  Ryan Musante
 
 - Tagged as v8.1.9
@@ -100,4 +114,4 @@ ry-crostini changelog
 - Bookworm becomes the primary target. The script now stays on the current codename by default and enables `bookworm-backports` for pipewire 1.4 / wireplumber 0.5; the `bookworm`→`trixie` codename rewrite is opt-in via `--upgrade-trixie`. Bookworm gating in step 2 (skip `/tmp` tmpfs cap), step 3 (use vanilla dosbox in earlyoom prefer regex; pull p7zip-full for the canonical `7z`), step 6 (refresh pipewire-audio + wireplumber from backports), step 8 (add adwaita-icon-theme-full), step 10 (vanilla `dosbox` in place of `dosbox-x`; skip box64 + .box64rc + dosbox-x.conf writes), step 11 (parallel verify uses `dosbox|dosbox`; skip box64 row), step 13 (gaming quick-test uses `dosbox --version`).
 - `_did_trixie_rewrite` gate. Step 2 hard-stop only fires when sources were genuinely rewritten; already-trixie containers and bookworm-default runs continue in-session.
 
-Older history archived; the entries above cover the current bookworm-primary architecture. The script remains unchanged in spirit: idempotent atomic writes, checkpoint resume, parallel verification, dry-run, `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600, rotated after 7 days).
+Older history archived; the entries above cover the current bookworm-primary architecture. The script remains unchanged in spirit: idempotent atomic writes, checkpoint resume, parallel verification, `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600, rotated after 7 days).

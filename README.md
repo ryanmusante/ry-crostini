@@ -1,8 +1,10 @@
 # ry-crostini
 
-![version](https://img.shields.io/badge/version-8.1.9-blue)
-![license](https://img.shields.io/badge/license-MIT-green)
-![bash](https://img.shields.io/badge/bash-5.0%2B-orange)
+[![version](https://img.shields.io/badge/version-8.1.9-blue)](CHANGELOG.md)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
+![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)
+![platform](https://img.shields.io/badge/platform-Crostini-yellow)
 
 Crostini post-install bootstrap for the **Lenovo IdeaPad Duet 5 Chromebook**
 (82QS0001US). Provisions a fresh Debian container into a fully configured
@@ -14,7 +16,29 @@ as a secondary target — already-trixie containers run the trixie path
 unmodified, and bookworm containers can opt into the legacy
 `bookworm`→`trixie` codename upgrade via `--upgrade-trixie`.
 
+Replaces the manual `apt install` checklist with a single idempotent script
+that handles APT tuning, GPU/audio/display configuration, gaming stack,
+checkpointing, and verification — no hand-editing of dotfiles required.
+
 [changelog](CHANGELOG.md)
+
+## What's new in 8.1.x
+
+- **8.1.9** — Sudo keepalive lock-held detection moved from `fuser` to `pgrep`
+  (psmisc no longer required at step 2); log file born at mode 600 via
+  `umask 077`; SIGPIPE handling restored to bash default; unconditional
+  cros-* stale-hold sweep before step 1 recovers from prior mid-step-2
+  crashes.
+- **8.1.8** — `VERSION_CODENAME` empty-check hoisted to step 2 entry (covers
+  `--from-step=2` skipping step 1); `*backports*` source files skipped during
+  Trixie codename rewrite; microphone capture detection generalized via
+  `_has_capture_dev` helper.
+- **8.1.7** — `run-x86` no longer silently guesses x86_64 on arch-detection
+  failure; `gog-extract` makeself marker check accepts modern (≥2.5)
+  archives; step 13 `import-environment` scoped to explicit keys to stop
+  leaking script-internal vars into the user session.
+- **8.1.0** — Bookworm became the primary target; Trixie codename upgrade is
+  now opt-in via `--upgrade-trixie`.
 
 ## Table of Contents
 
@@ -24,39 +48,58 @@ unmodified, and bookworm containers can opt into the legacy
 - [Usage](#usage)
 - [Installation Steps](#installation-steps)
 - [Generated Files](#generated-files)
-  - [System (7 files, requires sudo)](#system-7-files-requires-sudo)
-  - [User (19 files)](#user-19-files)
+- [First Run vs. Re-Run](#first-run-vs-re-run)
 - [Trixie Upgrade (optional)](#trixie-upgrade-optional)
 - [Design](#design)
-  - [Safety and Reliability](#safety-and-reliability)
-  - [User Experience](#user-experience)
 - [Known Limitations](#known-limitations)
-  - [Blockers](#blockers)
-  - [Constraints](#constraints)
-  - [Informational](#informational)
+- [Troubleshooting](#troubleshooting)
+- [Uninstall / Rollback](#uninstall--rollback)
 - [Gaming Reference](#gaming-reference)
   - [Compatibility Tiers](#compatibility-tiers)
   - [Native ARM64 Emulators](#native-arm64-emulators)
   - [RetroArch Cores](#retroarch-cores)
   - [RetroArch CRT Shaders](#retroarch-crt-shaders)
   - [RetroArch Run-Ahead](#retroarch-run-ahead)
+  - [RetroArch Preemptive Frames](#retroarch-preemptive-frames)
   - [x86 Translation](#x86-translation)
-    - [32-bit x86 Alternatives](#32-bit-x86-alternatives)
-    - [Transparent Execution (Privileged Container)](#transparent-execution-privileged-container)
+  - [Game Launcher](#game-launcher)
   - [GOG Games](#gog-games)
   - [Cloud Gaming](#cloud-gaming)
 - [License](#license)
 
 ## Quick Start
 
+1. Enable Linux (Beta): **Settings → Developers → Turn On**
+2. Enable required ChromeOS flags and reboot the entire Chromebook:
+   - `chrome://flags/#crostini-gpu-support` → **Enabled**
+   - `chrome://flags/#exo-pointer-lock` → **Enabled**
+3. Open the **Terminal** app (creates the `penguin` container on first launch).
+4. Obtain `ry-crostini.sh` (see [Get the script](#get-the-script) below).
+5. Run:
+
 ```bash
-# 1. Enable Linux (Beta): Settings → Developers → Turn On
-# 2. Enable flags → Reboot:
-#      chrome://flags/#crostini-gpu-support → Enabled
-#      chrome://flags/#exo-pointer-lock     → Enabled
-# 3. Run:
+sudo true            # cache sudo credentials so the keepalive can renew
 bash ry-crostini.sh
 ```
+
+Expect a bottom-pinned progress bar, occasional sudo prompts, and (with
+`--upgrade-trixie`) a deliberate hard-stop after step 2 — re-run after
+shutting down Linux from the ChromeOS shelf. On completion, **close and
+reopen the Terminal** so sommelier picks up the new environment.
+
+### Get the script
+
+The script is a single self-contained bash file. Copy it into the container
+by any means convenient:
+
+| Method | Command |
+|--------|---------|
+| Shared folder | Drop `ry-crostini.sh` into a folder shared with Linux, then `cp /mnt/chromeos/MyFiles/ry-crostini.sh ~/` |
+| `wget` / `curl` | `wget https://<your-host>/ry-crostini.sh` |
+| `git clone` | `git clone <repository-url> && cd ry-crostini` |
+| Clipboard | Paste the file contents into `nano ry-crostini.sh` |
+
+No installation step is required — `bash ry-crostini.sh` runs in place.
 
 ## Hardware
 
@@ -100,7 +143,8 @@ bash ry-crostini.sh [OPTIONS]
 | `--interactive` | Prompt for ChromeOS toggles |
 | `--from-step=N` | Resume from step N (1–13; N=11 equivalent to `--verify`) |
 | `--verify` | Run only steps 11–13 (verification and summary) |
-| `--reset` | Clear checkpoint and lock file, restart from step 1 |
+| `--reset` | Clear checkpoint and lock file, restart from step 1 (prompts for confirmation) |
+| `--force` | With `--reset`: skip confirmation prompt (required when stdin is not a tty) |
 | `--help` | Display usage and step list |
 | `--version` | Display version |
 | `--` | Terminate option processing |
@@ -119,6 +163,21 @@ errors. Verification failures preserve the checkpoint so that
 > renews credentials every 60 s. Run `sudo true` before execution to cache
 > the initial credential.
 
+### Logs
+
+Each run writes a timestamped log file in the user's home directory:
+
+| Property | Value |
+|----------|-------|
+| Path | `~/ry-crostini-YYYYMMDD-HHMMSS.log` |
+| Mode | 600 (created with `umask 077`) |
+| Content | All `log`/`warn`/`err` lines plus stderr from every `run()` invocation |
+| ANSI handling | Color codes stripped from the on-disk file; terminal output keeps color |
+| Rotation | Files older than 7 days deleted automatically on each run |
+| Cleanup | Orphaned `*.log.strip_*` tmpfiles older than 1 day also swept |
+
+The log path is also printed in the step 13 summary banner.
+
 ## Installation Steps
 
 | Step | Category | Description |
@@ -128,7 +187,7 @@ errors. Verification failures preserve the checkpoint so that
 | 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, `p7zip-full` on bookworm |
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
-| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning. On bookworm, `pipewire-audio` + `wireplumber` are refreshed from `bookworm-backports` (1.4.2 / 0.5.8) so the JSON `.conf` is honored. |
+| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning. On bookworm, `pipewire-audio` + `wireplumber` are refreshed from `bookworm-backports` (currently 1.4.2 / 0.5.8; unpinned — whatever backports ships at install time) so the JSON `.conf` is honored. |
 | 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor |
 | 8 | GUI | xterm, session support, fonts, icons, `adwaita-icon-theme-full` on bookworm |
 | 9 | Environment | Locale, journald volatile, timer cleanup, environment variables, XDG directories, PATH |
@@ -157,7 +216,7 @@ write 6 system files, and the union is 7.
 | `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB (trixie-only) |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
 | `/etc/default/earlyoom` | 3 | earlyoom OOM killer tuning |
-| `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, XDG, PATH |
+| `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, editor, pager, PATH (`~/.local/bin`) |
 | `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 
 ### User (19 files)
@@ -186,7 +245,24 @@ to `qemu-user`; `dosbox-x` and `box64` are not in any bookworm repo).
 | `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
-| `~/.local/bin/run-game` | 10 | CPU affinity + priority game launcher, `MALLOC_ARENA_MAX` |
+| `~/.local/bin/run-game` | 10 | CPU affinity + priority game launcher; sets `MALLOC_ARENA_MAX=2`, `MESA_NO_ERROR=1`, `mesa_glthread=true` per-game (unsafe globally on virgl) |
+
+## First Run vs. Re-Run
+
+The script is designed to be re-run safely at any time. Behavior differs
+between first install and subsequent runs:
+
+| Behavior | First run | Re-run |
+|----------|-----------|--------|
+| Package installs | Full install via `apt-get install` | `--needed` semantics — already-installed packages are skipped by APT |
+| Configuration files | All 26 files written | Existing files skipped; only the 6 self-healing files re-write when `SCRIPT_VERSION` advances |
+| Self-healing files | N/A | `gpu.conf`, both PipeWire gaming configs, WirePlumber ALSA, fontconfig, earlyoom — re-written if their `# ry-crostini:VERSION` marker doesn't match the current script version |
+| Checkpoint | Written after each completed step | Resumes from last completed step (`~/.ry-crostini-checkpoint`); use `--from-step=N` or `--reset` to override |
+| Verification | Steps 11–13 run as part of full install | Use `--verify` to run steps 11–13 only (≈ 5–10 s) |
+| Lock file | Acquired at start, released on exit | `--reset` clears stale locks left by killed runs |
+
+To force a clean re-install of all configuration files, delete them manually
+(see [Uninstall / Rollback](#uninstall--rollback)) and re-run.
 
 ## Trixie Upgrade (optional)
 
@@ -213,12 +289,12 @@ containers are unaffected; the flag is a no-op there.
 | Property | Implementation |
 |----------|---------------|
 | Idempotent | Configuration files skip if already present; the 6 files with `# ry-crostini:VERSION` markers self-heal when SCRIPT_VERSION advances |
-| Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644/600/700) |
+| Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
 | No eval | `run()` passes `"$@"` directly; generated systemd unit uses `bash -c` for inline conditional only |
-| Signal handling | Traps INT, TERM, HUP, PIPE, QUIT; re-raises for correct 128+N exit code; sudo tmpfiles tracked for cleanup |
-| Sudo keepalive | Background `sudo -v` loop every 60 s prevents credential timeout; killed in cleanup |
+| Signal handling | Traps INT, TERM, HUP, QUIT; re-raises for correct 128+N exit code; SIGPIPE left at bash default; sudo tmpfiles tracked for cleanup |
+| Sudo keepalive | Background `sudo -v` loop every 60 s prevents credential timeout; lock-held detection via `pgrep` (procps); killed in cleanup |
 
 ### User Experience
 
@@ -257,6 +333,163 @@ containers are unaffected; the flag is a no-op there.
 | Sommelier not running during install | Sommelier (Wayland/X11 bridge) is started by the container login process, not inside a running shell. Step 1 logs this as informational; step 11 reports it as a warning only if still absent at completion. Close and reopen the Terminal to resolve. |
 | ChromeOS flag status | `#crostini-gpu-support`: Required (disabled by default since M131). `#exo-pointer-lock`: Required. |
 
+## Troubleshooting
+
+### GPU not active after install
+
+Step 11 reports `Render node: ✗ NOT ACTIVE` and the GL renderer line is
+missing. Cause: `chrome://flags/#crostini-gpu-support` either was not enabled
+or was enabled without rebooting the entire Chromebook. Container restart is
+not sufficient — the host VM must come up with the flag set. Fix: enable the
+flag, **fully reboot the Chromebook** (not just Linux), then `bash
+ry-crostini.sh --verify`.
+
+### Trixie upgrade hard-stop after step 2
+
+With `--upgrade-trixie`, the script intentionally exits 0 after step 2
+completes the codename rewrite and `apt full-upgrade`. This is not an error.
+Continuing in-session would risk SIGTERM when dpkg replaces libc6, dbus, or
+systemd under the running container. Fix: from the ChromeOS shelf, **Shut
+down Linux**, wait for the Terminal to fully close, reopen it, and re-run
+`bash ry-crostini.sh`. The checkpoint resumes at step 3 against the upgraded
+trixie container.
+
+### "Another instance is running" / lock-held error
+
+The script uses a PID-based `mkdir` lock at `~/.ry-crostini.lock`. If a prior
+run was killed with `kill -9` (or the container was force-stopped), the lock
+directory may persist. The script detects stale locks via `kill -0 $PID`,
+but a manual override is available: `bash ry-crostini.sh --reset` clears the
+lock and the checkpoint, then prompts for confirmation. Add `--force` if
+running non-interactively.
+
+### Sommelier not running warning at step 11
+
+Sommelier is started by the container login process, not by any command run
+inside an existing shell. On a brand-new container, the script may complete
+before sommelier has been launched at all. Fix: close and reopen the
+Terminal app. If the warning persists after reopening, run `systemctl --user
+status 'sommelier@*.service'` to inspect the unit state.
+
+### WirePlumber JSON config silently ignored (bookworm)
+
+Step 11 reports `WirePlumber version 0.4.x (JSON config ignored — needs ≥ 0.5)`.
+Cause: the bookworm-backports refresh in step 6 failed (network issue, repo
+unavailable, or apt error). Fix: verify `bookworm-backports` is enabled with
+`grep -r bookworm-backports /etc/apt/`, then manually `sudo apt -t
+bookworm-backports install pipewire-audio wireplumber`. Re-verify with `bash
+ry-crostini.sh --verify`.
+
+### earlyoom killing the wrong process
+
+Default `--prefer` regex targets `retroarch|box64|wine|dosbox-x|scummvm`
+(trixie) or `retroarch|wine|dosbox|scummvm` (bookworm). To adjust priorities
+for other workloads, edit `/etc/default/earlyoom` and restart: `sudo
+systemctl restart earlyoom`. Note that step 11 validates the `--prefer`
+regex shape; a malformed line will fail verification.
+
+### Verification fails on first complete run
+
+Verification failures preserve the checkpoint. Fix the underlying issue
+(missing package, GPU flag, audio device) and run `bash ry-crostini.sh
+--verify` to re-run steps 11–13 only. Do not use `--reset` — it would force
+a full re-install.
+
+### Audio choppy or no devices
+
+First check `/dev/snd` exists: `ls /dev/snd`. If empty, the container needs
+restart (sometimes a full Chromebook reboot). If devices are present but
+audio is choppy, verify the PipeWire gaming quantum config landed: `cat
+~/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf`. Restart
+PipeWire with `systemctl --user restart pipewire pipewire-pulse wireplumber`.
+
+## Uninstall / Rollback
+
+The script does not provide an automated uninstaller. To revert manually:
+
+### Configuration files
+
+Remove user-level configs (safe — these are the 19 files written by the script):
+
+```bash
+rm -f ~/.config/environment.d/{gpu,sommelier,qt}.conf
+rm -f ~/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf
+rm -f ~/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf
+rm -f ~/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf
+rm -f ~/.config/gtk-3.0/settings.ini ~/.config/gtk-4.0/settings.ini
+rm -f ~/.gtkrc-2.0 ~/.Xresources ~/.box64rc
+rm -f ~/.config/fontconfig/fonts.conf ~/.icons/default/index.theme
+rm -f ~/.config/retroarch/retroarch.cfg
+rm -f ~/.config/scummvm/scummvm.ini
+rm -f ~/.config/dosbox-x/dosbox-x.conf
+rm -f ~/.local/bin/{run-x86,gog-extract,run-game}
+```
+
+Remove system-level configs (requires sudo):
+
+```bash
+sudo rm -f /etc/apt/apt.conf.d/90parallel
+sudo rm -f /etc/apt/sources.list.d/bookworm-backports.list
+sudo rm -f /etc/systemd/system/tmp.mount.d/override.conf
+sudo rm -f /etc/default/earlyoom
+sudo rm -f /etc/profile.d/ry-crostini-env.sh
+sudo rm -f /etc/systemd/journald.conf.d/volatile.conf
+```
+
+### Disable the cros-pin service
+
+```bash
+sudo systemctl disable --now ry-crostini-cros-pin.service
+sudo rm -f /etc/systemd/system/ry-crostini-cros-pin.service
+sudo systemctl daemon-reload
+```
+
+### Unmask systemd timers
+
+```bash
+sudo systemctl unmask apt-daily-upgrade.timer fstrim.timer e2scrub_all.timer man-db.timer
+```
+
+### Release lingering APT package holds
+
+```bash
+sudo apt-mark unhold cros-guest-tools cros-garcon cros-notificationd \
+    cros-sftp cros-sommelier cros-sommelier-config cros-wayland \
+    cros-pulse-config cros-apt-config
+```
+
+### Trixie upgrade rollback
+
+A successful Trixie upgrade is **not reversible** without recreating the
+container — APT does not support downgrading across codenames. Backups of
+the original APT sources are saved with the `.pre-trixie` suffix under
+`/etc/apt/`:
+
+```bash
+ls /etc/apt/*.pre-trixie /etc/apt/sources.list.d/*.pre-trixie 2>/dev/null
+```
+
+These let you restore the **APT source files** to their pre-upgrade state,
+but installed packages will still be at trixie versions. The supported
+recovery path for an unwanted upgrade is to delete the container from
+ChromeOS Linux settings and start over.
+
+### Logs and checkpoint
+
+```bash
+rm -f ~/ry-crostini-*.log ~/.ry-crostini-checkpoint
+rm -rf ~/.ry-crostini.lock
+```
+
+### Installed packages
+
+The script installs ~80 Debian packages across steps 3–10. There is no
+single command to remove only the packages added by the script. The least
+invasive approach is to leave them installed (they cost disk space, not
+runtime overhead). If you need a clean container, delete it from ChromeOS
+Linux settings and create a new one — that's faster than reverse-engineering
+the package list.
+
 ## Gaming Reference
 
 Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
@@ -286,6 +519,10 @@ gog-extract on first install.
 | RetroArch | Multi-system frontend (native arm64 Debian package) | `~/.config/retroarch/retroarch.cfg` |
 
 ### RetroArch Cores
+
+> The script installs `retroarch` and `retroarch-assets` only — **no libretro
+> cores are pre-installed.** Install the cores below via RetroArch's Online
+> Updater (Main Menu → Online Updater → Core Downloader).
 
 | System | Core | Notes |
 |--------|------|-------|
@@ -353,7 +590,8 @@ cores qualify. Do not enable for PSX, N64, PSP, DS, or Dreamcast cores.
 | qemu-user | Step 10 | Slow — TCG JIT (~5–10× slower than box64) | Provides i386; binfmt transparent execution blocked in unprivileged Crostini |
 
 The `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
-and dispatches to box64 (preferred) or qemu-user as appropriate. Run
+and dispatches: x86_64 → box64 (preferred) → `qemu-x86_64` (fallback when
+box64 is unavailable, e.g. on bookworm); i386 → `qemu-i386`. Run
 `run-x86 --help` to list available backends.
 
 #### 32-bit x86 Alternatives
@@ -401,6 +639,12 @@ run-game dosbox-x                      # DOSBox-X on big cores
 run-game scummvm                       # ScummVM on big cores
 run-game run-x86 ./some_x86_program    # Chain with x86 emulation
 ```
+
+The wrapper also exports `MESA_NO_ERROR=1` and `mesa_glthread=true` for the
+duration of the launched process. Both are unsafe globally on virgl
+(`MESA_NO_ERROR` lets invalid GL calls cross the VM boundary and can hang
+the host virglrenderer; `mesa_glthread` crashes Firefox on X11/EGL) but
+safe per-game.
 
 On non-SC7180P hardware, the wrapper detects big cores dynamically via
 `/proc/cpuinfo` CPU part IDs (Qualcomm Kryo Gold `0x804` or generic ARM
@@ -463,3 +707,5 @@ under box64 on Trixie but is untested on 4 GB RAM). Alternative: download GOG
 ## License
 
 [MIT](LICENSE)
+
+Copyright (c) 2024–2026 Ryan Musante
