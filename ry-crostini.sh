@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
-# ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US) Version: 8.1.15 Date: 2026-04-08 Arch: aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P) Target: Debian Bookworm container under ChromeOS Crostini (primary target). Trixie upgrade is opt-in via --upgrade-trixie. Bookworm path uses bookworm-backports for pipewire 1.4 / wireplumber 0.5 and falls back to vanilla dosbox + qemu-user (no dosbox-x, no box64). Usage: bash ry-crostini.sh [--interactive] [--upgrade-trixie] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--] Fully unattended by default — use --interactive for ChromeOS toggle prompts. NOTE: Script uses sudo internally (~70 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential. WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl. NOTE: Default flow stays on bookworm and pulls pipewire/wireplumber from bookworm-backports. Pass --upgrade-trixie to perform the legacy bookworm->trixie codename rewrite (requires container restart mid-script). NOTE: Trixie mounts /tmp as tmpfs (RAM-backed); bookworm /tmp is disk-backed. Step 2d gates the tmpfs cap accordingly.
+# ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
+#
+# Version: 8.1.17
+# Date:    2026-04-08
+# Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
+# Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
+#          Trixie upgrade is opt-in via --upgrade-trixie.
+#
+# Bookworm path uses bookworm-backports for pipewire 1.4 / wireplumber 0.5 and
+# falls back to vanilla dosbox + qemu-user (no dosbox-x, no box64).
+#
+# Usage: bash ry-crostini.sh [--interactive] [--upgrade-trixie] [--from-step=N]
+#                            [--verify] [--reset [--force]] [--help] [--version] [--]
+#
+# Fully unattended by default — use --interactive for ChromeOS toggle prompts.
+#
+# NOTE:    Script uses sudo internally (~69 calls). A background keepalive renews
+#          credentials every 60 s. Run `sudo true` first to cache the initial credential.
+# WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable
+#          on 4 GB RAM / virgl.
+# NOTE:    Default flow stays on bookworm and pulls pipewire/wireplumber from
+#          bookworm-backports. Pass --upgrade-trixie to perform the legacy
+#          bookworm->trixie codename rewrite (requires container restart mid-script).
+# NOTE:    Trixie mounts /tmp as tmpfs (RAM-backed); bookworm /tmp is disk-backed.
+#          Step 2d gates the tmpfs cap accordingly.
 
 set -euo pipefail
 # Propagate ERR trap to functions/subshells; inherit errexit in $(command substitution)
@@ -10,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.15"
+readonly SCRIPT_VERSION="8.1.17"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -353,11 +377,11 @@ run() {
 # _write_file_impl: atomic write stdin to path with given mode
 _write_file_impl() {
     local dest="$1" mode="$2"
+    # Refuse to clobber a destination symlink. Original v8.1.16 and prior tested `[[ -L "$tmp" ]]` against a freshly mktemp'd file — always false (mktemp uses O_EXCL|O_CREAT and returns a regular file). The honest test is on $dest, and it must run before mktemp so a leaked tmpfile is impossible.
+    [[ -L "$dest" ]] && die "Refusing to write $dest: destination is a symlink"
     mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
-    # Refuse to write through a symlink (TOCTOU defence)
-    [[ -L "$tmp" ]] && { rm -f -- "$tmp"; die "Refusing to write $dest: tmpfile is a symlink"; }
     cat > "$tmp" || { rm -f -- "$tmp"; die "Cannot write $dest"; }
     chmod "$mode" "$tmp" || { rm -f -- "$tmp"; die "Cannot chmod $dest"; }
     mv -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "Cannot move $dest into place"; }
@@ -375,16 +399,15 @@ write_file_exec() { _write_file_impl "$1" 700; }
 # write_file_sudo: atomic write via sudo. Output mode 644.
 write_file_sudo() {
     local dest="$1"
+    # Refuse to clobber a destination symlink (parity with _write_file_impl). Original v8.1.16 tested `! sudo test ! -L "$tmp"` against a freshly sudo-mktemp'd file — always false. Honest test is on $dest and must precede mktemp so signals between mktemp and the test cannot leak the tmpfile.
+    if sudo test -L "$dest"; then
+        die "Refusing to write $dest: destination is a symlink"
+    fi
     sudo mkdir -p "$(dirname "$dest")" || die "Cannot create parent dir for $dest"
     local tmp
     tmp="$(sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX")" || die "Cannot create tmpfile for $dest"
     # Track for cleanup trap — signal between mktemp and mv would leak this file
     _SUDO_TMPFILE="$tmp"
-    # Refuse to write through a symlink (TOCTOU defence — parity with ry-install)
-    if ! sudo test ! -L "$tmp"; then
-        sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""
-        die "Refusing to write $dest: tmpfile is a symlink"
-    fi
     sudo tee "$tmp" > /dev/null || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot write $dest"; }
     sudo chmod 644 "$tmp" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot chmod tmpfile for $dest"; }
     sudo mv -- "$tmp" "$dest" || { sudo rm -f -- "$tmp"; _SUDO_TMPFILE=""; die "Cannot move $dest into place"; }
@@ -1166,7 +1189,7 @@ EOF
             log "Enabling bookworm-backports for pipewire 1.4 / wireplumber 0.5"
             _BPO_LIST="/etc/apt/sources.list.d/bookworm-backports.list"
             if [[ ! -f "$_BPO_LIST" ]] && ! grep -rq "bookworm-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
-                printf 'deb http://deb.debian.org/debian bookworm-backports main\n' \
+                printf 'deb https://deb.debian.org/debian bookworm-backports main\n' \
                     | write_file_sudo "$_BPO_LIST"
             else
                 log "bookworm-backports already configured"
@@ -1181,7 +1204,7 @@ EOF
             # First-backup-wins: skip if backup already exists from a prior failed run
             if [[ -e /etc/apt/sources.list.pre-trixie ]]; then
                 log "sources.list backup already exists — preserving original pristine copy"
-            elif ! run sudo cp /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
+            elif ! run sudo cp --no-dereference --preserve=all /etc/apt/sources.list /etc/apt/sources.list.pre-trixie; then
                 die "Cannot back up /etc/apt/sources.list — aborting upgrade"
             fi
             # Rewrite: bookworm → trixie on deb/deb-src lines only (preserves comments)
@@ -1197,8 +1220,11 @@ EOF
         fi
         # Also update cros-packages repo if present (resets on container restart)
         if [[ -f /etc/apt/sources.list.d/cros.list ]]; then
-            [[ -e /etc/apt/cros.list.pre-trixie ]] \
-                || run sudo cp /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie || true
+            if [[ -e /etc/apt/cros.list.pre-trixie ]]; then
+                log "cros.list backup already exists — preserving"
+            elif ! run sudo cp --no-dereference --preserve=all /etc/apt/sources.list.d/cros.list /etc/apt/cros.list.pre-trixie; then
+                warn "cros.list backup failed — proceeding without backup (cros.list is regenerated by ChromeOS)"
+            fi
             if run sudo sed -i "/^deb/s/\\<${_cur_codename}\\>/trixie/g" /etc/apt/sources.list.d/cros.list; then
                 log "Rewrote cros.list: ${_cur_codename} → trixie"
                 log "NOTE: cros.list resets on container restart (ChromeOS regenerates it)"
@@ -1222,7 +1248,7 @@ EOF
                 if [[ -e "$_sfile_bak" ]]; then
                     log "Backup ${_sfile_bak} already exists — preserving"
                 else
-                    run sudo cp -- "$_sfile" "$_sfile_bak" \
+                    run sudo cp --no-dereference --preserve=all -- "$_sfile" "$_sfile_bak" \
                         || { warn "Cannot back up ${_sfile} — skipping"; continue; }
                 fi
                 # .list format: replace on deb/deb-src lines; .sources (deb822): replace on Suites: lines
@@ -1388,7 +1414,7 @@ if should_run_step 3; then
 
     CORE_PKGS=(
         # Navigation and file management
-        file tree zip unzip 7zip rsync rename
+        file tree zip unzip rsync rename
 
         # Text processing
         nano vim less jq
@@ -1414,9 +1440,11 @@ if should_run_step 3; then
 
     install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
 
-    # bookworm: 7zip package provides 7zz, not 7z. Add p7zip-full for the canonical `7z` command.
+    # 7z command source differs by codename: bookworm 7zip ships only 7zz, so use p7zip-full (provides /usr/bin/7z). Trixie 7zip 24.x ships /usr/bin/{7z,7za,7zr} natively.
     if $IS_BOOKWORM; then
         install_pkgs_best_effort p7zip-full || warn "p7zip-full install failed — 7z command may be unavailable"
+    else
+        install_pkgs_best_effort 7zip || warn "7zip install failed — 7z command may be unavailable"
     fi
 
     # Create common symlinks for renamed Debian packages
@@ -1894,11 +1922,15 @@ if should_run_step 9; then
     # 9a. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
         # @@WHY: Gate sed on successful backup — cp failure means no rollback
-        if run sudo cp /etc/locale.gen /etc/locale.gen.bak; then
+        if run sudo cp --no-dereference --preserve=all /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^#[[:space:]]*\(en_US\.UTF-8\)/\1/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then
-                    run sudo rm -f -- /etc/locale.gen.bak || true
-                    log "en_US.UTF-8 locale generated"
+                    if locale -a 2>/dev/null | grep -q '^en_US\.utf8$'; then
+                        run sudo rm -f -- /etc/locale.gen.bak || true
+                        log "en_US.UTF-8 locale generated"
+                    else
+                        warn "locale-gen ran but en_US.utf8 not in locale -a — sed may have matched nothing; backup at /etc/locale.gen.bak"
+                    fi
                 else
                     warn "locale-gen failed — locale.gen modified but generation incomplete; backup at /etc/locale.gen.bak"
                 fi
@@ -2209,7 +2241,7 @@ RCEOF
     # run-x86: convenience wrapper — auto-detects ELF arch, prefers box64 for x86_64
     _RUN_X86="${HOME}/.local/bin/run-x86"
     if [[ ! -f "$_RUN_X86" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_RUN_X86" 2>/dev/null; then
-        sed "s/@@VERSION@@/v${SCRIPT_VERSION}/" <<'WRAPPER' | write_file_exec "$_RUN_X86"
+        sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'WRAPPER' | write_file_exec "$_RUN_X86"
 #!/usr/bin/env bash
 # run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini Prefers box64 (DynaRec JIT) when available; falls back to qemu-user (TCG). Usage: run-x86 ./program [args...] Managed by ry-crostini.sh — edit freely.
 # ry-crostini:@@VERSION@@
@@ -2218,7 +2250,7 @@ set -euo pipefail
 
 case "${1:-}" in
     --help)    printf 'Usage: run-x86 <program> [args...]\nAuto-detects ELF arch; prefers box64 (x86_64), falls back to qemu.\n'; exit 0 ;;
-    --version) printf 'run-x86 @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --version) printf 'run-x86 @@VTAG@@ from ry-crostini.sh\n'; exit 0 ;;
     --)        shift ;;
 esac
 
@@ -2284,7 +2316,7 @@ WRAPPER
     # gog-extract: wrapper to extract GOG .exe (Inno Setup) and .sh (makeself) installers
     _GOG_EXTRACT="${HOME}/.local/bin/gog-extract"
     if [[ ! -f "$_GOG_EXTRACT" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_GOG_EXTRACT" 2>/dev/null; then
-        sed "s/@@VERSION@@/v${SCRIPT_VERSION}/" <<'GOGWRAP' | write_file_exec "$_GOG_EXTRACT"
+        sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'GOGWRAP' | write_file_exec "$_GOG_EXTRACT"
 #!/usr/bin/env bash
 # gog-extract — extract GOG game installers on ARM64 Linux without Wine Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec) Usage: gog-extract <installer> [output-dir] Managed by ry-crostini.sh — edit freely.
 # ry-crostini:@@VERSION@@
@@ -2293,7 +2325,7 @@ set -euo pipefail
 
 case "${1:-}" in
     --help)    printf 'Usage: gog-extract <installer> [output-dir]\nExtracts GOG Windows .exe or Linux .sh installers.\n'; exit 0 ;;
-    --version) printf 'gog-extract @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --version) printf 'gog-extract @@VTAG@@ from ry-crostini.sh\n'; exit 0 ;;
     --)        shift ;;
 esac
 
@@ -2370,7 +2402,7 @@ GOGWRAP
     # run-game: CPU affinity + priority launcher for gaming on big.LITTLE SoC
     _RUN_GAME="${HOME}/.local/bin/run-game"
     if [[ ! -f "$_RUN_GAME" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_RUN_GAME" 2>/dev/null; then
-        sed "s/@@VERSION@@/v${SCRIPT_VERSION}/" <<'RGWRAP' | write_file_exec "$_RUN_GAME"
+        sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'RGWRAP' | write_file_exec "$_RUN_GAME"
 #!/usr/bin/env bash
 # run-game — launch a game on Cortex-A76 big cores with elevated priority SC7180P: cores 6-7 = Cortex-A76, cores 0-5 = Cortex-A55 Usage: run-game <command> [args...] Managed by ry-crostini.sh — edit freely.
 # ry-crostini:@@VERSION@@
@@ -2379,7 +2411,7 @@ set -euo pipefail
 
 case "${1:-}" in
     --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (auto-detected via /proc/cpuinfo), sets nice -5, ionice -c2 -n0.\n'; exit 0 ;;
-    --version) printf 'run-game @@VERSION@@ from ry-crostini.sh\n'; exit 0 ;;
+    --version) printf 'run-game @@VTAG@@ from ry-crostini.sh\n'; exit 0 ;;
     --)        shift ;;
 esac
 
@@ -2390,13 +2422,13 @@ fi
 
 # Build command with optional affinity and priority
 _cmd=("$@")
-# Pin to big cores: SC7180P Kryo Gold = part 0x804, generic Cortex-A76 = 0xd0b. Only applies when both conditions hold: heterogeneous parts detected AND a known A76-class part is present. Otherwise skips affinity entirely.
+# Pin to big cores. Recognized big-core part IDs (heterogeneous SoCs only): SC7180P Kryo Gold 0x804, Cortex-A76 0xd0b, A77 0xd0d, A78 0xd41, X1 0xd44, A710 0xd47, X2 0xd48, A715 0xd4d, X3 0xd4e, A720 0xd80, X4 0xd81. Only applies when both conditions hold: ≥2 distinct CPU parts AND at least one big-core part is present. Otherwise skips affinity entirely.
 _big_cores=""
 if [[ -d /sys/devices/system/cpu/cpu0 ]]; then
     _nparts="$(awk '/^CPU part/ {print $4}' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)"
-    if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '^CPU part[[:space:]]*:[[:space:]]*0x(804|d0b)' /proc/cpuinfo 2>/dev/null; then
-        # Collect core indices whose part matches Kryo Gold (0x804) or Cortex-A76 (0xd0b)
-        _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x(804|d0b)/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
+    if [[ "${_nparts:-0}" -ge 2 ]] && grep -qE '^CPU part[[:space:]]*:[[:space:]]*0x(804|d0b|d0d|d41|d44|d47|d48|d4d|d4e|d80|d81)' /proc/cpuinfo 2>/dev/null; then
+        # Collect core indices whose part matches any recognized big-core ID
+        _big_cores="$(awk '/^processor/{p=$3} /^CPU part.*0x(804|d0b|d0d|d41|d44|d47|d48|d4d|d4e|d80|d81)/{print p}' /proc/cpuinfo 2>/dev/null | paste -sd,)"
         # Reject anything that isn't a clean comma-separated digit list (defends against awk emitting empty p, stray whitespace, or unexpected lines)
         [[ "$_big_cores" =~ ^[0-9]+(,[0-9]+)*$ ]] || _big_cores=""
     fi
@@ -2404,7 +2436,7 @@ fi
 if [[ -n "$_big_cores" ]]; then
     _cmd=(taskset -c "$_big_cores" "${_cmd[@]}")
 fi
-# nice -n -5 requires CAP_SYS_NICE; fall back silently if unprivileged
+# nice -n -5 requires CAP_SYS_NICE; ionice -c2 -n0 checks the same capability in-kernel, so a single nice probe is sufficient — they pass/fail together.
 if nice -n -5 true 2>/dev/null; then
     _cmd=(nice -n -5 ionice -c2 -n0 "${_cmd[@]}")
 fi
@@ -2852,7 +2884,16 @@ if should_run_step 13; then
     logprintf '%bElapsed time:%b  %dm %ds\n' "$BOLD" "$RESET" "$((_elapsed / 60))" "$((_elapsed % 60))"
     unset _now_epoch _elapsed
 
-    # Live-reload environment.d vars and restart sommelier so changes apply without container restart. Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing them as shell. Sourcing breaks values containing shell metachars — e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the exported value would be just "wayland". The on-disk file is parsed correctly by systemd-environment-d-generator on next session start; this block exists only to make the changes live in the current session. Single pass: export into the current shell AND build the import-environment key list. Unscoped `import-environment` would leak script-internal vars (LOG_FILE, _verify_*, IS_BOOKWORM, etc.) — hence the explicit allow-list.
+    # Live-reload environment.d vars and restart sommelier so changes apply without
+    # container restart. Parse environment.d files as KEY=VALUE (systemd format) rather
+    # than sourcing them as shell. Sourcing breaks values containing shell metachars —
+    # e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the
+    # exported value would be just "wayland". The on-disk file is parsed correctly by
+    # systemd-environment-d-generator on next session start; this block exists only to
+    # make the changes live in the current session. Single pass: export into the
+    # current shell AND build the import-environment key list. Unscoped
+    # `import-environment` would leak script-internal vars (LOG_FILE, _verify_*,
+    # IS_BOOKWORM, etc.) — hence the explicit allow-list.
     if [[ -d "${HOME}/.config/environment.d" ]]; then
         _import_keys=()
         _had_nullglob_env=false
@@ -2897,13 +2938,19 @@ if should_run_step 13; then
     # Restart sommelier — enumerate active instances rather than hardcoding @0
     mapfile -t _somm_units < <(systemctl --user list-units --type=service --state=active --no-legend 'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | awk '{print $1}')
     if [[ "${#_somm_units[@]}" -gt 0 ]] && systemctl --user restart "${_somm_units[@]}" 2>/dev/null; then
-        # Brief settle — sommelier needs ~1 s to re-establish the display socket
-        sleep 1
-        if pgrep -x sommelier &>/dev/null; then
+        # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention, OOM recovery) may need >1 s to re-establish the display socket
+        _somm_ready=false
+        for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+            if pgrep -x sommelier &>/dev/null; then _somm_ready=true; break; fi
+            sleep 0.2
+        done
+        unset _i
+        if $_somm_ready; then
             log "Sommelier restarted (${_somm_units[*]}) — environment changes are live"
         else
             logprintf '\n%bSommelier restart failed — shut down Linux (Settings → Developers) and reopen Terminal.%b\n\n' "$BOLD" "$RESET"
         fi
+        unset _somm_ready
     else
         logprintf '\n%bRestart the Terminal app to apply all environment changes.%b\n\n' "$BOLD" "$RESET"
     fi

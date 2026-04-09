@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.15-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.17-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -234,7 +234,7 @@ containers are unaffected; the flag is a no-op there.
 
 | Property | Implementation |
 |----------|---------------|
-| Idempotent | Configuration files skip if already present; the 6 files with `# ry-crostini:VERSION` markers self-heal when SCRIPT_VERSION advances |
+| Idempotent | Configuration files skip if already present; the 9 files with `# ry-crostini:VERSION` markers (6 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
@@ -526,10 +526,24 @@ gog-extract gog_baldurs_gate_enhanced_edition.sh       # extracts to ./gog_baldu
 
 For standalone RAR extraction, `unar` (installed by step 10) handles
 RAR4/RAR5 including multi-part archives. `unrar` (RARLAB, non-free) is
-attempted separately; to enable it, add non-free to APT sources:
+attempted separately; to enable it, add non-free to APT sources.
+
+**deb822 format** (trixie default, and bookworm after `apt modernize-sources`).
+Idempotent — appends `non-free` only if not already a standalone token, and
+correctly distinguishes it from `non-free-firmware`:
 
 ```bash
-sudo sed -i 's/ main$/ main non-free/' /etc/apt/sources.list.d/debian.sources
+sudo sed -i -E '/^Components:/ { /(^| )non-free( |$)/!s/$/ non-free/ }' \
+    /etc/apt/sources.list.d/debian.sources
+sudo apt update && sudo apt install unrar
+```
+
+**Legacy `.list` format** (bookworm pre-modernize-sources). The trailing-`main`
+match only fits the stock single-component form; for any custom
+`main contrib` etc., edit the file by hand:
+
+```bash
+sudo sed -i '/^deb / s/ main$/ main non-free/' /etc/apt/sources.list
 sudo apt update && sudo apt install unrar
 ```
 
