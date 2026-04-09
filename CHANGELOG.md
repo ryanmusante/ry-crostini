@@ -2,6 +2,12 @@ ry-crostini changelog
 
 2026-04-09  Ryan Musante
 
+- Tagged as v8.1.13
+- README condensed from 689 to 561 lines (-128) across five low-risk cuts. Troubleshooting section: dropped "Verification fails after re-run" entry (redundant with Usage), collapsed Symptom/Diagnose/Fix three-block structure into single paragraphs, removed obvious diagnose snippets (140 → 60 lines, -80). Quick Start: collapsed "What to expect" 7-bullet block into a single paragraph, merged the post-run instruction into the code block (33 → 18 lines, -15). Trixie Upgrade table: removed secondary clauses on Codename replacement, Package holds, Validation, deb822 migration, /tmp tmpfs cap rows; dropped the standalone Validation row entirely (its content is implicit in the hard-stop description). Usage section: dropped the standalone sudo keepalive Note callout (already covered in Quick Start), trimmed the Logs table from 5 rows to 3 (dropped Cleanup and Contents implementation details), collapsed the tail-the-log code block into an inline command. Gaming Reference: collapsed "32-bit x86 Alternatives" subsection (12 lines → 4) and "Transparent Execution (Privileged Container)" subsection (20 lines → 6) into prose paragraphs under x86 Translation.
+- No script changes from v8.1.12. SCRIPT_VERSION bump still triggers re-write of the 6 self-healing config files on next run.
+
+2026-04-09  Ryan Musante
+
 - Tagged as v8.1.12
 - README "What's new in 8.1.x" callout removed. The information lives in this changelog already; duplicating the top three entries above the TOC was redundant. Restored the inline `[changelog](CHANGELOG.md)` text link in the lead paragraph since it had been collapsed into the What's new section.
 - No script changes from v8.1.11. SCRIPT_VERSION bump still triggers re-write of the 6 self-healing config files on next run.

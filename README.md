@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.12-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.13-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -57,32 +57,18 @@ is reversible.
 # 2. Enable flags → Reboot:
 #      chrome://flags/#crostini-gpu-support → Enabled
 #      chrome://flags/#exo-pointer-lock     → Enabled
-# 3. Cache sudo, then run:
+# 3. Cache sudo, clone, run:
 sudo true
 git clone https://github.com/ryanmusante/ry-crostini.git
-cd ry-crostini
-bash ry-crostini.sh
-# 4. When the script finishes: close and reopen the Terminal app.
+cd ry-crostini && bash ry-crostini.sh
+# 4. Close and reopen the Terminal app when finished.
 ```
 
-**What to expect during the run:**
-
-- A bottom-pinned progress bar shows the current step (1–13) and percentage.
-- The script invokes `sudo` internally; a background keepalive renews
-  credentials every 60 s. Run `sudo true` once before execution to cache
-  the initial credential and avoid an interactive prompt mid-run.
-- All prompts are auto-answered. Pass `--interactive` to step through
-  ChromeOS toggle prompts (microphone, USB, shared folders, ports).
-- On `--upgrade-trixie` first runs, the script **hard-stops with exit 0**
-  after step 2 with a "Shut down Linux" instruction. Re-run after the
-  shutdown; the checkpoint resumes at step 3 automatically.
-- Output is mirrored to `~/ry-crostini-YYYYMMDD-HHMMSS.log` (mode 600,
-  rotated after 7 days).
-
-**After the run:** close and reopen the Terminal app once. Sommelier
-restarts inside step 13 to apply environment changes live, but a fresh
-terminal session ensures every `environment.d` value is in effect for
-subsequent shells.
+**Expect:** a bottom-pinned progress bar (steps 1–13), `sudo` credential
+keepalive every 60 s, output mirrored to `~/ry-crostini-*.log` (mode 600,
+7-day rotation), and on `--upgrade-trixie` first runs, a deliberate
+**hard-stop with exit 0** after step 2 — re-run after `Shut down Linux`
+from the ChromeOS shelf and the checkpoint resumes at step 3.
 
 ## Hardware
 
@@ -148,25 +134,15 @@ The exit message distinguishes verification failures from mid-step fatal
 errors. Verification failures preserve the checkpoint so that
 `--verify` re-runs all checks (steps 11–13).
 
-> **Note:** The script invokes `sudo` internally. A background keepalive
-> renews credentials every 60 s. Run `sudo true` before execution to cache
-> the initial credential.
-
 ### Logs
 
 | Property | Value |
 |----------|-------|
 | Path | `~/ry-crostini-YYYYMMDD-HHMMSS.log` (one file per invocation) |
-| Mode | `0600` (born via `umask 077`, never briefly readable) |
+| Mode | `0600` (born via `umask 077`) |
 | Rotation | Files older than 7 days deleted automatically on next run |
-| Cleanup | Orphaned `_strip_log_ansi` tmpfiles (`*.log.strip_*`) deleted after 1 day |
-| Contents | Full step output, sudo command lines, package install results, verification details. ANSI color codes stripped before write. |
 
-To tail the active log during a run:
-
-```bash
-tail -f ~/ry-crostini-*.log
-```
+Tail the active log: `tail -f ~/ry-crostini-*.log`
 
 ## Installation Steps
 
@@ -243,15 +219,14 @@ containers are unaffected; the flag is a no-op there.
 
 | Behavior | Detail |
 |----------|--------|
-| Default (no flag) | Step 2 stays on the current codename. On bookworm, `bookworm-backports` is enabled and step 6 refreshes pipewire/wireplumber from it. No container restart required. |
-| `--upgrade-trixie` on bookworm | Step 2 rewrites codename references in APT sources, runs `apt full-upgrade`, then **hard-stops with an exit 0** so the user can `Shut down Linux` from the ChromeOS shelf. Continuing in-session risks SIGTERM when dpkg replaces libc6/dbus/systemd under a running container. On rerun the script resumes at step 3 against the upgraded trixie container. |
-| Codename replacement | Line-scoped: `deb`/`deb-src` lines in `.list` files, `Suites:` lines in deb822 `.sources` files. Comments and non-repo content are preserved. Legacy `/etc/apt/sources.list` is processed only when present; deb822-only containers are handled via the `*.sources` loop. |
-| Package holds | Crostini lifecycle packages (`cros-sommelier`, etc.) are held during the upgrade and unheld afterward. `cros-guest-tools` remains held permanently when targeting trixie (`cros-im` unavailable on trixie); on bookworm-default it is unheld with the rest. |
-| Backups | Saved with `.pre-trixie` suffix under `/etc/apt/`. |
-| Validation | `VERSION_CODENAME` checked before any rewrite; the hard-stop only fires when sources were genuinely rewritten (`_did_trixie_rewrite=true`). |
-| cros-pin service | `ry-crostini-cros-pin.service` removes stale regenerated `cros.list` on each container start, preventing duplicate APT sources. |
-| deb822 migration | After `apt modernize-sources`, any duplicate `cros.list` is removed if a `.sources` equivalent was created. |
-| `/tmp` tmpfs cap | Trixie mounts `/tmp` as tmpfs; step 2d caps it at 512 MB to prevent OOM on 4 GB RAM. **Skipped on bookworm** (disk-backed `/tmp`). |
+| Default (no flag) | Stays on current codename. On bookworm, `bookworm-backports` is enabled and step 6 refreshes pipewire/wireplumber from it. No restart required. |
+| `--upgrade-trixie` on bookworm | Step 2 rewrites APT sources, runs `apt full-upgrade`, then **hard-stops with exit 0**. Continuing in-session risks SIGTERM when dpkg replaces libc6/dbus/systemd. Re-run after `Shut down Linux`; resumes at step 3. |
+| Codename replacement | Line-scoped: `deb`/`deb-src` in `.list` files, `Suites:` in deb822 `.sources` files. Comments preserved. |
+| Package holds | Crostini lifecycle packages held during upgrade, unheld after. `cros-guest-tools` stays held on trixie (`cros-im` unavailable). |
+| Backups | `.pre-trixie` suffix under `/etc/apt/` (flattened). |
+| cros-pin service | Removes stale regenerated `cros.list` on container start. |
+| deb822 migration | After `apt modernize-sources`, duplicate `cros.list` removed if `.sources` equivalent exists. |
+| `/tmp` tmpfs cap | Trixie only — capped at 512 MB to prevent OOM on 4 GB RAM. Skipped on bookworm (disk-backed). |
 
 ## Design
 
@@ -308,82 +283,37 @@ containers are unaffected; the flag is a no-op there.
 
 ### GPU not active after install
 
-**Symptom:** Step 11 reports `Render node: ✗ NOT ACTIVE` or `glxinfo` shows
-the `llvmpipe` software renderer.
+Step 11 reports `Render node: ✗ NOT ACTIVE` or `glxinfo` shows `llvmpipe`.
+Enable `chrome://flags/#crostini-gpu-support` and perform a **full
+Chromebook reboot** (not just container restart) — the device node only
+appears after a host reboot. Re-run `--verify` after reboot; no full
+re-install needed.
 
-**Diagnose:**
+### Trixie upgrade hard-stop
 
-```bash
-ls -l /dev/dri/renderD128            # should exist
-glxinfo | grep -i renderer           # should mention "virgl"
-```
-
-**Fix:** Enable `chrome://flags/#crostini-gpu-support`, then perform a
-**full Chromebook reboot** (not just a container restart). The GPU device
-node only appears after a host reboot. GPU packages are installed
-regardless, so re-running the script is unnecessary — just `--verify`.
-
-### Trixie upgrade hard-stop confusion
-
-**Symptom:** After `--upgrade-trixie` first run, the script exits 0 with
-"Shut down Linux from the ChromeOS shelf, then re-run." Re-running
-immediately fails with the same message, or seems to skip steps.
-
-**Fix:** This is expected. The hard-stop is mandatory because dpkg has
-just replaced libc6/dbus/systemd under a running container. You must:
-
-1. Right-click the Terminal icon in the ChromeOS shelf → **Shut down Linux**
-2. Wait 10 seconds
-3. Reopen Terminal (this starts a fresh container with the new libraries)
-4. `cd ry-crostini && bash ry-crostini.sh`
-
-The checkpoint resumes at step 3 against the upgraded container.
+After `--upgrade-trixie` first run the script exits 0 with a "Shut down
+Linux" message. This is mandatory: dpkg has just replaced
+libc6/dbus/systemd under the running container. Right-click the Terminal
+icon → **Shut down Linux**, wait 10 seconds, reopen Terminal, then
+`bash ry-crostini.sh` — the checkpoint resumes at step 3.
 
 ### Lock held / "another instance is running"
 
-**Symptom:** `Lock directory ~/.ry-crostini.lock/ exists. Another instance...`
+Check `cat ~/.ry-crostini.lock/pid` and `ps -p $(cat ~/.ry-crostini.lock/pid)`.
+If the PID is dead, `bash ry-crostini.sh --reset` clears the stale lock
+and checkpoint (add `--force` for non-interactive). If genuinely held,
+wait for the other instance.
 
-**Diagnose:**
+### Audio: no devices
 
-```bash
-cat ~/.ry-crostini.lock/pid          # PID of supposed running instance
-ps -p $(cat ~/.ry-crostini.lock/pid) # is it actually alive?
-```
-
-**Fix:** If the PID is dead, the lock is stale from a crashed run.
-`bash ry-crostini.sh --reset` clears both the lock and the checkpoint
-(prompts for confirmation; add `--force` if running non-interactively).
-If the lock is genuinely held, wait for the other instance to finish.
-
-### Audio: no devices / `pactl info` empty
-
-**Symptom:** Step 11 reports `ALSA devices: ✗` or `PulseAudio: ⚠ not responding`.
-
-**Diagnose:**
-
-```bash
-ls /dev/snd/                                      # should list pcmC*D*c/p
-systemctl --user status pipewire pipewire-pulse   # both should be active
-```
-
-**Fix:** First-run audio often requires a container restart to expose
-`/dev/snd/`. Shut down Linux from the shelf and reopen. If the issue
-persists, ensure the user is in the `audio` group: `id | grep audio`.
+Step 11 reports `ALSA devices: ✗` or `PulseAudio: ⚠ not responding`.
+First-run audio usually requires a container restart to expose `/dev/snd/`
+— shut down Linux from the shelf and reopen.
 
 ### WirePlumber JSON config silently ignored on bookworm
 
-**Symptom:** Step 11 reports `WirePlumber version 0.4.13 — JSON config
-ignored — needs ≥ 0.5`. Audio works but the gaming tuning has no effect.
-
-**Diagnose:**
-
-```bash
-wireplumber --version                                          # version line
-apt-cache policy wireplumber                                   # check candidate
-grep bookworm-backports /etc/apt/sources.list.d/*.list         # repo present?
-```
-
-**Fix:** The bookworm-backports refresh in step 6 failed. Re-run manually:
+Step 11 reports `WirePlumber version 0.4.13 — JSON config ignored — needs ≥ 0.5`.
+The bookworm-backports refresh in step 6 failed. Fix:
 
 ```bash
 sudo apt update
@@ -391,59 +321,22 @@ sudo apt -t bookworm-backports install pipewire-audio wireplumber
 systemctl --user restart wireplumber
 ```
 
-If `bookworm-backports` is missing entirely, re-run the script from
-step 2: `bash ry-crostini.sh --from-step=2`.
+If `bookworm-backports` is missing entirely, re-run from step 2:
+`bash ry-crostini.sh --from-step=2`.
 
 ### Sommelier not running
 
-**Symptom:** Step 11 warns `Sommelier: ⚠ not running — restart terminal
-to activate`. GUI apps fail to launch with "cannot connect to display."
-
-**Fix:** Sommelier is started by the container login process, not by
-shells. Close and reopen the Terminal app. If still missing after restart:
-
-```bash
-systemctl --user status sommelier@0
-journalctl --user -u sommelier@0 -n 50
-```
+Step 11 warns `Sommelier: ⚠ not running`. Sommelier is started by container
+login, not by shells — close and reopen the Terminal app. If still missing,
+check `systemctl --user status sommelier@0`.
 
 ### earlyoom killing the wrong process
 
-**Symptom:** A game or terminal session disappears mid-run with `Killed`
-in dmesg.
-
-**Diagnose:**
-
-```bash
-journalctl -u earlyoom -n 50
-cat /etc/default/earlyoom            # current --prefer regex
-```
-
-**Fix:** earlyoom prefers `retroarch|box64|wine|dosbox-x|scummvm` for kill
-targeting (vanilla `dosbox` on bookworm). To exclude an additional process,
-edit the `--avoid` regex in `/etc/default/earlyoom` and restart:
-
-```bash
-sudo systemctl restart earlyoom
-```
-
-To re-validate the config after manual edit, run `bash ry-crostini.sh --verify`.
-
-### Verification fails after re-run
-
-**Symptom:** `--verify` reports failures even though the install seemed
-to complete.
-
-**Fix:** Verification failures preserve the checkpoint, so `--verify` is
-the correct command to re-run. If the failure is a missing config file,
-delete the checkpoint to force a full re-run of the relevant step:
-
-```bash
-bash ry-crostini.sh --from-step=N    # where N is the step that wrote the file
-```
-
-Refer to the [Generated Files](#generated-files) tables to map a missing
-file back to its step.
+A game or terminal disappears with `Killed` in dmesg. Default `--prefer`
+list is `retroarch|box64|wine|dosbox-x|scummvm` (vanilla `dosbox` on
+bookworm). To exclude additional processes, edit `--avoid` in
+`/etc/default/earlyoom` and `sudo systemctl restart earlyoom`. Re-validate
+with `bash ry-crostini.sh --verify`.
 
 ## Uninstall / Rollback
 
@@ -572,38 +465,17 @@ and dispatches: x86_64 → box64 (preferred) → `qemu-x86_64` (fallback when
 box64 is unavailable, e.g. on bookworm); i386 → `qemu-i386`. Run
 `run-x86 --help` to list available backends.
 
-#### 32-bit x86 Alternatives
+**32-bit x86:** not installed by default. Options: `box86` + armhf libs
+(`dpkg --add-architecture armhf`), or set `BOX64_BOX32=1` in `~/.box64rc`
+`[default]` for box64's experimental Box32 mode (v0.3.2+, no armhf
+required). FEX-Emu requires a RootFS image and is not warranted on 4 GB.
 
-Not installed by default due to the 4 GB RAM constraint:
-
-| Option | Description |
-|--------|-------------|
-| box86 + armhf libs | ARM32 DynaRec for i386 binaries (`dpkg --add-architecture armhf`). Faster than qemu-user TCG but requires armhf multilib overhead. |
-| box64 Box32 mode | Experimental (v0.3.2+), pure 64-bit, no armhf required. Set `BOX64_BOX32=1` in `~/.box64rc` `[default]` section. |
-
-FEX-Emu requires a mandatory x86-64 RootFS image and is not in Debian
-repositories. The setup complexity is not warranted for 4 GB Crostini.
-
-#### Transparent Execution (Privileged Container)
-
-Standard Crostini containers are unprivileged and cannot register
-binfmt\_misc interpreters. Transparent `./x86_program` execution requires a
-privileged container:
-
-1. Open crosh: `Ctrl+Alt+T` → type `shell`
-2. Create privileged container:
-   ```
-   vmc container termina x86 --privileged true
-   ```
-3. Inside the new container, install binfmt support:
-   ```bash
-   sudo apt install qemu-user qemu-user-binfmt
-   sudo systemctl restart systemd-binfmt
-   ```
-4. Verify: `ls /proc/sys/fs/binfmt_misc/qemu-*`
-
-> **Warning:** Privileged containers have reduced security isolation. The
-> default `penguin` container remains unprivileged and unaffected.
+**Transparent `./x86_program` execution:** binfmt_misc registration is
+blocked in unprivileged Crostini. To enable it, create a privileged
+container via `vmc container termina x86 --privileged true` from
+`crosh` (`Ctrl+Alt+T` → `shell`), then `sudo apt install qemu-user
+qemu-user-binfmt` inside it. Privileged containers have reduced security
+isolation; the default `penguin` container remains unaffected.
 
 ### Game Launcher
 
