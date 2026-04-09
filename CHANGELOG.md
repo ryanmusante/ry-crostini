@@ -1,5 +1,11 @@
 ry-crostini changelog
 
+2026-04-08  Ryan Musante
+
+- Tagged as v8.1.14
+- Audit fixes (3): (1) Step 11 and step 12 `set_checkpoint` calls are now gated on `_verify_fail==0`. Previously, a literal re-run after step-11 verification failures would skip step 11 (checkpoint already at 11), reset the verify counters to 0, run only step 12's 4 file checks, and report a false `RY-CROSTINI COMPLETE` banner. The cleanup() trap already directed users to `--verify`, but the foot-gun is now closed: failed verification leaves the checkpoint at the prior value so a plain re-run repeats the failed step. (2) `_progress_resize` and `_progress_cleanup` now carry `# shellcheck disable=SC2317,SC2329` (matches the existing pattern on `_handle_signal`, `cleanup`, `_cleanup_warn`, `_strip_log_ansi`). Eliminates 2 of the 6 shellcheck "function never invoked" notes; remaining 4 are the documented intentional SC2030 noise from `_parallel_check_tools`'s subshell at line 552. (3) Step-13 environment.d parser consolidated from two passes into one. The previous implementation walked `~/.config/environment.d/*.conf` once to export KEY=VALUE into the current shell, then walked the identical glob a second time with the identical line filter and key regex to build `_import_keys[]` for `systemctl --user import-environment`. Single-pass version exports and accumulates the key list in the same iteration. Net -8 lines (3033 → 3025).
+- No hardware-spec changes. Bookworm and trixie code paths untouched. SCRIPT_VERSION bump triggers re-write of the 6 self-healing config files on next run.
+
 2026-04-09  Ryan Musante
 
 - Tagged as v8.1.13

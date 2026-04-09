@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
-# Version: 8.1.13
-# Date:    2026-04-09
+# Version: 8.1.14
+# Date:    2026-04-08
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
 #          Trixie upgrade is opt-in via --upgrade-trixie. Bookworm path uses
@@ -23,7 +23,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.13"
+readonly SCRIPT_VERSION="8.1.14"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -186,7 +186,7 @@ _progress_draw() {
 }
 
 # _progress_resize: SIGWINCH handler — update scroll region after terminal resize.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _progress_resize() {
     $_PROGRESS_ENABLED || return
     local rows
@@ -196,7 +196,7 @@ _progress_resize() {
 }
 
 # _progress_cleanup: restore full scroll region. Called from cleanup trap.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 _progress_cleanup() {
     $_PROGRESS_ENABLED || return 0
     _PROGRESS_ENABLED=false
@@ -2856,7 +2856,11 @@ if should_run_step 11; then
     fi
     logprintf '\n'
 
-    set_checkpoint 11
+    if [[ "$_verify_fail" -eq 0 ]]; then
+        set_checkpoint 11
+    else
+        log "Step 11 had ${_verify_fail} failure(s) — checkpoint not advanced; re-run with --verify after fixes"
+    fi
     # Snapshot failure count so cleanup() prints the correct message if an exit occurs between here and step 13's final assignment to _had_failures.
     _had_failures="$_verify_fail"
     log "Step 11 complete."
@@ -2873,7 +2877,11 @@ if should_run_step 12; then
     check_config "${HOME}/.local/bin/run-game"                                                "CPU affinity game launcher"
     logprintf '\n'
 
-    set_checkpoint 12
+    if [[ "$_verify_fail" -eq 0 ]]; then
+        set_checkpoint 12
+    else
+        log "Step 12 had ${_verify_fail} failure(s) — checkpoint not advanced; re-run with --verify after fixes"
+    fi
     _had_failures="$_verify_fail"
     log "Step 12 complete."
 fi
@@ -2946,9 +2954,12 @@ if should_run_step 13; then
     logprintf '%bElapsed time:%b  %dm %ds\n' "$BOLD" "$RESET" "$((_elapsed / 60))" "$((_elapsed % 60))"
     unset _now_epoch _elapsed
 
-    # Live-reload environment.d vars and restart sommelier so changes apply without container restart
+    # Live-reload environment.d vars and restart sommelier so changes apply without container restart.
     # Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing them as shell. Sourcing breaks values containing shell metachars — e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the exported value would be just "wayland". The on-disk file is parsed correctly by systemd-environment-d-generator on next session start; this block exists only to make the changes live in the current session.
+    # Single pass: export into the current shell AND build the import-environment key list.
+    # Unscoped `import-environment` would leak script-internal vars (LOG_FILE, _verify_*, IS_BOOKWORM, etc.) — hence the explicit allow-list.
     if [[ -d "${HOME}/.config/environment.d" ]]; then
+        _import_keys=()
         _had_nullglob_env=false
         shopt -q nullglob && _had_nullglob_env=true
         shopt -s nullglob
@@ -2974,29 +2985,10 @@ if should_run_step 13; then
                 _ev="${_ev//\$\{HOME\}/$HOME}"
                 _ev="${_ev//\$HOME/$HOME}"
                 export "$_ek=$_ev"
+                _import_keys+=("$_ek")
             done < "$_envf"
         done
         $_had_nullglob_env || shopt -u nullglob
-        unset _envf _eline _ek _ev _had_nullglob_env
-    fi
-    # Import only the keys actually defined in environment.d files into the systemd user session.
-    # Unscoped `import-environment` would leak script-internal vars (LOG_FILE, _verify_*, IS_BOOKWORM, etc.).
-    if [[ -d "${HOME}/.config/environment.d" ]]; then
-        _import_keys=()
-        _had_nullglob_imp=false
-        shopt -q nullglob && _had_nullglob_imp=true
-        shopt -s nullglob
-        for _envf in "${HOME}/.config/environment.d/"*.conf; do
-            while IFS= read -r _eline || [[ -n "$_eline" ]]; do
-                [[ "$_eline" =~ ^[[:space:]]*$ ]] && continue
-                [[ "${_eline#"${_eline%%[![:space:]]*}"}" == \#* ]] && continue
-                _eline="${_eline#"${_eline%%[![:space:]]*}"}"
-                [[ "$_eline" == *=* ]] || continue
-                _ek="${_eline%%=*}"
-                [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && _import_keys+=("$_ek")
-            done < "$_envf"
-        done
-        $_had_nullglob_imp || shopt -u nullglob
         if [[ "${#_import_keys[@]}" -gt 0 ]]; then
             # shellcheck disable=SC2031  # LOG_FILE is main-shell here; subshell taint at line 560 is contained
             if systemctl --user import-environment "${_import_keys[@]}" 2>>"$LOG_FILE"; then
@@ -3005,7 +2997,7 @@ if should_run_step 13; then
                 warn "systemctl --user import-environment failed — changes apply on next terminal session"
             fi
         fi
-        unset _envf _eline _ek _import_keys _had_nullglob_imp
+        unset _envf _eline _ek _ev _import_keys _had_nullglob_env
     fi
     # Restart sommelier — enumerate active instances rather than hardcoding @0
     mapfile -t _somm_units < <(systemctl --user list-units --type=service --state=active --no-legend 'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | awk '{print $1}')
