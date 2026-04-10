@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.18
+# Version: 8.1.21
 # Date:    2026-04-08
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -34,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.18"
+readonly SCRIPT_VERSION="8.1.21"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -856,8 +856,16 @@ GTK_THEME=Adwaita:dark
 # GTK4 defaults to Vulkan renderer; virgl exposes only OpenGL — crashes or software fallback without this. ngl = new GL backend (GTK >= 4.14).
 GSK_RENDERER=ngl
 
-# Force virgl driver — prevents Mesa 25.x Zink regression (zen-browser/desktop#12276). Reverses the 4.7.7 removal: Zink crash risk now outweighs auto-detect benefit.
-MESA_LOADER_DRIVER_OVERRIDE=virgl
+# Force virtio_gpu DRI driver — prevents Mesa's auto-detect from picking Zink
+# on trixie (Mesa 24.x+) where zink_dri.so exists and can crash on virtio-gpu
+# contexts (zen-browser/desktop#12276). NOTE: the Mesa loader matches this name
+# against the DRI .so filename (`<name>_dri.so`), NOT the internal Gallium
+# driver name. The Gallium driver is called "virgl", but the loadable module
+# is `virtio_gpu_dri.so`, so the override must be `virtio_gpu`. Setting this
+# to `virgl` (a prior mistake) causes dlopen of non-existent virgl_dri.so and
+# silent fallback to swrast (llvmpipe) — confirmed on SC7180/FD618 Chromebook,
+# bookworm Mesa 22.3.6, kernel virtio-gpu with full +virgl capability.
+MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu
 
 # MESA_NO_ERROR intentionally omitted — disables all GL error checking, which is dangerous system-wide on virgl (invalid GL calls cross VM boundary and can hang host virglrenderer). Enabled per-game via run-game wrapper instead.
 
@@ -1656,10 +1664,18 @@ if should_run_step 6; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
+    # Track whether any audio config actually changed in this run — used below
+    # to gate the pipewire/wireplumber restart. Without this guard, re-running
+    # the script would restart the audio stack on every invocation even when
+    # nothing changed, causing a momentary audio drop in any currently-playing
+    # app (browsers, YouTube, games).
+    _audio_config_changed=false
+
     # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
     _PW_GAMING="${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_GAMING" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_PW_GAMING" 2>/dev/null; then
         _pw_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_GAMING"
+        _audio_config_changed=true
     else
         log "PipeWire gaming config up-to-date"
     fi
@@ -1669,6 +1685,7 @@ if should_run_step 6; then
     _PW_PULSE_GAMING="${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"
     if [[ ! -f "$_PW_PULSE_GAMING" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_PW_PULSE_GAMING" 2>/dev/null; then
         _pw_pulse_gaming_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$_PW_PULSE_GAMING"
+        _audio_config_changed=true
     else
         log "PipeWire-Pulse gaming config up-to-date"
     fi
@@ -1696,10 +1713,57 @@ monitor.alsa.rules = [
     }
 ]
 WPEOF
+        _audio_config_changed=true
     else
         log "WirePlumber ALSA config up-to-date"
     fi
     unset _WP_ALSA
+
+    # Apply audio config changes to running daemons — without this, pipewire /
+    # pipewire-pulse / wireplumber continue using the pre-install config (loaded
+    # at their original startup) and the tuning above has zero effect until the
+    # user restarts the terminal or logs out. Only restart when a config
+    # actually changed AND the services are currently active (avoids failing
+    # on --from-step runs where pipewire may not yet be up). Poll for readiness
+    # with a 5 s ceiling — pipewire typically re-initializes in <1 s but slow
+    # containers under eMMC contention can take longer.
+    if $_audio_config_changed; then
+        _pw_units=(pipewire.service pipewire-pulse.service wireplumber.service)
+        _pw_any_active=false
+        for _u in "${_pw_units[@]}"; do
+            if systemctl --user is-active --quiet "$_u"; then
+                _pw_any_active=true
+                break
+            fi
+        done
+        if $_pw_any_active; then
+            if systemctl --user restart "${_pw_units[@]}" 2>/dev/null; then
+                _pw_ready=false
+                for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+                    if systemctl --user is-active --quiet pipewire.service \
+                       && systemctl --user is-active --quiet pipewire-pulse.service \
+                       && systemctl --user is-active --quiet wireplumber.service; then
+                        _pw_ready=true
+                        break
+                    fi
+                    sleep 0.2
+                done
+                unset _i
+                if $_pw_ready; then
+                    log "PipeWire/WirePlumber restarted — audio tuning is live"
+                else
+                    warn "PipeWire/WirePlumber restart incomplete — check 'systemctl --user status pipewire wireplumber'"
+                fi
+                unset _pw_ready
+            else
+                warn "PipeWire/WirePlumber restart failed — audio tuning applies on next terminal restart"
+            fi
+        else
+            log "PipeWire/WirePlumber not yet active — tuning applies on next terminal restart"
+        fi
+        unset _pw_units _pw_any_active _u
+    fi
+    unset _audio_config_changed
 
     unset AUDIO_PKGS SND_DEV_COUNT
     set_checkpoint 6
@@ -2502,12 +2566,34 @@ if should_run_step 11; then
     if [[ -e /dev/dri/renderD128 ]]; then
         logprintf '  Render node:   %b✓%b /dev/dri/renderD128\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
+        # Source gpu.conf into a subshell env before probing GL/Vulkan. systemd
+        # environment.d files are only loaded into user sessions at login — the
+        # bash shell running this script predates gpu.conf and inherits none of
+        # its variables (notably MESA_LOADER_DRIVER_OVERRIDE). Without this
+        # sourcing, glxinfo/vulkaninfo run with the stale parent-shell env and
+        # would report llvmpipe on a correctly-configured system until the user
+        # restarts their terminal. Parse gpu.conf manually (KEY=VALUE, skip
+        # comments and blank lines, expand ${HOME}) rather than `set -a; source`
+        # to avoid executing arbitrary content from the config.
+        _gpu_env_file="${HOME}/.config/environment.d/gpu.conf"
+        _gl_env_args=()
+        if [[ -r "$_gpu_env_file" ]]; then
+            while IFS= read -r _gl_line; do
+                [[ -z "$_gl_line" || "$_gl_line" == \#* ]] && continue
+                [[ "$_gl_line" == *=* ]] || continue
+                # Strip inline comments after value; expand ${HOME}/$HOME only
+                _gl_line="${_gl_line//\$\{HOME\}/$HOME}"
+                _gl_line="${_gl_line//\$HOME/$HOME}"
+                _gl_env_args+=("$_gl_line")
+            done < "$_gpu_env_file"
+        fi
+        unset _gpu_env_file _gl_line
         if command -v glxinfo &>/dev/null; then
             {
                 read -r GL_VENDOR
                 read -r GL_RENDERER
                 read -r GL_VERSION
-            } < <(glxinfo 2>/dev/null | awk -F': ' '
+            } < <(env "${_gl_env_args[@]}" glxinfo 2>/dev/null | awk -F': ' '
                 /^OpenGL vendor string/   {v=$2}
                 /^OpenGL renderer string/ {r=$2}
                 /^OpenGL version string/  {ver=$2}
@@ -2516,27 +2602,52 @@ if should_run_step 11; then
             [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
             [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
             [[ -n "$GL_VERSION" ]]  && logprintf '  GL version:    %s\n' "$GL_VERSION"
-            if [[ "$GL_RENDERER" == *virgl* ]]; then
-                logprintf '  Mesa driver:   %b✓%b virgl\n' "$GREEN" "$RESET"
-                ((_verify_pass++)) || true
-            elif [[ "$GL_RENDERER" == *zink* || "$GL_RENDERER" == *Zink* ]]; then
-                logprintf '  Mesa driver:   %b⚠%b Zink detected — virgl override not active\n' "$YELLOW" "$RESET"
-                ((_verify_warn++)) || true
-            fi
+            # Render-node existence ≠ GPU acceleration. virtio-gpu host bridge may
+            # be inactive (chrome://flags/#crostini-gpu-support disabled, missing
+            # full reboot after enabling, host driver fault) — Mesa then falls back
+            # to llvmpipe/softpipe/swrast (CPU). Detect that explicitly so software
+            # rendering fails the verify rather than passing silently.
+            case "$GL_RENDERER" in
+                *virgl*|*Virgl*|*VirGL*)
+                    logprintf '  Mesa driver:   %b✓%b virgl (hardware)\n' "$GREEN" "$RESET"
+                    ((_verify_pass++)) || true ;;
+                *zink*|*Zink*)
+                    logprintf '  Mesa driver:   %b⚠%b Zink detected — virtio_gpu override not active\n' "$YELLOW" "$RESET"
+                    ((_verify_warn++)) || true ;;
+                *llvmpipe*|*softpipe*|*swrast*|*Software*)
+                    logprintf '  Mesa driver:   %b✗%b SOFTWARE rendering (%s) — no GPU acceleration\n' "$RED" "$RESET" "$GL_RENDERER"
+                    logprintf '  Fix:           chrome://flags/#crostini-gpu-support → Enabled, then full Chromebook reboot\n'
+                    ((_verify_fail++)) || true ;;
+                "")
+                    logprintf '  Mesa driver:   %b⚠%b glxinfo returned no renderer\n' "$YELLOW" "$RESET"
+                    ((_verify_warn++)) || true ;;
+                *)
+                    logprintf '  Mesa driver:   %b?%b unknown renderer: %s\n' "$YELLOW" "$RESET" "$GL_RENDERER"
+                    ((_verify_warn++)) || true ;;
+            esac
         fi
         if command -v vulkaninfo &>/dev/null; then
-            _vk_out="$(vulkaninfo --summary 2>/dev/null || true)"
+            _vk_out="$(env "${_gl_env_args[@]}" vulkaninfo --summary 2>/dev/null || true)"
             # vulkaninfo --summary uses `deviceName = ...` and `apiVersion = ...` NOT `GPU name = ...` — earlier versions of this check grepped for the wrong field name and never matched, silently reporting Vulkan as unavailable even on systems where it works.
             VK_GPU="$(printf '%s\n' "$_vk_out" | grep "deviceName" | head -1 | cut -d= -f2 | xargs -r || true)"
             VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs -r || true)"
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
-                logprintf '  Vulkan GPU:    %s\n' "$VK_GPU"
+                # lavapipe (Mesa software Vulkan) reports deviceName=llvmpipe — same
+                # llvmpipe-as-success false-positive as the GL block above. Demote.
+                case "$VK_GPU" in
+                    *llvmpipe*|*lavapipe*|*SwiftShader*)
+                        logprintf '  Vulkan GPU:    %b⚠%b %s (software — lavapipe)\n' "$YELLOW" "$RESET" "$VK_GPU"
+                        ((_verify_warn++)) || true ;;
+                    *)
+                        logprintf '  Vulkan GPU:    %s\n' "$VK_GPU" ;;
+                esac
                 [[ -n "$VK_API" ]] && logprintf '  Vulkan API:    %s\n' "$VK_API"
             else
                 logprintf '  Vulkan:        not available (virgl does not support Vulkan)\n'
             fi
         fi
+        unset _gl_env_args
     elif [[ -d /dev/dri ]]; then
         logprintf '  Render node:   %b⚠ PARTIAL%b (/dev/dri exists, renderD128 missing)\n' "$YELLOW" "$RESET"
         ((_verify_warn++)) || true
@@ -2562,9 +2673,37 @@ if should_run_step 11; then
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"
-    logprintf '  GTK theme:     %s\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
-    logprintf '  Xft DPI:       %s\n' "$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | head -1 | awk '{print $2}' || echo 'default')"
-    logprintf '  Font:          %s\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
+    # The three lines below read from config files on disk, not from running
+    # GTK/X11 state — they report the CONFIGURED values, not what's currently
+    # live in xrdb or in-process GTK. Labels prefixed "Configured" to remove
+    # the liveness implication. xrdb cross-check below confirms whether
+    # Xft.dpi actually landed in the running X server.
+    logprintf '  GTK theme:     %s (configured)\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
+    _xft_file="$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+    [[ -z "$_xft_file" ]] && _xft_file='default'
+    logprintf '  Xft DPI:       %s (configured)\n' "$_xft_file"
+    # Cross-check: does the running X server actually have Xft.dpi loaded?
+    # step 7 attempts `xrdb -merge ~/.Xresources` but gates on $DISPLAY being
+    # set — on a fresh install without sommelier up yet, the merge is skipped
+    # and verify must tell the user the written value is not yet live.
+    if [[ -n "${DISPLAY:-}" ]] && command -v xrdb &>/dev/null; then
+        _xft_live="$(xrdb -query 2>/dev/null | awk '/^Xft\.dpi:/ {print $2; exit}' || true)"
+        if [[ -n "$_xft_live" ]]; then
+            if [[ "$_xft_live" == "$_xft_file" ]]; then
+                logprintf '  Xft DPI (live): %b✓%b %s\n' "$GREEN" "$RESET" "$_xft_live"
+                ((_verify_pass++)) || true
+            else
+                logprintf '  Xft DPI (live): %b⚠%b %s (file has %s — restart terminal or re-run xrdb -merge)\n' "$YELLOW" "$RESET" "$_xft_live" "$_xft_file"
+                ((_verify_warn++)) || true
+            fi
+        else
+            logprintf '  Xft DPI (live): %b⚠%b not set in xrdb — run: xrdb -merge ~/.Xresources\n' "$YELLOW" "$RESET"
+            ((_verify_warn++)) || true
+        fi
+        unset _xft_live
+    fi
+    unset _xft_file
+    logprintf '  Font:          %s (configured)\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
     logprintf '\n'
 
     # Audio
@@ -2706,9 +2845,11 @@ if should_run_step 11; then
     check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
     check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
     check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
-    # WirePlumber version probe — the JSON .conf above is silently ignored by 0.4.x. On bookworm this catches the case where the bookworm-backports refresh in step 6 failed and the system is still on stock 0.4.13 (config has no effect). `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"), not line 1 — grep across the full output, don't head it first.
+    # WirePlumber version probe — the JSON .conf above is silently ignored by 0.4.x. On bookworm this catches the case where the bookworm-backports refresh in step 6 failed and the system is still on stock 0.4.13 (config has no effect). `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"), not line 1 — anchor on the libwireplumber keyword so a future banner that prints library versions (libspa, glib) ahead of the wireplumber version doesn't grab the wrong triple.
     if command -v wireplumber &>/dev/null; then
-        _wp_ver="$(timeout 5 wireplumber --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        _wp_ver="$(timeout 5 wireplumber --version 2>/dev/null \
+            | grep -iE 'libwireplumber|^wireplumber' \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
         if [[ -n "$_wp_ver" ]]; then
             _wp_major="${_wp_ver%%.*}"
             _wp_rest="${_wp_ver#*.}"
@@ -2732,10 +2873,16 @@ if should_run_step 11; then
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     $IS_BOOKWORM || check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     $IS_BOOKWORM || check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
-    # PipeWire audio chain verification
-    if systemctl --user is-active pipewire-pulse.socket &>/dev/null; then
+    # PipeWire audio chain verification — check the SERVICE not just the SOCKET.
+    # A socket-activated unit can report active (listening) while the daemon
+    # behind it is failed/inactive, masking real audio breakage.
+    if systemctl --user is-active --quiet pipewire-pulse.service \
+       && systemctl --user is-active --quiet pipewire-pulse.socket; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
         ((_verify_pass++)) || true
+    elif systemctl --user is-active --quiet pipewire-pulse.socket; then
+        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "PipeWire-pulse socket up but service inactive"
+        ((_verify_warn++)) || true
     else
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "PipeWire-pulse not running — restart terminal"
         ((_verify_warn++)) || true
@@ -2752,17 +2899,16 @@ if should_run_step 11; then
             ((_verify_fail++)) || true
         fi
     fi
-    # earlyoom may have been killed during heavy apt operations; restart if needed
-    if ! systemctl is-active earlyoom.service &>/dev/null; then
-        run sudo systemctl start earlyoom.service \
-            || warn "earlyoom auto-restart failed — check /etc/default/earlyoom and 'systemctl status earlyoom'"
-    fi
+    # earlyoom liveness — observe only. Previous versions auto-restarted earlyoom
+    # here if inactive, but verification steps must not mutate state: an unexpected
+    # death is a finding, not something to silently paper over. The auto-start
+    # belonged in step 3 (where the unit is first installed), not in verify.
     if systemctl is-active earlyoom.service &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
         ((_verify_pass++)) || true
     else
-        logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "earlyoom not running"
-        ((_verify_warn++)) || true
+        logprintf '  %b✗%b  %-44s\n' "$RED" "$RESET" "earlyoom not running — check 'systemctl status earlyoom'"
+        ((_verify_fail++)) || true
     fi
     # apt-daily-upgrade timer (unattended installs masked; apt-daily list refresh kept)
     if [[ "$(systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null)" == "masked" ]]; then
@@ -2772,8 +2918,11 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer not masked"
         ((_verify_warn++)) || true
     fi
-    # apt-daily.timer (kept enabled — refreshes package lists for security visibility)
-    if systemctl is-enabled apt-daily.timer &>/dev/null; then
+    # apt-daily.timer (kept enabled — refreshes package lists for security visibility).
+    # `systemctl is-enabled` returns 0 for enabled, static, alias, indirect, and
+    # enabled-runtime — only an exact "enabled" match guarantees the timer is
+    # persistently active across reboots.
+    if [[ "$(systemctl is-enabled apt-daily.timer 2>/dev/null)" == "enabled" ]]; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily.timer enabled (security refresh)"
         ((_verify_pass++)) || true
     else
