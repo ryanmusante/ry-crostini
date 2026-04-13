@@ -1,5 +1,19 @@
 ry-crostini changelog
 
+2026-04-13  v8.1.28
+- README prose and table-cell trimming (−11 lines, no content removed):
+  - Installation Steps step 6: removed inline version numbers "currently 1.4.2 / 0.5.8" — "unpinned" already covers the behavior.
+  - Generated Files intro paragraph dropped — verbatim duplicate of Design → Safety table (atomic writes, idempotency, mode 700).
+  - System files prose condensed (4 lines → 1).
+  - User files prose condensed (4 lines → 1); full file paths removed from explanation since they appear in the table immediately below.
+  - run-game Purpose cell: "game launcher; sets … per-game" → "launcher; per-game …" (minor).
+  - Design Atomic writes cell: condensed to mode list without losing any value.
+  - Known Limitations Vulkan: 3 sentences → 1.
+  - Known Limitations WirePlumber: reordered to lead with the key rule (JSON/.lua), then version detail; −1 sentence.
+  - Known Limitations Flatpak: list prose condensed, "available as native arm64 .deb packages" → "available as native arm64 .deb".
+  - Informational Sommelier: 3 sentences → 2.
+  - Informational Controller: 3 sentences → 2; newgrp hint and no-op note preserved.
+
 2026-04-13  v8.1.27
 - F01 (table audit, LOW): four table separator rows had dash counts one short of header-width+2 padding. All pre-existing; none introduced by v8.1.25 condensation. Fixed:
   - L235/L247 (Safety and UX tables): `Implementation` column separator 15→16 dashes

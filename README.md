@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.27-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.28-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -152,7 +152,7 @@ Tail the active log: `tail -f ~/ry-crostini-*.log`
 | 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, `p7zip-full` on bookworm |
 | 4 | Build tools | Build essentials and development headers |
 | 5 | Graphics | Mesa, Virgl, Wayland, X11, Vulkan |
-| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning. On bookworm, `pipewire-audio` + `wireplumber` are refreshed from `bookworm-backports` (currently 1.4.2 / 0.5.8; unpinned — whatever backports ships at install time) so the JSON `.conf` is honored. |
+| 6 | Audio | PipeWire, ALSA, GStreamer codecs, pavucontrol, PipeWire gaming tuning, WirePlumber ALSA tuning. On bookworm, `pipewire-audio` + `wireplumber` are refreshed from `bookworm-backports` (unpinned — whatever backports ships at install time) so the JSON `.conf` is honored. |
 | 7 | Display | Sommelier scaling, Super key passthrough, GTK 2/3/4, Qt platform themes, Xft DPI 96, fontconfig, cursor |
 | 8 | GUI | xterm, session support, fonts, icons, `adwaita-icon-theme-full` on bookworm |
 | 9 | Environment | Locale, journald volatile, timer cleanup, environment variables, XDG directories, PATH |
@@ -163,15 +163,7 @@ Tail the active log: `tail -f ~/ry-crostini-*.log`
 
 ## Generated Files
 
-All configuration files are written atomically (tmpfile + mv). Existing files
-are skipped to ensure idempotency. Executable wrappers in `~/.local/bin/` are
-installed with mode 700.
-
-**System (7 files, requires sudo).** The `tmp.mount.d/override.conf` row is
-trixie-only (bookworm `/tmp` is disk-backed, not tmpfs). The
-`bookworm-backports.list` row is bookworm-only (it pulls modern
-PipeWire/WirePlumber). Both default code paths therefore write 6 system
-files, and the union is 7.
+**System (7 files, requires sudo).** Default paths write 6: `tmp.mount.d/override.conf` is trixie-only, `bookworm-backports.list` is bookworm-only; union is 7.
 
 | Path | Step | Purpose |
 |------|------|---------|
@@ -183,10 +175,7 @@ files, and the union is 7.
 | `/etc/profile.d/ry-crostini-env.sh` | 9 | Locale, editor, pager, PATH (`~/.local/bin`) |
 | `/etc/systemd/journald.conf.d/volatile.conf` | 9 | Journald volatile (RAM-only) |
 
-**User (19 files).** On **bookworm** only 17 of these are written —
-`~/.config/dosbox-x/dosbox-x.conf` and `~/.box64rc` are trixie-only
-(bookworm uses vanilla `dosbox` and falls back to `qemu-user`; `dosbox-x`
-and `box64` are not in any bookworm repo).
+**User (19 files).** On **bookworm**, only 17 are written — `dosbox-x.conf` and `.box64rc` are trixie-only (`dosbox-x` / `box64` not in bookworm repos).
 
 | Path | Step | Purpose |
 |------|------|---------|
@@ -208,7 +197,7 @@ and `box64` are not in any bookworm repo).
 | `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
-| `~/.local/bin/run-game` | 10 | CPU affinity + priority game launcher; sets `MALLOC_ARENA_MAX=2`, `MESA_NO_ERROR=1`, `mesa_glthread=true` per-game (unsafe globally on virgl) |
+| `~/.local/bin/run-game` | 10 | CPU affinity + priority launcher; per-game `MALLOC_ARENA_MAX=2`, `MESA_NO_ERROR=1`, `mesa_glthread=true` (unsafe globally on virgl) |
 
 ## Trixie Upgrade (optional)
 
@@ -234,7 +223,7 @@ containers are unaffected; the flag is a no-op there.
 | Property | Implementation |
 |----------|----------------|
 | Idempotent | Configuration files skip if already present; the 12 files with `ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `#` for all others) |
-| Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
+| Atomic writes | tmpfile + mv via `_write_file_impl`; modes 644 (config), 700 (executables in `~/.local/bin/`), 600 (log via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
 | No eval | `run()` passes `"$@"` directly; generated systemd unit uses `bash -c` for inline conditional only |
@@ -258,16 +247,16 @@ containers are unaffected; the flag is a no-op there.
 
 | Limitation | Detail |
 |------------|--------|
-| Vulkan unavailable | The virgl paravirtualized GPU exposes OpenGL 4.3+ (up to 4.6 depending on the ChromeOS host Mesa version). `vulkaninfo` installs and reports its version in verification, but no Vulkan device is enumerated. Vulkan-only applications will not run. |
+| Vulkan unavailable | virgl exposes OpenGL 4.3–4.6. `vulkaninfo` installs but no Vulkan device is enumerated; Vulkan-only apps will not run. |
 
 **Constraints.**
 
 | Limitation | Detail |
 |------------|--------|
 | sysctl read-only | All kernel tuning parameters (`fs.inotify.max_user_watches`, `vm.max_map_count`, etc.) are blocked by the ChromeOS Termina VM namespace. Writing to `/etc/sysctl.d/` has no effect from inside the container. |
-| WirePlumber 0.5 format | Trixie ships WirePlumber 0.5.8 natively; bookworm gets the same version via `bookworm-backports` (enabled automatically by step 2). Both use JSON `.conf` files, not Lua scripts. User-created Lua configurations in `~/.config/wireplumber/` are silently ignored. If the backports refresh fails on bookworm, the stock 0.4.13 daemon will silently ignore the gaming-tuning JSON config and step 6 logs a WARN. |
+| WirePlumber 0.5 format | WirePlumber 0.5+ uses JSON `.conf` files; Lua scripts in `~/.config/wireplumber/` are silently ignored. Trixie ships 0.5.8 natively; bookworm gets it via `bookworm-backports` (step 2). If backports refresh fails, stock 0.4.13 ignores the gaming JSON config and step 6 logs a WARN. |
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
-| Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak runtime Mesa compositor crashes (Zink regression), doubled RAM during install/update, and all gaming targets are available as native arm64 `.deb` packages. |
+| Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak Mesa/Zink crashes, doubled RAM during install/update; all gaming targets available as native arm64 `.deb`. |
 | `BOX64_DYNAREC_ALIGNED_ATOMICS` | Enabled globally (`=1`) — Cortex-A76 LSE atomics produce faster, smaller code. Programs with unaligned LOCK ops may SIGBUS; disable per-game via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=0`. |
 | RetroArch PipeWire audio | Trixie ships RetroArch 1.20.0 whose PipeWire driver silently ignores `audio_latency` ([#17685](https://github.com/libretro/RetroArch/issues/17685)). Fixed in 1.21.0+. Default is `audio_driver = "alsa"` (routes through PipeWire ALSA compat layer with working latency control). Switch to `"pipewire"` after installing ≥ 1.21.0 from trixie-backports. |
 
@@ -275,8 +264,8 @@ containers are unaffected; the flag is a no-op there.
 
 | Item | Detail |
 |------|--------|
-| Sommelier not running during install | Sommelier (Wayland/X11 bridge) is started by the container login process, not inside a running shell. Step 1 logs this as informational; step 11 reports it as a warning only if still absent at completion. Close and reopen the Terminal to resolve. |
-| Controller access requires Terminal restart | Step 1p adds `$USER` to the `input` group so `/dev/input/js*` and `/dev/input/event*` (mode `660 root:input`) are readable by RetroArch and DOSBox-X. Supplementary group membership is latched at session start, so a user who just ran `ry-crostini.sh` for the first time will still get keyboard-only input until they close and reopen the Terminal (or run `newgrp input` in the current shell). Re-runs are no-ops (idempotent check on `id -nG`). |
+| Sommelier not running during install | Started by container login, not by shells. Step 1 logs informational; step 11 warns if still absent at completion. Close and reopen Terminal to resolve. |
+| Controller access requires Terminal restart | Step 1p adds `$USER` to the `input` group (`/dev/input/js*`, `event*`, mode `660 root:input`). Group membership latches at session start — reopen Terminal (or run `newgrp input`) after first install. Re-runs are no-ops. |
 | ChromeOS flag status | `#crostini-gpu-support`: Required (disabled by default since M131). `#exo-pointer-lock`: Required. |
 
 ## Troubleshooting
