@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.21-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.22-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -277,6 +277,7 @@ containers are unaffected; the flag is a no-op there.
 | Item | Detail |
 |------|--------|
 | Sommelier not running during install | Sommelier (Wayland/X11 bridge) is started by the container login process, not inside a running shell. Step 1 logs this as informational; step 11 reports it as a warning only if still absent at completion. Close and reopen the Terminal to resolve. |
+| Controller access requires Terminal restart | Step 1p adds `$USER` to the `input` group so `/dev/input/js*` and `/dev/input/event*` (mode `660 root:input`) are readable by RetroArch and DOSBox-X. Supplementary group membership is latched at session start, so a user who just ran `ry-crostini.sh` for the first time will still get keyboard-only input until they close and reopen the Terminal (or run `newgrp input` in the current shell). Re-runs are no-ops (idempotent check on `id -nG`). |
 | ChromeOS flag status | `#crostini-gpu-support`: Required (disabled by default since M131). `#exo-pointer-lock`: Required. |
 
 ## Troubleshooting

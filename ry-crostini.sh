@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.21
-# Date:    2026-04-08
+# Version: 8.1.22
+# Date:    2026-04-13
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
 #          Trixie upgrade is opt-in via --upgrade-trixie.
@@ -34,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.21"
+readonly SCRIPT_VERSION="8.1.22"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -1153,6 +1153,17 @@ if should_run_step 1; then
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
     fi
 
+    # 1p. Gamepad/joystick group membership (controllers in /dev/input/js* are mode 660 root:input)
+    if ! id -nG "$(whoami)" | tr ' ' '\n' | grep -qx input; then
+        if run sudo usermod -aG input "$(whoami)"; then
+            log "Added $(whoami) to 'input' group ✓ — log out and back in for gamepad access"
+        else
+            warn "Could not add $(whoami) to 'input' group — gamepads may not work in RetroArch/DOSBox-X"
+        fi
+    else
+        log "User $(whoami) already in 'input' group ✓"
+    fi
+
     unset AVAIL_MB AVAIL_MB_NOW
     set_checkpoint 1
     log "Step 1 complete."
@@ -1163,17 +1174,18 @@ if should_run_step 2; then
 
     # APT tuning: retries + skip translations + per-scheme connection queue
     APT_PARALLEL="/etc/apt/apt.conf.d/90parallel"
-    if [[ ! -f "$APT_PARALLEL" ]]; then
-        write_file_sudo "$APT_PARALLEL" <<'EOF'
+    if [[ ! -f "$APT_PARALLEL" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$APT_PARALLEL" 2>/dev/null; then
+        write_file_sudo "$APT_PARALLEL" <<EOF
 // apt download tuning — managed by ry-crostini.sh
+// ry-crostini:${SCRIPT_VERSION}
 Acquire::Queue-Mode "access";
-Acquire::http::Pipeline-Depth "0";
+Acquire::http::Pipeline-Depth "5";
 Acquire::Languages "none";
 // Retry transient failures (WiFi drops, CDN hiccups) — critical for mobile device
 Acquire::Retries "3";
 EOF
     else
-        log "APT tuning config already exists"
+        log "APT tuning config up-to-date — skipping"
     fi
     unset APT_PARALLEL
 
@@ -1434,7 +1446,7 @@ if should_run_step 3; then
         nano vim less jq
 
         # Network utilities
-        curl wget dnsutils openssh-client
+        curl wget dnsutils bind9-host openssh-client iputils-ping
         ca-certificates gnupg
 
         # System monitoring
@@ -1495,7 +1507,7 @@ if should_run_step 3; then
             printf '%s\n' \
                 "# earlyoom config — managed by ry-crostini.sh" \
                 "# ry-crostini:${SCRIPT_VERSION}" \
-                "EARLYOOM_ARGS=\"-m 10 -s 10 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss -r 3600\"" \
+                "EARLYOOM_ARGS=\"-m 10 -s 100 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss\"" \
                 | write_file_sudo "$_EARLYOOM_CONF"
             # Post-write validation — guards against future template regressions. No sudo: write_file_sudo chmods the file to 644, readable by our user.
             if ! grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
@@ -1594,6 +1606,12 @@ if should_run_step 5; then
     else
         log "GPU env up-to-date — skipping"
     fi
+
+    # Pre-create Mesa shader cache dir — Mesa lazy-creates on first GL context;
+    # pre-creation removes a concurrent-launch race when RetroArch and DOSBox-X
+    # both spin up GL surfaces simultaneously on first run after install.
+    mkdir -p "${HOME}/.cache/mesa_shader_cache" 2>/dev/null \
+        || warn "Cannot pre-create Mesa shader cache dir"
 
     unset GL_VENDOR GL_RENDERER GL_VERSION GPU_ENV_FILE GPU_STABLE_PKGS GPU_VOLATILE_PKGS
     set_checkpoint 5
@@ -2018,25 +2036,30 @@ if should_run_step 9; then
 
     # 9b. Journald volatile storage — write logs to RAM only (saves eMMC I/O)
     _JOURNALD_VOL="/etc/systemd/journald.conf.d/volatile.conf"
-    if [[ ! -f "$_JOURNALD_VOL" ]]; then
-        write_file_sudo "$_JOURNALD_VOL" <<'JDEOF'
+    if [[ ! -f "$_JOURNALD_VOL" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_JOURNALD_VOL" 2>/dev/null; then
+        write_file_sudo "$_JOURNALD_VOL" <<JDEOF
 [Journal]
+# ry-crostini:${SCRIPT_VERSION}
 Storage=volatile
 RuntimeMaxUse=50M
 RuntimeMaxFileSize=10M
+SystemMaxUse=50M
+SystemMaxFileSize=10M
 JDEOF
         run sudo systemctl restart systemd-journald \
             || warn "journald restart failed — volatile storage takes effect on next container start"
         log "Journald set to volatile (RAM-only) storage"
     else
-        log "Journald volatile config already exists"
+        log "Journald volatile config up-to-date — skipping"
     fi
     unset _JOURNALD_VOL
 
     # 9c. Master environment profile (shell-agnostic via /etc/profile.d)
     PROFILE_D="/etc/profile.d/ry-crostini-env.sh"
-    if [[ ! -f "$PROFILE_D" ]]; then
-        write_file_sudo "$PROFILE_D" <<'ENVEOF'
+    if [[ ! -f "$PROFILE_D" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$PROFILE_D" 2>/dev/null; then
+        {
+            printf '# ry-crostini:%s\n' "${SCRIPT_VERSION}"
+            cat <<'ENVEOF'
 # Crostini environment defaults — managed by ry-crostini.sh
 export LANG="en_US.UTF-8"
 export EDITOR="vim"
@@ -2055,10 +2078,20 @@ _ry_crostini_path_prepend() {
 # Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _ry_crostini_path_prepend "$HOME/.local/bin"
 
+# Parallel make — cap at 4 to match BOX64_MAXCPU=4 and big-core count on
+# heterogeneous ARM SoCs (see run-game affinity logic). Protects 4 GB RAM
+# from C++ build OOM. Evaluated at every login via quoted heredoc, so
+# nproc reflects current container CPU allocation, not install-time value.
+_ry_nproc="$(nproc 2>/dev/null || echo 2)"
+[ "$_ry_nproc" -gt 4 ] && _ry_nproc=4
+export MAKEFLAGS="-j${_ry_nproc}"
+unset _ry_nproc
+
 unset -f _ry_crostini_path_prepend
 ENVEOF
+        } | write_file_sudo "$PROFILE_D"
     else
-        log "Environment profile already exists"
+        log "Environment profile up-to-date — skipping"
     fi
 
     # 9d. Ensure XDG dirs exist
