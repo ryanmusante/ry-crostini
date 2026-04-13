@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.22
+# Version: 8.1.23
 # Date:    2026-04-13
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -15,7 +15,7 @@
 #
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 #
-# NOTE:    Script uses sudo internally (~69 calls). A background keepalive renews
+# NOTE:    Script uses sudo internally (~60 calls). A background keepalive renews
 #          credentials every 60 s. Run `sudo true` first to cache the initial credential.
 # WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable
 #          on 4 GB RAM / virgl.
@@ -34,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.22"
+readonly SCRIPT_VERSION="8.1.23"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -527,8 +527,8 @@ check_tool() {
     fi
 }
 
-# check_config: verify a config file exists and is non-empty
-check_config() {
+# check_file: verify a file exists and is non-empty (configs, scripts, assets)
+check_file() {
     local path="$1" desc="$2"
     if [[ -s "$path" ]]; then
         logprintf '  %b✓%b  %-44s %s\n' "$GREEN" "$RESET" "$desc" "$path"
@@ -1107,7 +1107,7 @@ if should_run_step 1; then
 
     # 1m. Shared folders
     if [[ -d /mnt/chromeos ]]; then
-        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d -printf '.' 2>/dev/null | wc -c)" || true
+        SHARED_COUNT="$(find /mnt/chromeos -maxdepth 2 -mindepth 2 -type d 2>/dev/null | wc -l)" || true
         if [[ "$SHARED_COUNT" -gt 0 ]]; then
             log "Shared ChromeOS folders: ${SHARED_COUNT} detected ✓"
         else
@@ -1205,7 +1205,7 @@ EOF
         die "VERSION_CODENAME '${_cur_codename}' contains unexpected characters — aborting"
     fi
     if ! $UPGRADE_TRIXIE; then
-        log "Staying on ${_cur_codename:-unknown}; --upgrade-trixie not set, skipping codename rewrite"
+        log "Staying on ${_cur_codename}; --upgrade-trixie not set, skipping codename rewrite"
         if [[ "$_cur_codename" == "bookworm" ]]; then
             IS_BOOKWORM=true
             log "Enabling bookworm-backports for pipewire 1.4 / wireplumber 0.5"
@@ -1221,6 +1221,18 @@ EOF
     elif [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         _did_trixie_rewrite=true
+        # F01 (audit 8.1.22): a leftover bookworm-backports.list from a prior !UPGRADE_TRIXIE run survives the *.list/*.sources loop below (which intentionally skips *backports* — see comment near line 1265). Rename it to /etc/apt/bookworm-backports.list.pre-trixie so the trixie host doesn't quietly continue pulling bookworm-pinned packages from a stale bookworm-backports registration. Mirrors the existing cros.list .pre-trixie pattern. First-backup-wins.
+        if [[ -f /etc/apt/sources.list.d/bookworm-backports.list ]]; then
+            if [[ -e /etc/apt/bookworm-backports.list.pre-trixie ]]; then
+                log "bookworm-backports.list backup already exists — removing live copy only"
+                run sudo rm -f -- /etc/apt/sources.list.d/bookworm-backports.list \
+                    || warn "Failed to remove stale bookworm-backports.list — manual cleanup may be required after trixie upgrade"
+            elif run sudo mv -- /etc/apt/sources.list.d/bookworm-backports.list /etc/apt/bookworm-backports.list.pre-trixie; then
+                log "Renamed bookworm-backports.list → /etc/apt/bookworm-backports.list.pre-trixie (would otherwise pin trixie host to bookworm packages)"
+            else
+                warn "Failed to rename bookworm-backports.list — manual cleanup may be required after trixie upgrade"
+            fi
+        fi
         # Legacy /etc/apt/sources.list is OPTIONAL — recent Crostini bookworm containers ship deb822-only (debian.sources, no legacy file). The *.sources loop below handles those. Only process the legacy file when it actually exists.
         if [[ -f /etc/apt/sources.list ]]; then
             # First-backup-wins: skip if backup already exists from a prior failed run
@@ -1665,7 +1677,7 @@ if should_run_step 6; then
 
     # Verify audio
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 -printf '.' 2>/dev/null | wc -c)" || true
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
         log "Audio devices in /dev/snd: ${SND_DEV_COUNT} ✓"
         if _has_capture_dev; then
             log "Microphone capture device: detected ✓"
@@ -1959,7 +1971,7 @@ if should_run_step 8; then
         fonts-liberation
         fonts-firacode
         fonts-hack
-        # adwaita-icon-theme includes "full" set since 45.0-4 (removed in Trixie)
+        # adwaita-icon-theme: bundles "full" icon set since 45.0-4 — separate -full package removed in trixie; bookworm 43-1 still needs adwaita-icon-theme-full (handled below)
         adwaita-icon-theme
     )
 
@@ -2066,8 +2078,8 @@ _ry_crostini_path_prepend() {
 # from C++ build OOM. Evaluated at every login via quoted heredoc, so
 # nproc reflects current container CPU allocation, not install-time value.
 _ry_nproc="$(nproc 2>/dev/null || echo 2)"
-[ "$_ry_nproc" -gt 4 ] && _ry_nproc=4
-export MAKEFLAGS="-j${_ry_nproc}"
+[ "${_ry_nproc:-2}" -gt 4 ] 2>/dev/null && _ry_nproc=4
+export MAKEFLAGS="-j${_ry_nproc:-2}"
 unset _ry_nproc
 
 unset -f _ry_crostini_path_prepend
@@ -2704,7 +2716,7 @@ if should_run_step 11; then
     # Audio
     logprintf '%bAudio:%b\n' "$BOLD" "$RESET"
     if [[ -d /dev/snd ]]; then
-        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 -printf '.' 2>/dev/null | wc -c)" || true
+        SND_DEV_COUNT="$(find /dev/snd -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)" || true
         logprintf '  ALSA devices:  %b✓%b %s device(s)\n' "$GREEN" "$RESET" "$SND_DEV_COUNT"
         ((_verify_pass++)) || true
     else
@@ -2719,7 +2731,7 @@ if should_run_step 11; then
         ((_verify_warn++)) || true
     fi
     if command -v pactl &>/dev/null; then
-        PA_STATUS="$(pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs -r || true)"
+        PA_STATUS="$(timeout 5 pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs -r || true)"
         if [[ -n "$PA_STATUS" ]]; then
             logprintf '  PulseAudio:    %b✓%b %s\n' "$GREEN" "$RESET" "$PA_STATUS"
             ((_verify_pass++)) || true
@@ -2802,11 +2814,11 @@ if should_run_step 11; then
     # Config files
     logprintf '%bConfig files written:%b\n' "$BOLD" "$RESET"
 
-    check_config "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
-    check_config "/etc/systemd/system/ry-crostini-cros-pin.service" "cros.list cleanup service"
-    check_config "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
-    check_config "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
-    check_config "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
+    check_file "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
+    check_file "/etc/systemd/system/ry-crostini-cros-pin.service" "cros.list cleanup service"
+    check_file "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
+    check_file "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
+    check_file "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
     # Step 7: Qt GTK platform themes — check qt5-gtk-platformtheme and adwaita-qt independently
     if dpkg -s qt5-gtk-platformtheme &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "qt5-gtk-platformtheme"
@@ -2829,17 +2841,17 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "Qt6 GTK platform theme not found"
         ((_verify_warn++)) || true
     fi
-    check_config "${HOME}/.config/gtk-3.0/settings.ini"          "GTK 3 theme + fonts"
-    check_config "${HOME}/.config/gtk-4.0/settings.ini"          "GTK 4 theme + fonts"
-    check_config "${HOME}/.gtkrc-2.0"                            "GTK 2 theme (legacy)"
-    check_config "${HOME}/.Xresources"                           "Xft DPI + rendering"
-    check_config "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
-    check_config "${HOME}/.icons/default/index.theme"            "Cursor theme"
-    check_config "/etc/profile.d/ry-crostini-env.sh"                "Shell env + PATH"
-    $IS_BOOKWORM || check_config "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
-    check_config "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
-    check_config "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
-    check_config "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
+    check_file "${HOME}/.config/gtk-3.0/settings.ini"          "GTK 3 theme + fonts"
+    check_file "${HOME}/.config/gtk-4.0/settings.ini"          "GTK 4 theme + fonts"
+    check_file "${HOME}/.gtkrc-2.0"                            "GTK 2 theme (legacy)"
+    check_file "${HOME}/.Xresources"                           "Xft DPI + rendering"
+    check_file "${HOME}/.config/fontconfig/fonts.conf"         "Fontconfig OLED AA"
+    check_file "${HOME}/.icons/default/index.theme"            "Cursor theme"
+    check_file "/etc/profile.d/ry-crostini-env.sh"                "Shell env + PATH"
+    $IS_BOOKWORM || check_file "/etc/systemd/system/tmp.mount.d/override.conf" "/tmp tmpfs 512M cap"
+    check_file "${HOME}/.config/pipewire/pipewire.conf.d/10-ry-crostini-gaming.conf"        "PipeWire gaming quantum"
+    check_file "${HOME}/.config/pipewire/pipewire-pulse.conf.d/10-ry-crostini-gaming.conf"   "PipeWire-Pulse gaming"
+    check_file "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
     # WirePlumber version probe — the JSON .conf above is silently ignored by 0.4.x. On bookworm this catches the case where the bookworm-backports refresh in step 6 failed and the system is still on stock 0.4.13 (config has no effect). `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"), not line 1 — anchor on the libwireplumber keyword so a future banner that prints library versions (libspa, glib) ahead of the wireplumber version doesn't grab the wrong triple.
     if command -v wireplumber &>/dev/null; then
         _wp_ver="$(timeout 5 wireplumber --version 2>/dev/null \
@@ -2863,11 +2875,11 @@ if should_run_step 11; then
         fi
         unset _wp_ver
     fi
-    check_config "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
-    check_config "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
-    check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
-    $IS_BOOKWORM || check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
-    $IS_BOOKWORM || check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
+    check_file "/etc/systemd/journald.conf.d/volatile.conf"                                  "Journald volatile storage"
+    check_file "${HOME}/.config/retroarch/retroarch.cfg"    "RetroArch config"
+    check_file "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
+    $IS_BOOKWORM || check_file "${HOME}/.box64rc"                                                           "box64 SC7180P config"
+    $IS_BOOKWORM || check_file "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
     # PipeWire audio chain verification — check the SERVICE not just the SOCKET. A socket-activated unit can report active (listening) while the daemon behind it is failed/inactive, masking real audio breakage.
     if systemctl --user is-active --quiet pipewire-pulse.service \
        && systemctl --user is-active --quiet pipewire-pulse.socket; then
@@ -2881,7 +2893,7 @@ if should_run_step 11; then
         ((_verify_warn++)) || true
     fi
     # earlyoom OOM killer
-    check_config "/etc/default/earlyoom"                                                           "earlyoom OOM config"
+    check_file "/etc/default/earlyoom"                                                           "earlyoom OOM config"
     # Re-validate the --prefer regex shape — step 3 validates at write time, but the file could be corrupted later by manual edit, dpkg-overlay, or apt-purge restoring stock. Same anchor pattern as the post-write check in step 3.
     if [[ -s /etc/default/earlyoom ]]; then
         if grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
@@ -2946,10 +2958,10 @@ if should_run_step 12; then
 
     logprintf '%bScripts and assets:%b\n' "$BOLD" "$RESET"
 
-    check_config "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
-    check_config "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
-    check_config "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
-    check_config "${HOME}/.local/bin/run-game"                                                "CPU affinity game launcher"
+    check_file "/usr/share/sounds/sf2/FluidR3_GM.sf2"                                     "FluidSynth GM soundfont"
+    check_file "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
+    check_file "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
+    check_file "${HOME}/.local/bin/run-game"                                                "CPU affinity game launcher"
     logprintf '\n'
 
     if [[ "$_verify_fail" -eq 0 ]]; then

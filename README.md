@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.22-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.23-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -234,7 +234,7 @@ containers are unaffected; the flag is a no-op there.
 
 | Property | Implementation |
 |----------|---------------|
-| Idempotent | Configuration files skip if already present; the 9 files with `# ry-crostini:VERSION` markers (6 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances |
+| Idempotent | Configuration files skip if already present; the 12 files with `# ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
@@ -492,9 +492,10 @@ run-game run-x86 ./some_x86_program    # Chain with x86 emulation
 ```
 
 On non-SC7180P hardware, the wrapper detects big cores dynamically via
-`/proc/cpuinfo` CPU part IDs (Qualcomm Kryo Gold `0x804` or generic ARM
-Cortex-A76 `0xd0b`). If neither is found, affinity is skipped and only
-priority elevation applies.
+`/proc/cpuinfo` CPU part IDs (Qualcomm Kryo Gold `0x804`, Cortex-A76 `0xd0b`,
+or any of A77 `0xd0d` / A78 `0xd41` / X1 `0xd44` / A710 `0xd47` / X2 `0xd48`
+/ A715 `0xd4d` / X3 `0xd4e` / A720 `0xd80` / X4 `0xd81`). If none match,
+affinity is skipped and only priority elevation applies.
 
 In addition to affinity, the wrapper exports `MESA_NO_ERROR=1` (skips GL
 error checking, ~5–10% CPU savings) and `mesa_glthread=true` (offloads GL
@@ -571,6 +572,6 @@ under box64 on Trixie but is untested on 4 GB RAM). Alternative: download GOG
 
 ## License
 
-[MIT](LICENSE) — Copyright (c) 2024–2026 Ryan Musante
+[MIT](LICENSE) — Copyright (c) 2026 Ryan Musante
 
 Issues and pull requests: <https://github.com/ryanmusante/ry-crostini>
