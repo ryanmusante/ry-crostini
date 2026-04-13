@@ -1041,11 +1041,7 @@ if should_run_step 1; then
     fi
     log "Running as user: $(whoami) ✓"
 
-    # 1i. Sommelier (Wayland bridge) — needed for all GUI apps
-    # Check via systemctl --user, not pgrep: on aarch64 Crostini sommelier is exec'd
-    # through ld-linux-aarch64.so.1 so the kernel comm is "ld-linux-aarch6" (15-char
-    # truncation) and `pgrep -x sommelier` never matches. systemctl is-active is
-    # authoritative and architecture-agnostic.
+    # 1i. Sommelier (Wayland bridge) — needed for all GUI apps Check via systemctl --user, not pgrep: on aarch64 Crostini sommelier is exec'd through ld-linux-aarch64.so.1 so the kernel comm is "ld-linux-aarch6" (15-char truncation) and `pgrep -x sommelier` never matches. systemctl is-active is authoritative and architecture-agnostic.
     if systemctl --user is-active --quiet 'sommelier@*.service' 2>/dev/null \
        || systemctl --user list-units --type=service --state=active --no-legend \
           'sommelier@*.service' 2>/dev/null | grep -q .; then
@@ -1607,9 +1603,7 @@ if should_run_step 5; then
         log "GPU env up-to-date — skipping"
     fi
 
-    # Pre-create Mesa shader cache dir — Mesa lazy-creates on first GL context;
-    # pre-creation removes a concurrent-launch race when RetroArch and DOSBox-X
-    # both spin up GL surfaces simultaneously on first run after install.
+    # Pre-create Mesa shader cache dir — Mesa lazy-creates on first GL context; pre-creation removes a concurrent-launch race when RetroArch and DOSBox-X both spin up GL surfaces simultaneously on first run after install.
     mkdir -p "${HOME}/.cache/mesa_shader_cache" 2>/dev/null \
         || warn "Cannot pre-create Mesa shader cache dir"
 
@@ -1682,11 +1676,7 @@ if should_run_step 6; then
         warn "/dev/snd not found. Audio may not work until container restart."
     fi
 
-    # Track whether any audio config actually changed in this run — used below
-    # to gate the pipewire/wireplumber restart. Without this guard, re-running
-    # the script would restart the audio stack on every invocation even when
-    # nothing changed, causing a momentary audio drop in any currently-playing
-    # app (browsers, YouTube, games).
+    # Track whether any audio config actually changed in this run — used below to gate the pipewire/wireplumber restart. Without this guard, re-running the script would restart the audio stack on every invocation even when nothing changed, causing a momentary audio drop in any currently-playing app (browsers, YouTube, games).
     _audio_config_changed=false
 
     # PipeWire gaming overrides — counteract KVM VM auto-detection (min-quantum=1024)
@@ -1737,14 +1727,7 @@ WPEOF
     fi
     unset _WP_ALSA
 
-    # Apply audio config changes to running daemons — without this, pipewire /
-    # pipewire-pulse / wireplumber continue using the pre-install config (loaded
-    # at their original startup) and the tuning above has zero effect until the
-    # user restarts the terminal or logs out. Only restart when a config
-    # actually changed AND the services are currently active (avoids failing
-    # on --from-step runs where pipewire may not yet be up). Poll for readiness
-    # with a 5 s ceiling — pipewire typically re-initializes in <1 s but slow
-    # containers under eMMC contention can take longer.
+    # Apply audio config changes to running daemons — without this, pipewire / pipewire-pulse / wireplumber continue using the pre-install config (loaded at their original startup) and the tuning above has zero effect until the user restarts the terminal or logs out. Only restart when a config actually changed AND the services are currently active (avoids failing on --from-step runs where pipewire may not yet be up). Poll for readiness with a 5 s ceiling — pipewire typically re-initializes in <1 s but slow containers under eMMC contention can take longer.
     if $_audio_config_changed; then
         _pw_units=(pipewire.service pipewire-pulse.service wireplumber.service)
         _pw_any_active=false
@@ -2599,15 +2582,7 @@ if should_run_step 11; then
     if [[ -e /dev/dri/renderD128 ]]; then
         logprintf '  Render node:   %b✓%b /dev/dri/renderD128\n' "$GREEN" "$RESET"
         ((_verify_pass++)) || true
-        # Source gpu.conf into a subshell env before probing GL/Vulkan. systemd
-        # environment.d files are only loaded into user sessions at login — the
-        # bash shell running this script predates gpu.conf and inherits none of
-        # its variables (notably MESA_LOADER_DRIVER_OVERRIDE). Without this
-        # sourcing, glxinfo/vulkaninfo run with the stale parent-shell env and
-        # would report llvmpipe on a correctly-configured system until the user
-        # restarts their terminal. Parse gpu.conf manually (KEY=VALUE, skip
-        # comments and blank lines, expand ${HOME}) rather than `set -a; source`
-        # to avoid executing arbitrary content from the config.
+        # Source gpu.conf into a subshell env before probing GL/Vulkan. systemd environment.d files are only loaded into user sessions at login — the bash shell running this script predates gpu.conf and inherits none of its variables (notably MESA_LOADER_DRIVER_OVERRIDE). Without this sourcing, glxinfo/vulkaninfo run with the stale parent-shell env and would report llvmpipe on a correctly-configured system until the user restarts their terminal. Parse gpu.conf manually (KEY=VALUE, skip comments and blank lines, expand ${HOME}) rather than `set -a; source` to avoid executing arbitrary content from the config.
         _gpu_env_file="${HOME}/.config/environment.d/gpu.conf"
         _gl_env_args=()
         if [[ -r "$_gpu_env_file" ]]; then
@@ -2635,11 +2610,7 @@ if should_run_step 11; then
             [[ -n "$GL_VENDOR" ]]   && logprintf '  GL vendor:     %s\n' "$GL_VENDOR"
             [[ -n "$GL_RENDERER" ]] && logprintf '  GL renderer:   %s\n' "$GL_RENDERER"
             [[ -n "$GL_VERSION" ]]  && logprintf '  GL version:    %s\n' "$GL_VERSION"
-            # Render-node existence ≠ GPU acceleration. virtio-gpu host bridge may
-            # be inactive (chrome://flags/#crostini-gpu-support disabled, missing
-            # full reboot after enabling, host driver fault) — Mesa then falls back
-            # to llvmpipe/softpipe/swrast (CPU). Detect that explicitly so software
-            # rendering fails the verify rather than passing silently.
+            # Render-node existence ≠ GPU acceleration. virtio-gpu host bridge may be inactive (chrome://flags/#crostini-gpu-support disabled, missing full reboot after enabling, host driver fault) — Mesa then falls back to llvmpipe/softpipe/swrast (CPU). Detect that explicitly so software rendering fails the verify rather than passing silently.
             case "$GL_RENDERER" in
                 *virgl*|*Virgl*|*VirGL*)
                     logprintf '  Mesa driver:   %b✓%b virgl (hardware)\n' "$GREEN" "$RESET"
@@ -2666,8 +2637,7 @@ if should_run_step 11; then
             VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs -r || true)"
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
-                # lavapipe (Mesa software Vulkan) reports deviceName=llvmpipe — same
-                # llvmpipe-as-success false-positive as the GL block above. Demote.
+                # lavapipe (Mesa software Vulkan) reports deviceName=llvmpipe — same llvmpipe-as-success false-positive as the GL block above. Demote.
                 case "$VK_GPU" in
                     *llvmpipe*|*lavapipe*|*SwiftShader*)
                         logprintf '  Vulkan GPU:    %b⚠%b %s (software — lavapipe)\n' "$YELLOW" "$RESET" "$VK_GPU"
@@ -2694,8 +2664,7 @@ if should_run_step 11; then
 
     # Display
     logprintf '%bDisplay / Wayland:%b\n' "$BOLD" "$RESET"
-    # systemctl --user is authoritative; pgrep -x sommelier fails on aarch64 where
-    # the process comm is "ld-linux-aarch6" (truncated dynamic-loader argv0).
+    # systemctl --user is authoritative; pgrep -x sommelier fails on aarch64 where the process comm is "ld-linux-aarch6" (truncated dynamic-loader argv0).
     if systemctl --user list-units --type=service --state=active --no-legend \
        'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | grep -q .; then
         logprintf '  Sommelier:     %b✓%b running\n' "$GREEN" "$RESET"
@@ -2706,19 +2675,12 @@ if should_run_step 11; then
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"
-    # The three lines below read from config files on disk, not from running
-    # GTK/X11 state — they report the CONFIGURED values, not what's currently
-    # live in xrdb or in-process GTK. Labels prefixed "Configured" to remove
-    # the liveness implication. xrdb cross-check below confirms whether
-    # Xft.dpi actually landed in the running X server.
+    # The three lines below read from config files on disk, not from running GTK/X11 state — they report the CONFIGURED values, not what's currently live in xrdb or in-process GTK. Labels prefixed "Configured" to remove the liveness implication. xrdb cross-check below confirms whether Xft.dpi actually landed in the running X server.
     logprintf '  GTK theme:     %s (configured)\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
     _xft_file="$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | head -1 | awk '{print $2}' || true)"
     [[ -z "$_xft_file" ]] && _xft_file='default'
     logprintf '  Xft DPI:       %s (configured)\n' "$_xft_file"
-    # Cross-check: does the running X server actually have Xft.dpi loaded?
-    # step 7 attempts `xrdb -merge ~/.Xresources` but gates on $DISPLAY being
-    # set — on a fresh install without sommelier up yet, the merge is skipped
-    # and verify must tell the user the written value is not yet live.
+    # Cross-check: does the running X server actually have Xft.dpi loaded? step 7 attempts `xrdb -merge ~/.Xresources` but gates on $DISPLAY being set — on a fresh install without sommelier up yet, the merge is skipped and verify must tell the user the written value is not yet live.
     if [[ -n "${DISPLAY:-}" ]] && command -v xrdb &>/dev/null; then
         _xft_live="$(xrdb -query 2>/dev/null | awk '/^Xft\.dpi:/ {print $2; exit}' || true)"
         if [[ -n "$_xft_live" ]]; then
@@ -2906,9 +2868,7 @@ if should_run_step 11; then
     check_config "${HOME}/.config/scummvm/scummvm.ini"                                       "ScummVM config"
     $IS_BOOKWORM || check_config "${HOME}/.box64rc"                                                           "box64 SC7180P config"
     $IS_BOOKWORM || check_config "${HOME}/.config/dosbox-x/dosbox-x.conf"                                    "DOSBox-X ARM64 config"
-    # PipeWire audio chain verification — check the SERVICE not just the SOCKET.
-    # A socket-activated unit can report active (listening) while the daemon
-    # behind it is failed/inactive, masking real audio breakage.
+    # PipeWire audio chain verification — check the SERVICE not just the SOCKET. A socket-activated unit can report active (listening) while the daemon behind it is failed/inactive, masking real audio breakage.
     if systemctl --user is-active --quiet pipewire-pulse.service \
        && systemctl --user is-active --quiet pipewire-pulse.socket; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "PipeWire-pulse active"
@@ -2932,10 +2892,7 @@ if should_run_step 11; then
             ((_verify_fail++)) || true
         fi
     fi
-    # earlyoom liveness — observe only. Previous versions auto-restarted earlyoom
-    # here if inactive, but verification steps must not mutate state: an unexpected
-    # death is a finding, not something to silently paper over. The auto-start
-    # belonged in step 3 (where the unit is first installed), not in verify.
+    # earlyoom liveness — observe only. Previous versions auto-restarted earlyoom here if inactive, but verification steps must not mutate state: an unexpected death is a finding, not something to silently paper over. The auto-start belonged in step 3 (where the unit is first installed), not in verify.
     if systemctl is-active earlyoom.service &>/dev/null; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom OOM killer active"
         ((_verify_pass++)) || true
@@ -2951,10 +2908,7 @@ if should_run_step 11; then
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "apt-daily-upgrade.timer not masked"
         ((_verify_warn++)) || true
     fi
-    # apt-daily.timer (kept enabled — refreshes package lists for security visibility).
-    # `systemctl is-enabled` returns 0 for enabled, static, alias, indirect, and
-    # enabled-runtime — only an exact "enabled" match guarantees the timer is
-    # persistently active across reboots.
+    # apt-daily.timer (kept enabled — refreshes package lists for security visibility). `systemctl is-enabled` returns 0 for enabled, static, alias, indirect, and enabled-runtime — only an exact "enabled" match guarantees the timer is persistently active across reboots.
     if [[ "$(systemctl is-enabled apt-daily.timer 2>/dev/null)" == "enabled" ]]; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "apt-daily.timer enabled (security refresh)"
         ((_verify_pass++)) || true
@@ -3075,16 +3029,7 @@ if should_run_step 13; then
     logprintf '%bElapsed time:%b  %dm %ds\n' "$BOLD" "$RESET" "$((_elapsed / 60))" "$((_elapsed % 60))"
     unset _now_epoch _elapsed
 
-    # Live-reload environment.d vars and restart sommelier so changes apply without
-    # container restart. Parse environment.d files as KEY=VALUE (systemd format) rather
-    # than sourcing them as shell. Sourcing breaks values containing shell metachars —
-    # e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the
-    # exported value would be just "wayland". The on-disk file is parsed correctly by
-    # systemd-environment-d-generator on next session start; this block exists only to
-    # make the changes live in the current session. Single pass: export into the
-    # current shell AND build the import-environment key list. Unscoped
-    # `import-environment` would leak script-internal vars (LOG_FILE, _verify_*,
-    # IS_BOOKWORM, etc.) — hence the explicit allow-list.
+    # Live-reload environment.d vars and restart sommelier so changes apply without container restart. Parse environment.d files as KEY=VALUE (systemd format) rather than sourcing them as shell. Sourcing breaks values containing shell metachars — e.g. qt.conf's `QT_QPA_PLATFORM=wayland;xcb` would be split at the `;` and the exported value would be just "wayland". The on-disk file is parsed correctly by systemd-environment-d-generator on next session start; this block exists only to make the changes live in the current session. Single pass: export into the current shell AND build the import-environment key list. Unscoped `import-environment` would leak script-internal vars (LOG_FILE, _verify_*, IS_BOOKWORM, etc.) — hence the explicit allow-list.
     if [[ -d "${HOME}/.config/environment.d" ]]; then
         _import_keys=()
         _had_nullglob_env=false
@@ -3129,11 +3074,7 @@ if should_run_step 13; then
     # Restart sommelier — enumerate active instances rather than hardcoding @0
     mapfile -t _somm_units < <(systemctl --user list-units --type=service --state=active --no-legend 'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | awk '{print $1}')
     if [[ "${#_somm_units[@]}" -gt 0 ]] && systemctl --user restart "${_somm_units[@]}" 2>/dev/null; then
-        # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention,
-        # OOM recovery) may need >1 s to re-establish the display socket. Check via
-        # systemctl is-active, not pgrep: on aarch64 Crostini the sommelier process
-        # comm is "ld-linux-aarch6" (dynamic-loader argv0 truncation), so
-        # `pgrep -x sommelier` never matches and the poll would always time out.
+        # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention, OOM recovery) may need >1 s to re-establish the display socket. Check via systemctl is-active, not pgrep: on aarch64 Crostini the sommelier process comm is "ld-linux-aarch6" (dynamic-loader argv0 truncation), so `pgrep -x sommelier` never matches and the poll would always time out.
         _somm_ready=false
         for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
             if systemctl --user is-active --quiet "${_somm_units[@]}"; then _somm_ready=true; break; fi
