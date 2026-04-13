@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.24-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.27-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -42,8 +42,7 @@ is reversible.
     - [Native ARM64 Emulators](#native-arm64-emulators)
     - [RetroArch Cores](#retroarch-cores)
     - [RetroArch CRT Shaders](#retroarch-crt-shaders)
-    - [RetroArch Run-Ahead](#retroarch-run-ahead)
-    - [RetroArch Preemptive Frames](#retroarch-preemptive-frames)
+    - [RetroArch Run-Ahead and Preemptive Frames](#retroarch-latency-reduction)
     - [x86 Translation](#x86-translation)
     - [Game Launcher](#game-launcher)
     - [GOG Games](#gog-games)
@@ -233,7 +232,7 @@ containers are unaffected; the flag is a no-op there.
 ### Safety and Reliability
 
 | Property | Implementation |
-|----------|---------------|
+|----------|----------------|
 | Idempotent | Configuration files skip if already present; the 12 files with `ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `#` for all others) |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
@@ -245,7 +244,7 @@ containers are unaffected; the flag is a no-op there.
 ### User Experience
 
 | Property | Implementation |
-|----------|---------------|
+|----------|----------------|
 | Unattended by default | All prompts auto-answered; `--interactive` restores them |
 | Parallel verification | Step 11 tool checks run concurrently with ordered output replay |
 | Colored output | Respects `NO_COLOR` |
@@ -365,17 +364,15 @@ with step numbers and purposes.
 ## Gaming Reference
 
 Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
-innoextract (GOG/Inno Setup extractor), unar (RAR4/RAR5 and multi-part
-archive extraction), box64 (x86\_64 DynaRec JIT), and qemu-user (TCG
-x86/x86\_64 + i386 emulation). `unrar` (RARLAB, non-free) is attempted
-separately; if unavailable, `unar` is used as a fallback. Default
-configuration files are written for RetroArch, ScummVM, box64, run-x86, and
+innoextract, unar, box64 (x86\_64 DynaRec JIT), and qemu-user (i386/x86\_64
+TCG). `unrar` (RARLAB, non-free) is attempted separately; `unar` is the
+fallback. Default configs are written for RetroArch, ScummVM, box64, run-x86, and
 gog-extract on first install.
 
 ### Compatibility Tiers
 
 | Tier | Category | RAM | Examples |
-|------|----------|-----|---------|
+|------|----------|-----|----------|
 | Excellent | ScummVM, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
 | Fair | RetroArch PSX/PSP | 300–500 MB | PS1 catalog, lighter PSP titles |
@@ -393,8 +390,7 @@ gog-extract on first install.
 ### RetroArch Cores
 
 > The script installs `retroarch` and `retroarch-assets` only — **no libretro
-> cores are pre-installed.** Install the cores below via RetroArch's Online
-> Updater (Main Menu → Online Updater → Core Downloader).
+> cores are pre-installed.** Install via Main Menu → Online Updater → Core Downloader.
 
 | System | Core | Notes |
 |--------|------|-------|
@@ -410,7 +406,7 @@ gog-extract on first install.
 
 ### RetroArch CRT Shaders
 
-Virgl's GLES profile limits shader complexity. Tested slang shaders:
+Virgl's GLES profile limits shader complexity. Tested slang shaders (CRT-Royale and Mega Bezel require desktop GPU resources — do not use):
 
 | Shader | Description | Overhead |
 |--------|-------------|----------|
@@ -419,37 +415,17 @@ Virgl's GLES profile limits shader complexity. Tested slang shaders:
 | CRT-Easymode | Flat-display CRT simulation | Low |
 | FakeLottes | CRT-Lottes tuned for low-power GPUs | Low |
 
-CRT-Royale and Mega Bezel presets require desktop GPU resources and should not
-be used on this hardware.
+### RetroArch Latency Reduction
 
-### RetroArch Run-Ahead
+Two techniques for 8-bit and 16-bit cores only (Quick Menu → Overrides → Save Core Override). **Do not enable for PSX, N64, PSP, DS, or Dreamcast.**
 
-Enable per-core overrides for 8-bit and 16-bit systems only. Create a core
-override (Quick Menu → Overrides → Save Core Override) with:
-
-```
-run_ahead_enabled = "true"
-run_ahead_frames = "1"
-run_ahead_secondary_instance = "false"
-```
-
-Two-instance run-ahead doubles RAM usage per core and must not be enabled on
-this hardware. Do not enable run-ahead for PSX, N64, PSP, DS, or Dreamcast
-cores.
-
-### RetroArch Preemptive Frames
-
-Preemptive Frames (RetroArch 1.15+) is a lower-overhead alternative to
-Run-Ahead. It only re-runs core logic when input state changes. Enable
-per-core for 8-bit and 16-bit systems only. Create a core override with:
-
-```
-preempt_enable = "true"
-run_ahead_frames = "1"
-```
-
-Preemptive Frames requires deterministic frame state support — not all
-cores qualify. Do not enable for PSX, N64, PSP, DS, or Dreamcast cores.
+| Technique | Setting | Value | Note |
+|-----------|---------|-------|------|
+| Run-Ahead | `run_ahead_enabled` | `"true"` | Reruns core every frame |
+| Run-Ahead | `run_ahead_frames` | `"1"` | |
+| Run-Ahead | `run_ahead_secondary_instance` | `"false"` | Two-instance mode doubles RAM — never enable |
+| Preemptive Frames (1.15+) | `preempt_enable` | `"true"` | Lower overhead; reruns only on input change |
+| Preemptive Frames (1.15+) | `run_ahead_frames` | `"1"` | Requires deterministic frame state |
 
 ### x86 Translation
 
@@ -457,33 +433,29 @@ cores qualify. Do not enable for PSX, N64, PSP, DS, or Dreamcast cores.
 > application loads. Not recommended for RAM-intensive titles.
 
 | Tool | Installation | Performance | Notes |
-|------|-------------|-------------|-------|
+|------|--------------|-------------|-------|
 | box64 | Step 10 (official Debian package) | Fast — ARM64 DynaRec | x86\_64 only; tuned `~/.box64rc` written by step 10 |
 | qemu-user | Step 10 | Slow — TCG JIT (~5–10× slower than box64) | Provides i386; binfmt transparent execution blocked in unprivileged Crostini |
 
-The `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
-and dispatches: x86_64 → box64 (preferred) → `qemu-x86_64` (fallback when
-box64 is unavailable, e.g. on bookworm); i386 → `qemu-i386`; unrecognized
-ELF or arch detection failure → descriptive error message + exit 2. Run
-`run-x86 --help` to list available backends.
+The `run-x86` wrapper auto-detects ELF architecture and dispatches:
+x86\_64 → box64 (preferred) → `qemu-x86_64`; i386 → `qemu-i386`; unrecognized
+ELF → descriptive error + exit 2. Run `run-x86 --help` to list available backends.
 
-**32-bit x86:** not installed by default. Options: `box86` + armhf libs
-(`dpkg --add-architecture armhf`), or set `BOX64_BOX32=1` in `~/.box64rc`
-`[default]` for box64's experimental Box32 mode (v0.3.2+, no armhf
-required). FEX-Emu requires a RootFS image and is not warranted on 4 GB.
+**32-bit x86:** not installed by default. Use `box86` + armhf libs, or set
+`BOX64_BOX32=1` in `~/.box64rc` `[default]` for box64's experimental Box32
+mode (v0.3.2+, no armhf required). FEX-Emu is not warranted on 4 GB.
 
-**Transparent `./x86_program` execution:** binfmt_misc registration is
-blocked in unprivileged Crostini. To enable it, create a privileged
-container via `vmc container termina x86 --privileged true` from
-`crosh` (`Ctrl+Alt+T` → `shell`), then `sudo apt install qemu-user
-qemu-user-binfmt` inside it. Privileged containers have reduced security
-isolation; the default `penguin` container remains unaffected.
+**Transparent `./x86_program` execution:** binfmt_misc is blocked in
+unprivileged Crostini; requires a privileged container (`vmc container termina
+x86 --privileged true` from crosh). Privileged containers have reduced security
+isolation; the default `penguin` container is unaffected.
 
 ### Game Launcher
 
-The `run-game` wrapper (`~/.local/bin/run-game`) pins processes to the
-Cortex-A76 big cores (6–7) with elevated scheduling priority and caps
-glibc malloc arenas (`MALLOC_ARENA_MAX=2`) to reduce memory waste:
+The `run-game` wrapper (`~/.local/bin/run-game`) pins to Cortex-A76 big cores
+with elevated scheduling priority, caps malloc arenas (`MALLOC_ARENA_MAX=2`),
+and exports `MESA_NO_ERROR=1` + `mesa_glthread=true` per-game (unsafe globally
+on virgl; omitted from `gpu.conf`):
 
 ```bash
 run-game retroarch                     # RetroArch on big cores
@@ -492,27 +464,17 @@ run-game scummvm                       # ScummVM on big cores
 run-game run-x86 ./some_x86_program    # Chain with x86 emulation
 ```
 
-On non-SC7180P hardware, the wrapper detects big cores dynamically via
-`/proc/cpuinfo` CPU part IDs (Qualcomm Kryo Gold `0x804`, Cortex-A76 `0xd0b`,
-or any of A77 `0xd0d` / A78 `0xd41` / X1 `0xd44` / A710 `0xd47` / X2 `0xd48`
-/ A715 `0xd4d` / X3 `0xd4e` / A720 `0xd80` / X4 `0xd81`). If none match,
-affinity is skipped and only priority elevation applies.
-
-In addition to affinity, the wrapper exports `MESA_NO_ERROR=1` (skips GL
-error checking, ~5–10% CPU savings) and `mesa_glthread=true` (offloads GL
-command batching to a worker thread). Both are unsafe globally on virgl
-and intentionally omitted from `~/.config/environment.d/gpu.conf` — they
-only apply per-game via this wrapper.
+On non-SC7180P hardware, big cores are detected dynamically via
+`/proc/cpuinfo` CPU part IDs. If none match, affinity is skipped and only
+priority elevation applies.
 
 ### GOG Games
 
-Step 10 installs `innoextract` and writes the `gog-extract` wrapper
-(`~/.local/bin/gog-extract`) for extracting GOG game installers on Linux
-without Wine.
+Step 10 installs `innoextract` and writes `~/.local/bin/gog-extract` for
+extracting GOG installers without Wine.
 
-**Windows installers** (`.exe`) use Inno Setup. `innoextract` unpacks them
-natively on ARM64, including GOG Galaxy multi-part `.bin` archives (handled
-internally by `innoextract --gog` since v1.9):
+**Windows installers** (`.exe`) — Inno Setup, unpacked natively including
+multi-part `.bin` archives (`innoextract --gog` since v1.9):
 
 ```bash
 gog-extract setup_monkey_island_1.0.exe              # extracts to ./setup_monkey_island_1.0/
@@ -520,20 +482,17 @@ gog-extract setup_monkey_island_1.0.exe ~/Games/MI    # extracts to ~/Games/MI/
 # Game files land in the app/ subdirectory
 ```
 
-**Linux installers** (`.sh`) are makeself archives:
+**Linux installers** (`.sh`) — makeself archives:
 
 ```bash
 gog-extract gog_baldurs_gate_enhanced_edition.sh       # extracts to ./gog_baldurs_gate_enhanced_edition/
 # Game files land in data/noarch/game/
 ```
 
-For standalone RAR extraction, `unar` (installed by step 10) handles
-RAR4/RAR5 including multi-part archives. `unrar` (RARLAB, non-free) is
-attempted separately; to enable it, add non-free to APT sources.
+`unar` (step 10) handles standalone RAR4/RAR5 and multi-part archives.
+`unrar` (RARLAB, non-free) requires adding `non-free` to APT sources first:
 
-**deb822 format** (trixie default, and bookworm after `apt modernize-sources`).
-Idempotent — appends `non-free` only if not already a standalone token, and
-correctly distinguishes it from `non-free-firmware`:
+**deb822 format** (trixie default; bookworm after `apt modernize-sources`):
 
 ```bash
 sudo sed -i -E '/^Components:/ { /(^| )non-free( |$)/!s/$/ non-free/ }' \
@@ -541,9 +500,7 @@ sudo sed -i -E '/^Components:/ { /(^| )non-free( |$)/!s/$/ non-free/ }' \
 sudo apt update && sudo apt install unrar
 ```
 
-**Legacy `.list` format** (bookworm pre-modernize-sources). The trailing-`main`
-match only fits the stock single-component form; for any custom
-`main contrib` etc., edit the file by hand:
+**Legacy `.list` format** (bookworm pre-modernize-sources; stock single-component only — edit by hand for `main contrib` etc.):
 
 ```bash
 sudo sed -i '/^deb / s/ main$/ main non-free/' /etc/apt/sources.list
@@ -551,25 +508,19 @@ sudo apt update && sudo apt install unrar
 ```
 
 [Heroic](https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases)
-provides Linux `.deb` releases (amd64 only — no native arm64 build; could run
-under box64 on Trixie but is untested on 4 GB RAM). Alternative: download GOG
-`.sh` installers from [gog.com](https://www.gog.com) directly.
+is amd64-only (no native arm64). Alternative: download GOG `.sh` installers
+from [gog.com](https://www.gog.com) directly.
 
 ### Cloud Gaming
 
-| Priority | Client | Notes |
-|----------|--------|-------|
-| 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming, Luna) | Direct V4L2 hardware decode, no VM overhead |
-| 2 | Android Moonlight app (Play Store) | Hardware decode; optimal for Sunshine/GameStream hosts |
-| 3 | Chiaki-ng (PS Remote Play) | ARM64 Linux AppImage; native Crostini streaming client |
-
-**Not recommended inside Crostini:**
-
-| Client | Issue |
-|--------|-------|
-| Moonlight Qt | arm64 `.deb` available (v5.0.0+) but software decode only in Crostini (no V4L2 hw accel) |
-| Parsec | No ARM64 Linux support |
-| Steam Link | No ARM64 Linux support |
+| Priority | Client | Recommended | Notes |
+|----------|--------|-------------|-------|
+| 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming, Luna) | ✅ | Direct V4L2 hardware decode, no VM overhead |
+| 2 | Android Moonlight app (Play Store) | ✅ | Hardware decode; optimal for Sunshine/GameStream hosts |
+| 3 | Chiaki-ng (PS Remote Play) | ✅ | ARM64 Linux AppImage; native Crostini streaming client |
+| — | Moonlight Qt | ⚠ No | arm64 `.deb` available but software decode only (no V4L2 hw accel) |
+| — | Parsec | ✗ No | No ARM64 Linux support |
+| — | Steam Link | ✗ No | No ARM64 Linux support |
 
 ## License
 

@@ -1,5 +1,25 @@
 ry-crostini changelog
 
+2026-04-13  v8.1.27
+- F01 (table audit, LOW): four table separator rows had dash counts one short of header-width+2 padding. All pre-existing; none introduced by v8.1.25 condensation. Fixed:
+  - L235/L247 (Safety and UX tables): `Implementation` column separator 15→16 dashes
+  - L375 (Compatibility Tiers): `Examples` column separator 9→10 dashes
+  - L436 (x86 Translation): `Installation` column separator 13→14 dashes
+  All 22 table separators now exactly match header-cell-width+2 padding. No script or behavior change.
+
+2026-04-13  v8.1.26
+- F01 (double-check 8.1.25, LOW): Gaming Reference intro paragraph incorrectly added "DOSBox-X" to the default-configs list. `~/.config/dosbox-x/dosbox-x.conf` is trixie-only — script explicitly skips the write on bookworm (line 2216: "bookworm: skipping DOSBox-X config write"). Reverted to match the original accurate list: RetroArch, ScummVM, box64, run-x86, and gog-extract. No other condensation changes affected.
+
+2026-04-13  v8.1.25
+- README Gaming Reference section condensed (−48 lines, no content removed):
+  - Intro paragraph tightened.
+  - RetroArch CRT Shaders: Royale/Mega Bezel warning folded into section header prose; trailing standalone sentence removed.
+  - RetroArch Run-Ahead + Preemptive Frames merged into a single "Latency Reduction" section with a unified settings table; shared constraints ("8/16-bit only; not PSX/N64/PSP/DS/DC") stated once. ToC entry updated.
+  - x86 Translation: binfmt privileged-container paragraph condensed to two lines; 32-bit x86 paragraph condensed.
+  - Game Launcher: CPU part-ID inline list removed (encyclopedic; part IDs are in script comments and were duplicated from the earlier run-game description); MESA_NO_ERROR/mesa_glthread explanation condensed to one sentence.
+  - GOG Games: unrar/RAR intro prose tightened; deb822 and .list format headers condensed.
+  - Cloud Gaming: two tables (recommended + not-recommended) merged into one with a Recommended column.
+
 2026-04-13  v8.1.24
 - F01 (audit 8.1.23, LOW): README Design table idempotency row: marker notation corrected from `# ry-crostini:VERSION` (implying a uniform bash-comment prefix) to `ry-crostini:VERSION` with a note that comment syntax is file-format-appropriate — `//` for `/etc/apt/apt.conf.d/90parallel` (APT conf syntax), `<!-- -->` for `~/.config/fontconfig/fonts.conf` (XML), `#` for all other 10 files. The grep check `grep -Fq "ry-crostini:${SCRIPT_VERSION}"` is prefix-agnostic and was always correct; only the README description was imprecise. No script or behavior change.
 - F02 (audit 8.1.23, LOW): README x86 Translation section, `run-x86` dispatch paragraph: third dispatch path documented — unrecognized ELF magic or arch detection failure now listed alongside x86_64 and i386 paths. Script emits a descriptive error (`run-x86: arch detection failed`, `refusing to guess`, `verify with: file <prog>`) and exits 2; the README previously described only the two success paths. No script or behavior change.
