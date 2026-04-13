@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.23-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.24-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -234,7 +234,7 @@ containers are unaffected; the flag is a no-op there.
 
 | Property | Implementation |
 |----------|---------------|
-| Idempotent | Configuration files skip if already present; the 12 files with `# ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances |
+| Idempotent | Configuration files skip if already present; the 12 files with `ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `#` for all others) |
 | Atomic writes | tmpfile + mv for all configuration files via unified `_write_file_impl` (modes 644 for configs, 700 for executables in `~/.local/bin/`; the log file is 600 via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
@@ -463,7 +463,8 @@ cores qualify. Do not enable for PSX, N64, PSP, DS, or Dreamcast cores.
 
 The `run-x86` wrapper (`~/.local/bin/run-x86`) auto-detects ELF architecture
 and dispatches: x86_64 → box64 (preferred) → `qemu-x86_64` (fallback when
-box64 is unavailable, e.g. on bookworm); i386 → `qemu-i386`. Run
+box64 is unavailable, e.g. on bookworm); i386 → `qemu-i386`; unrecognized
+ELF or arch detection failure → descriptive error message + exit 2. Run
 `run-x86 --help` to list available backends.
 
 **32-bit x86:** not installed by default. Options: `box86` + armhf libs
