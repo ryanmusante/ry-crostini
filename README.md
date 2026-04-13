@@ -26,31 +26,29 @@ is reversible.
 
 ## Table of Contents
 
-| # | Section |
-|---|---------|
-| 1 | [Quick Start](#quick-start) |
-| 2 | [Hardware](#hardware) |
-| 3 | [Prerequisites](#prerequisites) |
-| 4 | [Usage](#usage) |
-| 5 | [Installation Steps](#installation-steps) |
-| 6 | [Generated Files](#generated-files) |
-| 7 | [Trixie Upgrade (optional)](#trixie-upgrade-optional) |
-| 8 | [Design](#design) |
-| 9 | [Known Limitations](#known-limitations) |
-| 10 | [Troubleshooting](#troubleshooting) |
-| 11 | [Uninstall / Rollback](#uninstall--rollback) |
-| 12 | [Gaming Reference](#gaming-reference) |
-| 12.1 | &nbsp;&nbsp;[Compatibility Tiers](#compatibility-tiers) |
-| 12.2 | &nbsp;&nbsp;[Native ARM64 Emulators](#native-arm64-emulators) |
-| 12.3 | &nbsp;&nbsp;[RetroArch Cores](#retroarch-cores) |
-| 12.4 | &nbsp;&nbsp;[RetroArch CRT Shaders](#retroarch-crt-shaders) |
-| 12.5 | &nbsp;&nbsp;[RetroArch Run-Ahead](#retroarch-run-ahead) |
-| 12.6 | &nbsp;&nbsp;[RetroArch Preemptive Frames](#retroarch-preemptive-frames) |
-| 12.7 | &nbsp;&nbsp;[x86 Translation](#x86-translation) |
-| 12.8 | &nbsp;&nbsp;[Game Launcher](#game-launcher) |
-| 12.9 | &nbsp;&nbsp;[GOG Games](#gog-games) |
-| 12.10 | &nbsp;&nbsp;[Cloud Gaming](#cloud-gaming) |
-| 13 | [License](#license) |
+1. [Quick Start](#quick-start)
+2. [Hardware](#hardware)
+3. [Prerequisites](#prerequisites)
+4. [Usage](#usage)
+5. [Installation Steps](#installation-steps)
+6. [Generated Files](#generated-files)
+7. [Trixie Upgrade (optional)](#trixie-upgrade-optional)
+8. [Design](#design)
+9. [Known Limitations](#known-limitations)
+10. [Troubleshooting](#troubleshooting)
+11. [Uninstall / Rollback](#uninstall--rollback)
+12. [Gaming Reference](#gaming-reference)
+    - [Compatibility Tiers](#compatibility-tiers)
+    - [Native ARM64 Emulators](#native-arm64-emulators)
+    - [RetroArch Cores](#retroarch-cores)
+    - [RetroArch CRT Shaders](#retroarch-crt-shaders)
+    - [RetroArch Run-Ahead](#retroarch-run-ahead)
+    - [RetroArch Preemptive Frames](#retroarch-preemptive-frames)
+    - [x86 Translation](#x86-translation)
+    - [Game Launcher](#game-launcher)
+    - [GOG Games](#gog-games)
+    - [Cloud Gaming](#cloud-gaming)
+13. [License](#license)
 
 ## Quick Start
 
