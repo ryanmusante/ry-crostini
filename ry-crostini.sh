@@ -2960,7 +2960,7 @@ if should_run_step 11; then
     if [[ "$_verify_fail" -eq 0 ]]; then
         set_checkpoint 11
     else
-        log "Step 11 had ${_verify_fail} failure(s) — checkpoint not advanced; re-run with --verify after fixes"
+        log "Step 11 verification has ${_verify_fail} failure(s) — checkpoint not advanced; re-run with --verify after fixes"
     fi
     # Snapshot failure count so cleanup() prints the correct message if an exit occurs between here and step 13's final assignment to _had_failures.
     _had_failures="$_verify_fail"
@@ -2981,7 +2981,7 @@ if should_run_step 12; then
     if [[ "$_verify_fail" -eq 0 ]]; then
         set_checkpoint 12
     else
-        log "Step 12 had ${_verify_fail} failure(s) — checkpoint not advanced; re-run with --verify after fixes"
+        log "Verification has ${_verify_fail} cumulative failure(s) across steps 11-12 — checkpoint not advanced; re-run with --verify after fixes"
     fi
     _had_failures="$_verify_fail"
     log "Step 12 complete."
@@ -3032,8 +3032,10 @@ if should_run_step 13; then
         _no_checks_ran=true
         log "No verification checks were executed — use --verify to validate."
     elif [[ "$_had_failures" -eq 0 ]]; then
-        # All checks passed — mark step 13 complete and remove checkpoint
-        set_checkpoint 13
+        # All checks passed — advance progress bar to 13/13 and remove checkpoint file.
+        # Using _progress_draw directly (not set_checkpoint) avoids a tmpfile+rename round-trip
+        # that would be immediately undone by the rm below.
+        _progress_draw 13
         rm -f -- "$STEP_FILE"
         log "Checkpoint file removed. Setup fully complete."
     else

@@ -30,12 +30,22 @@ is reversible.
 2. [Hardware](#hardware)
 3. [Prerequisites](#prerequisites)
 4. [Usage](#usage)
+    - [Logs](#logs)
 5. [Installation Steps](#installation-steps)
 6. [Generated Files](#generated-files)
 7. [Trixie Upgrade (optional)](#trixie-upgrade-optional)
 8. [Design](#design)
+    - [Safety and Reliability](#safety-and-reliability)
+    - [User Experience](#user-experience)
 9. [Known Limitations](#known-limitations)
 10. [Troubleshooting](#troubleshooting)
+    - [GPU not active after install](#gpu-not-active-after-install)
+    - [Trixie upgrade hard-stop](#trixie-upgrade-hard-stop)
+    - [Lock held / "another instance is running"](#lock-held--another-instance-is-running)
+    - [Audio: no devices](#audio-no-devices)
+    - [WirePlumber JSON config silently ignored on bookworm](#wireplumber-json-config-silently-ignored-on-bookworm)
+    - [Sommelier not running](#sommelier-not-running)
+    - [earlyoom killing the wrong process](#earlyoom-killing-the-wrong-process)
 11. [Uninstall / Rollback](#uninstall--rollback)
 12. [Gaming Reference](#gaming-reference)
     - [Compatibility Tiers](#compatibility-tiers)
@@ -106,7 +116,7 @@ The `--interactive` flag guides through each setting interactively.
 
 ## Usage
 
-```
+```bash
 bash ry-crostini.sh [OPTIONS]
 ```
 
@@ -367,8 +377,9 @@ with step numbers and purposes.
 Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
 innoextract, unar, box64 (x86\_64 DynaRec JIT), and qemu-user (i386/x86\_64
 TCG). `unrar` (RARLAB, non-free) is attempted separately; `unar` is the
-fallback. Default configs are written for RetroArch, ScummVM, box64, run-x86, and
-gog-extract on first install.
+fallback. Default configs and wrappers are written on first install for
+RetroArch, ScummVM, run-x86, run-game, and gog-extract
+(`.box64rc` and `dosbox-x.conf` are added on trixie only).
 
 ### Compatibility Tiers
 
