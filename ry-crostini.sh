@@ -1335,7 +1335,7 @@ EOF
         warn "apt update failed — skipping upgrade (stale package indices)"
     fi
 
-    # @@WHY: cros-guest-tools stays held permanently (cros-im unavailable on Trixie) On bookworm, cros-im IS available — unhold everything.
+    # cros-guest-tools stays held permanently (cros-im unavailable on Trixie) On bookworm, cros-im IS available — unhold everything.
     _CROS_UNHOLD_PKGS=()
     for _cpkg in "${_CROS_HOLD_PKGS[@]}"; do
         if ! $IS_BOOKWORM; then
@@ -1353,7 +1353,7 @@ EOF
     fi
     unset _CROS_HOLD_PKGS _CROS_UNHOLD_PKGS _cpkg
 
-    # @@WHY: No --purge — conffiles may be needed by Crostini packages at next boot
+    # No --purge — conffiles may be needed by Crostini packages at next boot
     run sudo DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || warn "apt autoremove had issues"
 
     # 2c. Verify upgrade landed on Trixie
@@ -1515,7 +1515,7 @@ if should_run_step 3; then
         # bookworm: no box64/dosbox-x; use vanilla dosbox in the prefer regex
         _EOOM_PREFER="retroarch|box64|wine|dosbox-x|scummvm"
         $IS_BOOKWORM && _EOOM_PREFER="retroarch|wine|dosbox|scummvm"
-        # @@WHY: marker check is self-healing — apt upgrade loss or version bump both trigger re-write
+        # marker check is self-healing — apt upgrade loss or version bump both trigger re-write
         if [[ ! -f "$_EARLYOOM_CONF" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_EARLYOOM_CONF"; then
             # Direct interpolation — sed substitution corrupted the value because _EOOM_PREFER contains the sed delimiter character `|`. Build the file with printf and write atomically via write_file_sudo's stdin.
             printf '%s\n' \
@@ -2010,7 +2010,7 @@ if should_run_step 9; then
 
     # 9a. Set locale to en_US.UTF-8
     if ! locale -a 2>/dev/null | grep -q "en_US.utf8"; then
-        # @@WHY: Gate sed on successful backup — cp failure means no rollback
+        # Gate sed on successful backup — cp failure means no rollback
         if run sudo cp --no-dereference --preserve=all /etc/locale.gen /etc/locale.gen.bak; then
             if run sudo sed -i 's/^#[[:space:]]*\(en_US\.UTF-8\)/\1/' /etc/locale.gen; then
                 if run timeout 120 sudo locale-gen; then

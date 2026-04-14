@@ -42,7 +42,7 @@ is reversible.
     - [Native ARM64 Emulators](#native-arm64-emulators)
     - [RetroArch Cores](#retroarch-cores)
     - [RetroArch CRT Shaders](#retroarch-crt-shaders)
-    - [RetroArch Run-Ahead and Preemptive Frames](#retroarch-latency-reduction)
+    - [RetroArch Latency Reduction](#retroarch-latency-reduction)
     - [x86 Translation](#x86-translation)
     - [Game Launcher](#game-launcher)
     - [GOG Games](#gog-games)
@@ -135,6 +135,8 @@ errors. Verification failures preserve the checkpoint so that
 
 ### Logs
 
+Every run writes its own timestamped log for post-mortem review; old files age out automatically.
+
 | Property | Value |
 |----------|-------|
 | Path | `~/ry-crostini-YYYYMMDD-HHMMSS.log` (one file per invocation) |
@@ -145,9 +147,11 @@ Tail the active log: `tail -f ~/ry-crostini-*.log`
 
 ## Installation Steps
 
+Thirteen ordered steps, each idempotent and checkpointed. Steps 1–10 install and configure; 11–12 verify; 13 summarizes. A failed step leaves the checkpoint at the previous success so re-running resumes where it left off.
+
 | Step | Category | Description |
 |------|----------|-------------|
-| 1 | Preflight | Architecture, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize; `--interactive` |
+| 1 | Preflight | Architecture, bash ≥5.0, Crostini, Debian version, disk, GPU, network, root, sommelier, mic, USB, folders, ports, disk-resize, `input` group membership for gamepads; `--interactive` |
 | 2 | System | APT tuning, man-db trigger disable, `bookworm-backports` enable (bookworm only), optional `bookworm`→`trixie` upgrade with `--upgrade-trixie`, cros package hold, deb822 migration, `/tmp` tmpfs cap (trixie only), cros-pin service |
 | 3 | CLI tools | curl, jq, tmux, htop, wl-clipboard, ripgrep, fd, fzf, bat, earlyoom, `p7zip-full` on bookworm |
 | 4 | Build tools | Build essentials and development headers |
@@ -220,6 +224,8 @@ containers are unaffected; the flag is a no-op there.
 
 ### Safety and Reliability
 
+Nothing the script writes is destructive without a tmpfile-and-rename path, a backup, or a PID-gated lock. Re-runs and partial failures converge to the same final state.
+
 | Property | Implementation |
 |----------|----------------|
 | Idempotent | Configuration files skip if already present; the 12 files with `ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `#` for all others) |
@@ -232,6 +238,8 @@ containers are unaffected; the flag is a no-op there.
 
 ### User Experience
 
+Defaults are tuned for unattended runs on a fresh container — no prompts, no surprises, and the terminal stays readable throughout.
+
 | Property | Implementation |
 |----------|----------------|
 | Unattended by default | All prompts auto-answered; `--interactive` restores them |
@@ -242,6 +250,8 @@ containers are unaffected; the flag is a no-op there.
 | Elapsed time | Reported at completion |
 
 ## Known Limitations
+
+Grouped by severity: **blockers** that can't be worked around, **constraints** that shape how you use the system, and **informational** items that just need to be known.
 
 **Blockers.**
 
@@ -269,6 +279,8 @@ containers are unaffected; the flag is a no-op there.
 | ChromeOS flag status | `#crostini-gpu-support`: Required (disabled by default since M131). `#exo-pointer-lock`: Required. |
 
 ## Troubleshooting
+
+The seven scenarios below cover every failure mode observed in practice. Each entry names the symptom as it appears in step 11 output or dmesg, then the fix. Start with `--verify` after any change — it re-runs the checks without re-installing anything.
 
 ### GPU not active after install
 
@@ -360,6 +372,8 @@ gog-extract on first install.
 
 ### Compatibility Tiers
 
+4 GB RAM and virgl GLES are the hard ceilings. Anything below PSX runs comfortably; anything above N64 is marginal at best.
+
 | Tier | Category | RAM | Examples |
 |------|----------|-----|----------|
 | Excellent | ScummVM, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
@@ -369,6 +383,8 @@ gog-extract on first install.
 | Not viable | Vulkan / D3D10+ / Steam | N/A | Use cloud gaming |
 
 ### Native ARM64 Emulators
+
+Three natively-compiled emulators cover DOS, point-and-click adventures, and retro consoles without any x86 translation overhead. Default configs are written on first install.
 
 | Emulator | Description | Configuration |
 |----------|-------------|---------------|
@@ -501,6 +517,8 @@ is amd64-only (no native arm64). Alternative: download GOG `.sh` installers
 from [gog.com](https://www.gog.com) directly.
 
 ### Cloud Gaming
+
+For anything that doesn't fit the compatibility tiers above, streaming is the realistic path. The ChromeOS browser is the lowest-overhead client on this device — native V4L2 hardware decode, no VM layers.
 
 | Priority | Client | Recommended | Notes |
 |----------|--------|-------------|-------|
