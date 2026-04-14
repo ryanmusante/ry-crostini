@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.28
+# Version: 8.1.30
 # Date:    2026-04-13
 # Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
 # Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
@@ -34,7 +34,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.28"
+readonly SCRIPT_VERSION="8.1.30"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -249,10 +249,14 @@ _read_os_release() {
     )
 }
 
-# _has_capture_dev: true if /dev/snd has any ALSA capture node (pcmC*D*c). Covers card indices ≥2 that the prior C0/C1 literal check missed.
+# _has_capture_dev: true if /dev/snd has any ALSA capture node (pcmC*D*c). Covers card indices ≥2 that the prior C0/C1 literal check missed. Glob-based: avoids a find|grep pipeline under active pipefail that would return false-negative if find encountered a permission error on any /dev/snd node even when grep found a match.
 _has_capture_dev() {
     [[ -d /dev/snd ]] || return 1
-    find /dev/snd -maxdepth 1 -name 'pcmC*D*c' 2>/dev/null | grep -q .
+    local _dev
+    for _dev in /dev/snd/pcmC*D*c; do
+        [[ -e "$_dev" ]] && return 0
+    done
+    return 1
 }
 
 # logprintf: printf to stdout and log. Callers MUST use literal format strings.
@@ -1179,6 +1183,8 @@ Acquire::http::Pipeline-Depth "5";
 Acquire::Languages "none";
 // Retry transient failures (WiFi drops, CDN hiccups) — critical for mobile device
 Acquire::Retries "3";
+// Skip fsync during dpkg unpack — reduces eMMC write amplification significantly
+DPkg::Options:: "--force-unsafe-io";
 EOF
     else
         log "APT tuning config up-to-date — skipping"
@@ -1221,7 +1227,7 @@ EOF
     elif [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         _did_trixie_rewrite=true
-        # F01 (audit 8.1.22): a leftover bookworm-backports.list from a prior !UPGRADE_TRIXIE run survives the *.list/*.sources loop below (which intentionally skips *backports* — see comment near line 1265). Rename it to /etc/apt/bookworm-backports.list.pre-trixie so the trixie host doesn't quietly continue pulling bookworm-pinned packages from a stale bookworm-backports registration. Mirrors the existing cros.list .pre-trixie pattern. First-backup-wins.
+        # A leftover bookworm-backports.list from a prior !UPGRADE_TRIXIE run survives the *.list/*.sources loop below (which intentionally skips *backports* — see comment near line 1265). Rename it to /etc/apt/bookworm-backports.list.pre-trixie so the trixie host doesn't quietly continue pulling bookworm-pinned packages from a stale bookworm-backports registration. Mirrors the existing cros.list .pre-trixie pattern. First-backup-wins.
         if [[ -f /etc/apt/sources.list.d/bookworm-backports.list ]]; then
             if [[ -e /etc/apt/bookworm-backports.list.pre-trixie ]]; then
                 log "bookworm-backports.list backup already exists — removing live copy only"
@@ -1515,7 +1521,7 @@ if should_run_step 3; then
             printf '%s\n' \
                 "# earlyoom config — managed by ry-crostini.sh" \
                 "# ry-crostini:${SCRIPT_VERSION}" \
-                "EARLYOOM_ARGS=\"-m 10 -s 100 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss\"" \
+                "EARLYOOM_ARGS=\"-m 10 -s 100 -r 3600 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss\"" \
                 | write_file_sudo "$_EARLYOOM_CONF"
             # Post-write validation — guards against future template regressions. No sudo: write_file_sudo chmods the file to 644, readable by our user.
             if ! grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
@@ -1721,7 +1727,7 @@ if should_run_step 6; then
 
 monitor.alsa.rules = [
     {
-        matches = [ { node.name = "~alsa_output.*" } ]
+        matches = [ { node.name = "~alsa_output.*" } { node.name = "~alsa_input.*" } ]
         actions = {
             update-props = {
                 api.alsa.period-size              = 512
@@ -2038,8 +2044,7 @@ if should_run_step 9; then
 Storage=volatile
 RuntimeMaxUse=50M
 RuntimeMaxFileSize=10M
-SystemMaxUse=50M
-SystemMaxFileSize=10M
+ForwardToSyslog=no
 JDEOF
         run sudo systemctl restart systemd-journald \
             || warn "journald restart failed — volatile storage takes effect on next container start"
@@ -2073,7 +2078,7 @@ _ry_crostini_path_prepend() {
 # Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _ry_crostini_path_prepend "$HOME/.local/bin"
 
-# Parallel make — cap at 4 to match BOX64_MAXCPU=4 and big-core count on
+# Parallel make — cap at 4 to match big-core count on
 # heterogeneous ARM SoCs (see run-game affinity logic). Protects 4 GB RAM
 # from C++ build OOM. Evaluated at every login via quoted heredoc, so
 # nproc reflects current container CPU allocation, not install-time value.
@@ -2162,7 +2167,10 @@ video_frame_delay = "4"
 
 # Audio: ALSA driver routes through PipeWire's ALSA compatibility layer. PipeWire native driver has broken audio_latency control in RetroArch 1.20.0 (libretro/RetroArch#17685). Switch to audio_driver = "pipewire" after 1.21.0+.
 audio_driver = "alsa"
-audio_latency = "64"
+audio_latency = "32"
+
+# Display refresh rate — required for accurate Dynamic Rate Control AV sync; without explicit value RetroArch estimates at startup (unreliable on virgl).
+video_refresh_rate = "60.000000"
 
 # Input: late polling reduces input-to-screen latency by polling as late as possible in the frame cycle.
 input_poll_type_behavior = "2"
@@ -2223,12 +2231,18 @@ SVMCFG
 output=openglnb
 # Built-in pixel-perfect GLSL shader
 glshader=sharp
+# 4:3 aspect ratio correction for 320x200 DOS mode on 16:9 panel
+aspect=true
 
 [cpu]
 # ARM64 dynamic recompiler — 3-4× speedup over interpreter. Verify: dosbox-x --version should show C_DYNREC 1. Falls back to normal core for 386 protected-mode paging.
 core=dynamic_rec
 # Real-mode: fixed 5000 cycles; protected-mode: up to 70% host CPU, capped at 50000 to enable late 486/Pentium-era DOS games on Kryo 468.
 cycles=auto 5000 70% limit 50000
+
+[mixer]
+# Match PipeWire/ALSA sample rate (48 kHz) — eliminates resampling at the audio layer boundary
+rate=48000
 DBXCFG
     else
         log "DOSBox-X config already exists — skipping"
@@ -2312,12 +2326,12 @@ BOX64_DYNAREC_NATIVEFLAGS=1
 BOX64_DYNAREC_FORWARD=512
 # Map x86 PAUSE→ARM YIELD — better spinlock behavior, lower power on battery
 BOX64_DYNAREC_PAUSE=1
-# LSE atomics — Cortex-A76 supports natively; faster, smaller generated code. Rare programs with unaligned LOCK ops may SIGBUS; disable per-game if needed: [gamename] BOX64_DYNAREC_ALIGNED_ATOMICS=0
-BOX64_DYNAREC_ALIGNED_ATOMICS=1
-# Faster SMC handling — continue running dynablock that writes in its own page. Less safe but faster loading; benefits DOS-era code patterns. Requires ≥ v0.3.6.
-BOX64_DYNAREC_DIRTY=1
-# Limit CPUID-reported core count — prevents emulated programs from spawning threads targeting all 8 cores (including LITTLE); aligns with run-game affinity.
-BOX64_MAXCPU=4
+# LSE atomics — Cortex-A76 supports natively; faster, smaller generated code. Default 0: unaligned LOCK ops from x86 programs can SIGBUS with =1. Enable per-game only after testing: [gamename] BOX64_DYNAREC_ALIGNED_ATOMICS=1
+BOX64_DYNAREC_ALIGNED_ATOMICS=0
+# Faster SMC handling — continue running dynablock that writes in its own page. Default 0: =1 can cause unexpected crashes (upstream USAGE.md). Enable per-game only: [gamename] BOX64_DYNAREC_DIRTY=1
+BOX64_DYNAREC_DIRTY=0
+# Do not cap CPUID-reported core count — run-game already pins to big cores via taskset; MAXCPU=4 would redundantly hide the 4 Cortex-A55 cores.
+BOX64_MAXCPU=0
 # BOX64_DYNAREC_SAFEFLAGS=0  # per-game only
 
 [wine]
@@ -2508,7 +2522,7 @@ GOGWRAP
 set -euo pipefail
 
 case "${1:-}" in
-    --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (auto-detected via /proc/cpuinfo), sets nice -5, ionice -c2 -n0.\n'; exit 0 ;;
+    --help)    printf 'Usage: run-game <command> [args...]\nPins to big cores (auto-detected via /proc/cpuinfo), sets nice -5, ionice -c2 -n0 -t.\n'; exit 0 ;;
     --version) printf 'run-game @@VTAG@@ from ry-crostini.sh\n'; exit 0 ;;
     --)        shift ;;
 esac
@@ -2534,9 +2548,9 @@ fi
 if [[ -n "$_big_cores" ]]; then
     _cmd=(taskset -c "$_big_cores" "${_cmd[@]}")
 fi
-# nice -n -5 requires CAP_SYS_NICE; ionice -c2 -n0 checks the same capability in-kernel, so a single nice probe is sufficient — they pass/fail together.
+# nice -n -5 requires CAP_SYS_NICE; ionice -c2 -n0 -t checks the same capability in-kernel, so a single nice probe is sufficient — they pass/fail together. -t ignores ionice failures (eMMC may use 'none' scheduler).
 if nice -n -5 true 2>/dev/null; then
-    _cmd=(nice -n -5 ionice -c2 -n0 "${_cmd[@]}")
+    _cmd=(nice -n -5 ionice -c2 -n0 -t "${_cmd[@]}")
 fi
 # Cap glibc malloc arenas — default 8×cores = 64 on SC7180P; wastes RAM
 export MALLOC_ARENA_MAX=2

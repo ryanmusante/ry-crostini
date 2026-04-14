@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.28-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.30-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -167,7 +167,7 @@ Tail the active log: `tail -f ~/ry-crostini-*.log`
 
 | Path | Step | Purpose |
 |------|------|---------|
-| `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning |
+| `/etc/apt/apt.conf.d/90parallel` | 2 | APT parallel download tuning, dpkg unsafe-io |
 | `/etc/apt/sources.list.d/bookworm-backports.list` | 2 | bookworm-backports repo registration (bookworm-only) |
 | `/etc/systemd/system/tmp.mount.d/override.conf` | 2 | Cap `/tmp` tmpfs at 512 MB (trixie-only) |
 | `/etc/systemd/system/ry-crostini-cros-pin.service` | 2 | Remove stale `cros.list` on container start |
@@ -191,9 +191,9 @@ Tail the active log: `tail -f ~/ry-crostini-*.log`
 | `~/.Xresources` | 7 | Xft DPI 96 |
 | `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
 | `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
-| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, ALSA audio, frame delay, late input polling |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, ALSA audio, 32 ms latency, refresh rate, frame delay, late input polling |
 | `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth, chorus off |
-| `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, cycle tuning |
+| `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, 4:3 aspect, 48 kHz mixer, cycle tuning |
 | `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
@@ -257,7 +257,7 @@ containers are unaffected; the flag is a no-op there.
 | WirePlumber 0.5 format | WirePlumber 0.5+ uses JSON `.conf` files; Lua scripts in `~/.config/wireplumber/` are silently ignored. Trixie ships 0.5.8 natively; bookworm gets it via `bookworm-backports` (step 2). If backports refresh fails, stock 0.4.13 ignores the gaming JSON config and step 6 logs a WARN. |
 | Steam is x86-only | Translation layers (box64/box86) exist but are not viable on 4 GB RAM + virgl. Use cloud gaming via the ChromeOS browser. |
 | Flatpak not recommended for gaming | Triple sandbox overhead (ChromeOS → Termina VM → LXC → bubblewrap), Flatpak Mesa/Zink crashes, doubled RAM during install/update; all gaming targets available as native arm64 `.deb`. |
-| `BOX64_DYNAREC_ALIGNED_ATOMICS` | Enabled globally (`=1`) — Cortex-A76 LSE atomics produce faster, smaller code. Programs with unaligned LOCK ops may SIGBUS; disable per-game via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=0`. |
+| `BOX64_DYNAREC_ALIGNED_ATOMICS` | Disabled globally (`=0`) — value `1` causes SIGBUS for any LOCK-prefixed opcode on unaligned data, which x86 programs routinely emit. Enable per-game after testing via `~/.box64rc` `[gamename]` section: `BOX64_DYNAREC_ALIGNED_ATOMICS=1`. |
 | RetroArch PipeWire audio | Trixie ships RetroArch 1.20.0 whose PipeWire driver silently ignores `audio_latency` ([#17685](https://github.com/libretro/RetroArch/issues/17685)). Fixed in 1.21.0+. Default is `audio_driver = "alsa"` (routes through PipeWire ALSA compat layer with working latency control). Switch to `"pipewire"` after installing ≥ 1.21.0 from trixie-backports. |
 
 **Informational.**
@@ -372,7 +372,7 @@ gog-extract on first install.
 
 | Emulator | Description | Configuration |
 |----------|-------------|---------------|
-| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, cycle tuning) |
+| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, 4:3 aspect, 48 kHz mixer, cycle tuning) |
 | ScummVM | 325+ supported games via native engine reimplementations | `~/.config/scummvm/scummvm.ini` (OpenGL, pixel-perfect scaling, FluidSynth) |
 | RetroArch | Multi-system frontend (native arm64 Debian package) | `~/.config/retroarch/retroarch.cfg` |
 
@@ -442,7 +442,7 @@ isolation; the default `penguin` container is unaffected.
 ### Game Launcher
 
 The `run-game` wrapper (`~/.local/bin/run-game`) pins to Cortex-A76 big cores
-with elevated scheduling priority, caps malloc arenas (`MALLOC_ARENA_MAX=2`),
+with elevated scheduling priority (`nice -n -5 ionice -c2 -n0 -t`), caps malloc arenas (`MALLOC_ARENA_MAX=2`),
 and exports `MESA_NO_ERROR=1` + `mesa_glthread=true` per-game (unsafe globally
 on virgl; omitted from `gpu.conf`):
 
