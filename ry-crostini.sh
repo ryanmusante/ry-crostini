@@ -1,29 +1,15 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.30
-# Date:    2026-04-13
-# Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P)
-# Target:  Debian Bookworm container under ChromeOS Crostini (primary target).
-#          Trixie upgrade is opt-in via --upgrade-trixie.
+# Version: 8.1.36 Date:    2026-04-14 Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P) Target:  Debian Bookworm container under ChromeOS Crostini (primary target). Trixie upgrade is opt-in via --upgrade-trixie.
 #
-# Bookworm path uses bookworm-backports for pipewire 1.4 / wireplumber 0.5 and
-# falls back to vanilla dosbox + qemu-user (no dosbox-x, no box64).
+# Bookworm path uses bookworm-backports for pipewire 1.4 / wireplumber 0.5 and falls back to vanilla dosbox + qemu-user (no dosbox-x, no box64).
 #
-# Usage: bash ry-crostini.sh [--interactive] [--upgrade-trixie] [--from-step=N]
-#                            [--verify] [--reset [--force]] [--help] [--version] [--]
+# Usage: bash ry-crostini.sh [--interactive] [--upgrade-trixie] [--from-step=N] [--verify] [--reset [--force]] [--help] [--version] [--]
 #
 # Fully unattended by default — use --interactive for ChromeOS toggle prompts.
 #
-# NOTE:    Script uses sudo internally (~60 calls). A background keepalive renews
-#          credentials every 60 s. Run `sudo true` first to cache the initial credential.
-# WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable
-#          on 4 GB RAM / virgl.
-# NOTE:    Default flow stays on bookworm and pulls pipewire/wireplumber from
-#          bookworm-backports. Pass --upgrade-trixie to perform the legacy
-#          bookworm->trixie codename rewrite (requires container restart mid-script).
-# NOTE:    Trixie mounts /tmp as tmpfs (RAM-backed); bookworm /tmp is disk-backed.
-#          Step 2d gates the tmpfs cap accordingly.
+# NOTE:    Script uses sudo internally (~60 calls). A background keepalive renews credentials every 60 s. Run `sudo true` first to cache the initial credential. WARNING: Steam is x86-only; box64/box86 community translation exists but is unusable on 4 GB RAM / virgl. NOTE:    Default flow stays on bookworm and pulls pipewire/wireplumber from bookworm-backports. Pass --upgrade-trixie to perform the legacy bookworm->trixie codename rewrite (requires container restart mid-script). NOTE:    Trixie mounts /tmp as tmpfs (RAM-backed); bookworm /tmp is disk-backed. Step 2d gates the tmpfs cap accordingly.
 
 set -euo pipefail
 # Propagate ERR trap to functions/subshells; inherit errexit in $(command substitution)
@@ -34,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.30"
+readonly SCRIPT_VERSION="8.1.36"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -60,6 +46,7 @@ _LOCK_ACQUIRED=false
 _received_signal=""
 _SUDO_KEEPALIVE_PID=""
 _PARALLEL_TMPDIR=""
+_PARALLEL_PIDS=()
 _SUDO_TMPFILE=""
 
 # Signal handler — stores signal name, triggers EXIT trap via exit (POSIX 128+N)
@@ -93,6 +80,12 @@ cleanup() {
     fi
     # Restore terminal state — keepalive/progress escape sequences can corrupt tty when killed mid-write
     if [[ -t 0 ]]; then stty sane 2>/dev/null || true; fi
+    # Signal any backgrounded _parallel_check_tools children before removing their output dir; otherwise cleanup can rm files out from under still-running children mid-write.
+    if [[ "${#_PARALLEL_PIDS[@]}" -gt 0 ]]; then
+        kill "${_PARALLEL_PIDS[@]}" 2>/dev/null || true
+        wait "${_PARALLEL_PIDS[@]}" 2>/dev/null || true
+        _PARALLEL_PIDS=()
+    fi
     # Remove parallel check_tool tmpdir if abandoned by signal during wait
     if [[ -n "${_PARALLEL_TMPDIR:-}" && -d "${_PARALLEL_TMPDIR:-}" ]]; then
         rm -rf -- "$_PARALLEL_TMPDIR" 2>/dev/null || true
@@ -220,19 +213,20 @@ _progress_cleanup() {
 # Logging
 log() {
     local msg
-    msg="$(printf '%s [INFO]  %s' "$(date +%T)" "$*")"
+    # printf '%(%T)T' -1 uses bash 4.2+ builtin — no date(1) fork
+    printf -v msg '%(%T)T [INFO]  %s' -1 "$*"
     printf '%s\n' "$msg" >> "$LOG_FILE" 2>/dev/null || true
     printf '%s\n' "$msg"
 }
 warn() {
     local msg
-    msg="$(printf '%s [WARN]  %s' "$(date +%T)" "$*")"
+    printf -v msg '%(%T)T [WARN]  %s' -1 "$*"
     printf '%s\n' "$msg" >> "$LOG_FILE" 2>/dev/null || true
     printf '%s\n' "$msg" >&2
 }
 err() {
     local msg
-    msg="$(printf '%s [ERROR] %s' "$(date +%T)" "$*")"
+    printf -v msg '%(%T)T [ERROR] %s' -1 "$*"
     printf '%s\n' "$msg" >> "$LOG_FILE" 2>/dev/null || true
     printf '%s\n' "$msg" >&2
 }
@@ -291,7 +285,7 @@ _strip_log_ansi() {
     [[ -f "$LOG_FILE" ]] || return 0
     local _tmp
     _tmp="$(mktemp "${LOG_FILE}.strip_XXXXXXXX")" || { _cleanup_warn "Cannot create tmpfile for ANSI strip"; return 1; }
-    # mktemp on Linux already creates with 0600 — no chmod needed
+    # mktemp on Linux already creates with 0600 — no chmod needed. Requires GNU sed (\x.. hex escapes are a GNU extension; not POSIX). Crostini ships GNU sed so this is fine on-target.
     if sed -e 's/\x1b\[[?]*[0-9;]*[A-Za-z]//g' -e 's/\x1b\][^\x07\x1b]*\x07//g' -e 's/\x1b\][^\x1b]*\x1b\\//g' -e 's/\x1bP[^\x1b]*\x1b\\//g' -e 's/\x1b[0-9A-Za-z]//g' "$LOG_FILE" > "$_tmp" 2>/dev/null; then
         mv -- "$_tmp" "$LOG_FILE" 2>/dev/null || { rm -f -- "$_tmp"; _cleanup_warn "Cannot replace log after ANSI strip"; return 1; }
     else
@@ -315,7 +309,8 @@ get_checkpoint() {
     fi
     if [[ -f "$STEP_FILE" ]]; then
         local val
-        val="$(cat "$STEP_FILE" 2>/dev/null)" || { warn "Cannot read checkpoint file ${STEP_FILE}. Use --reset to clear."; echo 0; return 0; }
+        # read builtin — no cat fork; redirection failure is caught by `||` even under inherit_errexit (unlike $(<file) which propagates the failure out of the command substitution). Brace group suppresses the stderr of the redirection itself on unreadable file.
+        { read -r val < "$STEP_FILE"; } 2>/dev/null || { warn "Cannot read checkpoint file ${STEP_FILE}. Use --reset to clear."; echo 0; return 0; }
         if [[ "$val" =~ ^[0-9]+$ ]]; then
             echo "$val"
         else
@@ -452,7 +447,7 @@ open_chromeos_url() {
 }
 
 # check_tool: verify a CLI tool exists and print its version. Per-tool flag overrides in _TOOL_VER_FLAG.
-declare -gA _TOOL_VER_FLAG=(
+declare -A _TOOL_VER_FLAG=(
     [lsof]="-v"
     [dig]="-v"
     [7z]="i"
@@ -476,6 +471,7 @@ check_tool() {
             flag="--version"
         fi
 
+        # INVARIANT: $flag is sourced exclusively from the _TOOL_VER_FLAG associative array defined above (hardcoded values) or the literal "--version" default — never from argv, $@, env, or file I/O. The unquoted $flag expansions below (SC2086) are therefore safe: word-splitting is the intended behavior for multi-word flags.
         if [[ -n "$flag" ]]; then
             # Some tools (java, scummvm) output version to stderr; try stdout first
             # shellcheck disable=SC2086
@@ -557,7 +553,7 @@ _parallel_check_tools() {
         done
         return
     }
-    # Expose to cleanup trap so SIGINT during wait doesn't leak tmpdir
+    # Expose tmpdir to cleanup trap IMMEDIATELY after successful mktemp so a signal between mktemp and the first printf cannot leak the dir.
     _PARALLEL_TMPDIR="$_pct_dir"
 
     local _pct_entry _pct_idx
@@ -575,8 +571,11 @@ _parallel_check_tools() {
         _pct_pids+=($!)
         ((_pct_n++)) || true
     done
+    # Expose pids to cleanup trap so SIGINT during wait kills children before rm -rf races the tmpdir
+    _PARALLEL_PIDS=("${_pct_pids[@]}")
 
     wait "${_pct_pids[@]}" 2>/dev/null || true
+    _PARALLEL_PIDS=()
 
     # Replay output in order; sum counters from sentinel lines
     local _pct_f _pct_line _pct_p _pct_fl _pct_w
@@ -659,25 +658,38 @@ CHECKPOINT:
 LOG:
     Full output is written to ~/ry-crostini-YYYYMMDD-HHMMSS.log
     Logs older than 7 days are removed automatically on each run.
+
+EXIT CODES:
+    0    Success (all steps completed; verification passed if run)
+    1    Failure (verification failures or fatal error during a step)
+    2    No verification checks executed (e.g. --from-step=13 on a fresh run)
+    129  Interrupted by SIGHUP  (128 + 1)
+    130  Interrupted by SIGINT  (128 + 2, Ctrl-C)
+    131  Interrupted by SIGQUIT (128 + 3)
+    143  Interrupted by SIGTERM (128 + 15)
 EOF
     exit 0
 }
 
-# Pre-scan argv for --help / --version before any LOG_FILE creation so they work in read-only $HOME and never leave a stray log file behind. Also catches them ahead of die() calls in the full arg-parse loop (which would create the log file at default umask via err()'s >> redirection).
+# Pre-scan argv for --help / --version / --reset before any LOG_FILE creation so they work in read-only $HOME and never leave a stray log file behind. --reset flagged here so the log file (which --reset would immediately rm anyway) is never created. `--` sentinel respected so `-- --help` correctly ignores the trailing arg in the pre-scan just as the main parser does.
+_pre_reset=false
 for _arg in "$@"; do
     case "$_arg" in
+        --)        break ;;
         --help)    usage ;;
         --version) echo "${SCRIPT_NAME} v${SCRIPT_VERSION}"; exit 0 ;;
+        --reset)   _pre_reset=true ;;
     esac
 done
 unset _arg
 
-# Create log file at mode 600 atomically (deferred past --help/--version). Using a umask subshell so the file is born 0600 rather than 0644-then-chmod, closing the brief readable window that the prior touch+chmod pattern allowed.
+# Create log file at mode 600 atomically (deferred past --help/--version/--reset). Using a umask subshell so the file is born 0600 rather than 0644-then-chmod, closing the brief readable window that the prior touch+chmod pattern allowed. --reset skips creation entirely: it would rm it one branch later anyway, and on a read-only $HOME the rm-then-recreate cycle would die here before --reset gets a chance to run.
 # shellcheck disable=SC2031  # LOG_FILE is main-shell here; taint from the legitimate subshell at line 571
-if ! ( umask 077; : > "$LOG_FILE" ) 2>/dev/null; then
+if ! $_pre_reset && ! ( umask 077; : > "$LOG_FILE" ) 2>/dev/null; then
     printf 'FATAL: cannot create log file %s\n' "$LOG_FILE" >&2
     exit 1
 fi
+unset _pre_reset
 
 # Argument parsing
 # shellcheck disable=SC2031  # LOG_FILE references in this loop are main-shell, not subshell
@@ -813,9 +825,7 @@ unset _global_codename
 
 # Note: DEBIAN_FRONTEND is re-applied per-callsite as `sudo DEBIAN_FRONTEND=...` because sudo's env_reset strips it. A global export here would be redundant.
 
-# Sudo credential keepalive — renew every 60 s; killed in cleanup(). Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't silently stall on apt-get sudo timeouts after credential expiry, while still tolerating the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-* are themselves being replaced by dpkg. Failures while an apt/dpkg transaction is running do not count — the foreground apt already has its credentials and the keepalive's job is moot until the transaction finishes.
-#
-# Transaction detection uses pgrep, which is from procps (Priority: important on Debian — installed on every non-trivial container, no chicken-and-egg). Earlier versions used `fuser /var/lib/dpkg/lock-frontend`, which short-circuits false on any container missing psmisc — and psmisc isn't installed until step 3, so the guard was inert during step 2's libpam/libc6 replacement on --upgrade-trixie. pgrep avoids that entirely. We intentionally do NOT flock the lock file directly: /var/lib/dpkg/lock-frontend is mode 640 root:root, so an unprivileged flock always fails on permission and would falsely report "held" forever, masking real credential failures.
+# Sudo credential keepalive — renew every 60 s; killed in cleanup(). Aborts loudly only after 15 consecutive failures (~15 min) so the main loop doesn't silently stall on apt-get sudo timeouts after credential expiry, while still tolerating the transient `sudo -n -v` failures that happen mid-Trixie-upgrade when sudo/libpam-* are themselves being replaced by dpkg. Failures while an apt/dpkg transaction is running do not count — the foreground apt already has its credentials and the keepalive's job is moot until the transaction finishes. Transaction detection uses pgrep, which is from procps (Priority: important on Debian — installed on every non-trivial container, no chicken-and-egg). Earlier versions used `fuser /var/lib/dpkg/lock-frontend`, which short-circuits false on any container missing psmisc — and psmisc isn't installed until step 3, so the guard was inert during step 2's libpam/libc6 replacement on --upgrade-trixie. pgrep avoids that entirely. We intentionally do NOT flock the lock file directly: /var/lib/dpkg/lock-frontend is mode 640 root:root, so an unprivileged flock always fails on permission and would falsely report "held" forever, masking real credential failures.
 (
     _ka_fails=0
     while true; do
@@ -839,7 +849,8 @@ unset _global_codename
     done
 ) &
 _SUDO_KEEPALIVE_PID=$!
-disown "$_SUDO_KEEPALIVE_PID"
+# disown with no args removes the most recently backgrounded job (the subshell above) from the shell's job table. Canonical form per bash(1) JOB CONTROL.
+disown
 
 # Initialize progress bar (requires terminal, checkpoint, and color globals)
 _progress_init
@@ -851,24 +862,14 @@ find "$HOME" -maxdepth 1 -name 'ry-crostini-*.log.strip_*' -mtime +1 -delete 2>/
 # _gpu_conf_content: emit gpu.conf heredoc. Called by step 5 (fresh-write and upgrade-path).
 _gpu_conf_content() {
     cat <<'EOF'
-# Crostini GPU acceleration environment — managed by ry-crostini.sh
-# ry-crostini:@@VERSION@@
-# Wayland EGL
+# Crostini GPU acceleration environment — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Wayland EGL
 EGL_PLATFORM=wayland
 # GTK4 dark mode
 GTK_THEME=Adwaita:dark
 # GTK4 defaults to Vulkan renderer; virgl exposes only OpenGL — crashes or software fallback without this. ngl = new GL backend (GTK >= 4.14).
 GSK_RENDERER=ngl
 
-# Force virtio_gpu DRI driver — prevents Mesa's auto-detect from picking Zink
-# on trixie (Mesa 24.x+) where zink_dri.so exists and can crash on virtio-gpu
-# contexts (zen-browser/desktop#12276). NOTE: the Mesa loader matches this name
-# against the DRI .so filename (`<name>_dri.so`), NOT the internal Gallium
-# driver name. The Gallium driver is called "virgl", but the loadable module
-# is `virtio_gpu_dri.so`, so the override must be `virtio_gpu`. Setting this
-# to `virgl` (a prior mistake) causes dlopen of non-existent virgl_dri.so and
-# silent fallback to swrast (llvmpipe) — confirmed on SC7180/FD618 Chromebook,
-# bookworm Mesa 22.3.6, kernel virtio-gpu with full +virgl capability.
+# Force virtio_gpu DRI driver — prevents Mesa's auto-detect from picking Zink on trixie (Mesa 24.x+) where zink_dri.so exists and can crash on virtio-gpu contexts (zen-browser/desktop#12276). NOTE: the Mesa loader matches this name against the DRI .so filename (`<name>_dri.so`), NOT the internal Gallium driver name. The Gallium driver is called "virgl", but the loadable module is `virtio_gpu_dri.so`, so the override must be `virtio_gpu`. Setting this to `virgl` (a prior mistake) causes dlopen of non-existent virgl_dri.so and silent fallback to swrast (llvmpipe) — confirmed on SC7180/FD618 Chromebook, bookworm Mesa 22.3.6, kernel virtio-gpu with full +virgl capability.
 MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu
 
 # MESA_NO_ERROR intentionally omitted — disables all GL error checking, which is dangerous system-wide on virgl (invalid GL calls cross VM boundary and can hang host virglrenderer). Enabled per-game via run-game wrapper instead.
@@ -887,9 +888,7 @@ EOF
 # _pw_gaming_content: emit PipeWire gaming config heredoc (fresh-write and upgrade-path)
 _pw_gaming_content() {
     cat <<'PWEOF'
-# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:@@VERSION@@
-# Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms). Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with variable audio rates (N64, PSX). RetroArch PipeWire driver may override system quantum (libretro/RetroArch#17685); 512 prevents xruns.
+# PipeWire core overrides for Crostini gaming — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Counteracts PipeWire's KVM auto-detection which forces min-quantum=1024 (21.3 ms). Quantum 512 at 48 kHz = 10.67 ms latency — headroom for emulation cores with variable audio rates (N64, PSX). RetroArch PipeWire driver may override system quantum (libretro/RetroArch#17685); 512 prevents xruns.
 
 context.properties = {
     default.clock.rate          = 48000
@@ -922,9 +921,7 @@ PWEOF
 # _pw_pulse_gaming_content: emit PipeWire-Pulse gaming config heredoc (fresh-write and upgrade-path)
 _pw_pulse_gaming_content() {
     cat <<'PPEOF'
-# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh
-# ry-crostini:@@VERSION@@
-# pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
+# PipeWire PulseAudio layer overrides for Crostini — managed by ry-crostini.sh ry-crostini:@@VERSION@@ pulse.properties.rules replaces deprecated vm.overrides={} (PipeWire 1.4.x)
 
 pulse.properties = {
     pulse.min.req     = 512/48000
@@ -941,6 +938,7 @@ PPEOF
 # _gtk_settings_content: emit GTK 3/4 settings.ini heredoc. Called by step 7 (GTK 3 and GTK 4).
 _gtk_settings_content() {
     cat <<'GTKEOF'
+# GTK 3/4 settings — managed by ry-crostini.sh — ry-crostini:@@VERSION@@
 [Settings]
 gtk-application-prefer-dark-theme=1
 gtk-theme-name=Adwaita-dark
@@ -1026,14 +1024,16 @@ if should_run_step 1; then
     # 1f. GPU acceleration warning (disabled by default since ChromeOS 131)
     if [[ ! -e /dev/dri/renderD128 ]]; then
         warn "IMPORTANT: GPU acceleration is disabled by default since ChromeOS 131."
-        warn "Enable: chrome://flags#crostini-gpu-support → Enabled → full Chromebook reboot."
+        warn "Enable: chrome://flags/#crostini-gpu-support → Enabled → full Chromebook reboot."
         warn "GPU packages will be installed regardless; /dev/dri/renderD128 requires the flag."
     else
         log "GPU render node: /dev/dri/renderD128 already active ✓"
     fi
 
     # 1g. Network connectivity (uses detected codename for repo URL) Worst-case budget: 3 attempts × max-time 5s + 2 × retry-delay 1s ≈ 17s
-    if curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
+    if ! command -v curl &>/dev/null; then
+        warn "curl not present — skipping network reachability probe (installed in step 3)"
+    elif curl --proto '=https' --tlsv1.2 -fsS --connect-timeout 3 --max-time 5 --retry 2 --retry-delay 1 "https://deb.debian.org/debian/dists/${_os_codename}/Release.gpg" -o /dev/null 2>/dev/null; then
         log "Network connectivity: ✓"
     else
         warn "Cannot reach deb.debian.org. Some steps may fail without network."
@@ -1043,12 +1043,11 @@ if should_run_step 1; then
     if [[ "$EUID" -eq 0 ]]; then
         die "Do not run this script as root. Run as your normal user (sudo is used internally where needed)."
     fi
-    log "Running as user: $(whoami) ✓"
+    log "Running as user: ${USER:-$(id -un)} ✓"
 
-    # 1i. Sommelier (Wayland bridge) — needed for all GUI apps Check via systemctl --user, not pgrep: on aarch64 Crostini sommelier is exec'd through ld-linux-aarch64.so.1 so the kernel comm is "ld-linux-aarch6" (15-char truncation) and `pgrep -x sommelier` never matches. systemctl is-active is authoritative and architecture-agnostic.
-    if systemctl --user is-active --quiet 'sommelier@*.service' 2>/dev/null \
-       || systemctl --user list-units --type=service --state=active --no-legend \
-          'sommelier@*.service' 2>/dev/null | grep -q .; then
+    # 1i. Sommelier (Wayland bridge) — needed for all GUI apps. Use `list-units` with glob pattern: `systemctl is-active` treats its argument as a literal unit name (no glob expansion), so a pre-check on `sommelier@*.service` is dead code. pgrep is also unreliable on aarch64 Crostini where sommelier is exec'd through ld-linux-aarch64.so.1 and the kernel comm is "ld-linux-aarch6" (15-char truncation). Match BOTH sommelier@ and sommelier-x@ so a system running only the X11 bridge is reported as active (symmetric with the step 11 verification check).
+    if systemctl --user list-units --type=service --state=active --no-legend \
+       'sommelier@*.service' 'sommelier-x@*.service' 2>/dev/null | grep -q .; then
         log "Sommelier (Wayland bridge): running ✓"
     else
         log "Sommelier not yet active — will start on terminal restart ✓"
@@ -1071,7 +1070,7 @@ if should_run_step 1; then
             open_chromeos_url "chrome://flags/#crostini-gpu-support"
             sleep 2
             _prompt '%bPress Enter after enabling the flag (or to continue)...%b' "$YELLOW" "$RESET"
-            read -r -t 300 _ </dev/tty || true
+            read -r -t 300 _unused </dev/tty || true
         fi
         if [[ -e /dev/dri/renderD128 ]]; then
             log "GPU acceleration now active ✓"
@@ -1090,7 +1089,7 @@ if should_run_step 1; then
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
             _prompt '%bPress Enter after enabling microphone (or to continue)...%b' "$YELLOW" "$RESET"
-            read -r -t 300 _ </dev/tty || true
+            read -r -t 300 _unused </dev/tty || true
         fi
         if _has_capture_dev; then
             log "Microphone now available ✓"
@@ -1106,7 +1105,7 @@ if should_run_step 1; then
         open_chromeos_url "chrome://os-settings/crostini/usbPreferences"
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r -t 300 _ </dev/tty || true
+        read -r -t 300 _unused </dev/tty || true
     fi
 
     # 1m. Shared folders
@@ -1121,7 +1120,7 @@ if should_run_step 1; then
                 open_chromeos_url "chrome://os-settings/crostini/sharedPaths"
                 sleep 2
                 _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-                read -r -t 300 _ </dev/tty || true
+                read -r -t 300 _unused </dev/tty || true
             fi
         fi
         unset SHARED_COUNT
@@ -1135,7 +1134,7 @@ if should_run_step 1; then
         open_chromeos_url "chrome://os-settings/crostini/portForwarding"
         sleep 2
         _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-        read -r -t 300 _ </dev/tty || true
+        read -r -t 300 _unused </dev/tty || true
     fi
 
     # 1o. Disk size advisory (reuses cached AVAIL_MB from 1e)
@@ -1147,22 +1146,24 @@ if should_run_step 1; then
             open_chromeos_url "chrome://os-settings/crostini"
             sleep 2
             _prompt '%bPress Enter to continue...%b' "$YELLOW" "$RESET"
-            read -r -t 300 _ </dev/tty || true
+            read -r -t 300 _unused </dev/tty || true
         fi
     else
         log "Disk space: ${AVAIL_MB_NOW} MB free — adequate"
     fi
 
-    # 1p. Gamepad/joystick group membership (controllers in /dev/input/js* are mode 660 root:input)
-    if ! id -nG "$(whoami)" | tr ' ' '\n' | grep -qx input; then
-        if run sudo usermod -aG input "$(whoami)"; then
-            log "Added $(whoami) to 'input' group ✓ — log out and back in for gamepad access"
+    # 1p. Gamepad/joystick group membership (controllers in /dev/input/js* are mode 660 root:input) $USER fallback to id -un handles edge case where env var is unset (sudo -i, cron, etc.). Substring match on $(id -nG) — avoids id|tr|grep pipefail/SIGPIPE where grep -q closes stdin on first match and propagates 141 upstream.
+    _ry_user="${USER:-$(id -un)}"
+    if [[ " $(id -nG "$_ry_user") " != *" input "* ]]; then
+        if run sudo usermod -aG input "$_ry_user"; then
+            log "Added $_ry_user to 'input' group ✓ — log out and back in for gamepad access"
         else
-            warn "Could not add $(whoami) to 'input' group — gamepads may not work in RetroArch/DOSBox-X"
+            warn "Could not add $_ry_user to 'input' group — gamepads may not work in RetroArch/DOSBox-X"
         fi
     else
-        log "User $(whoami) already in 'input' group ✓"
+        log "User $_ry_user already in 'input' group ✓"
     fi
+    unset _ry_user
 
     unset AVAIL_MB AVAIL_MB_NOW
     set_checkpoint 1
@@ -1216,7 +1217,8 @@ EOF
             IS_BOOKWORM=true
             log "Enabling bookworm-backports for pipewire 1.4 / wireplumber 0.5"
             _BPO_LIST="/etc/apt/sources.list.d/bookworm-backports.list"
-            if [[ ! -f "$_BPO_LIST" ]] && ! grep -rq "bookworm-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+            # Anchor to active lines only — prior substring match on any file content could false-positive on a `#` comment containing the literal "bookworm-backports", silently skipping the backports enable and voiding the WirePlumber JSON config (requires WP ≥0.5 from backports). Includes deb822 Suites: branch so pre-migrated layouts are detected.
+            if [[ ! -f "$_BPO_LIST" ]] && ! grep -rEq '^[[:space:]]*(deb|URIs:|Suites:)[^#]*bookworm-backports' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
                 printf 'deb https://deb.debian.org/debian bookworm-backports main\n' \
                     | write_file_sudo "$_BPO_LIST"
             else
@@ -1224,7 +1226,7 @@ EOF
             fi
             unset _BPO_LIST
         fi
-    elif [[ "$_cur_codename" != "trixie" ]] && [[ -n "$_cur_codename" ]]; then
+    elif [[ "$_cur_codename" == "bookworm" ]]; then
         log "Current release: ${_cur_codename} — upgrading to Trixie (Debian 13)"
         _did_trixie_rewrite=true
         # A leftover bookworm-backports.list from a prior !UPGRADE_TRIXIE run survives the *.list/*.sources loop below (which intentionally skips *backports* — see comment near line 1265). Rename it to /etc/apt/bookworm-backports.list.pre-trixie so the trixie host doesn't quietly continue pulling bookworm-pinned packages from a stale bookworm-backports registration. Mirrors the existing cros.list .pre-trixie pattern. First-backup-wins.
@@ -1284,7 +1286,7 @@ EOF
                 *backports*) log "Skipping backports source: ${_sfile}"; continue ;;
             esac
             if grep -q "${_cur_codename}" "$_sfile" 2>/dev/null; then
-                _sfile_bak="/etc/apt/$(basename "$_sfile").pre-trixie"
+                _sfile_bak="/etc/apt/$(basename -- "$_sfile").pre-trixie"
                 if [[ -e "$_sfile_bak" ]]; then
                     log "Backup ${_sfile_bak} already exists — preserving"
                 else
@@ -1371,8 +1373,9 @@ EOF
         log "Skipping /tmp tmpfs cap on bookworm (disk-backed /tmp)"
     else
         _TMP_DROPIN="/etc/systemd/system/tmp.mount.d/override.conf"
-        if [[ ! -f "$_TMP_DROPIN" ]]; then
-            write_file_sudo "$_TMP_DROPIN" <<'TMPEOF'
+        if [[ ! -f "$_TMP_DROPIN" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_TMP_DROPIN" 2>/dev/null; then
+            sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'TMPEOF' | write_file_sudo "$_TMP_DROPIN"
+# ry-crostini:@@VERSION@@
 [Mount]
 Options=mode=1777,strictatime,nosuid,nodev,size=512M,nr_inodes=1m
 TMPEOF
@@ -1380,7 +1383,7 @@ TMPEOF
                 || warn "daemon-reload failed — /tmp cap takes effect on next container start"
             log "/tmp tmpfs capped at 512M (OOM mitigation)"
         else
-            log "tmp.mount drop-in already exists"
+            log "tmp.mount drop-in up-to-date"
         fi
         unset _TMP_DROPIN
     fi
@@ -1408,11 +1411,11 @@ TMPEOF
 
     # 2f. Service to remove stale cros.list (ChromeOS regenerates it with old codename on restart)
     _CROS_PIN_SVC="/etc/systemd/system/ry-crostini-cros-pin.service"
-    if [[ ! -f "$_CROS_PIN_SVC" ]]; then
-        write_file_sudo "$_CROS_PIN_SVC" <<'CROSEOF'
+    if [[ ! -f "$_CROS_PIN_SVC" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_CROS_PIN_SVC" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'CROSEOF' | write_file_sudo "$_CROS_PIN_SVC"
+# ry-crostini:@@VERSION@@
 [Unit]
 Description=Remove stale cros.list when cros.sources is present
-DefaultDependencies=no
 Before=apt-daily.service apt-daily-upgrade.service
 
 [Service]
@@ -1433,7 +1436,7 @@ CROSEOF
             || warn "ry-crostini-cros-pin.service enable failed"
         log "ry-crostini-cros-pin.service enabled (removes stale cros.list on container restart)"
     else
-        log "ry-crostini-cros-pin.service already exists"
+        log "ry-crostini-cros-pin.service up-to-date"
     fi
     unset _CROS_PIN_SVC
 
@@ -1459,8 +1462,8 @@ if should_run_step 3; then
         # Text processing
         nano vim less jq
 
-        # Network utilities
-        curl wget dnsutils bind9-host openssh-client iputils-ping
+        # Network utilities (bind9-host is bookworm's DNS lookup tool; trixie replaces it with bind9-dnsutils which provides `host`)
+        curl wget dnsutils openssh-client iputils-ping
         ca-certificates gnupg
 
         # System monitoring
@@ -1479,6 +1482,13 @@ if should_run_step 3; then
     )
 
     install_pkgs_best_effort "${CORE_PKGS[@]}" || warn "Some core CLI packages unavailable — non-fatal"
+
+    # `host` command: bookworm ships bind9-host; trixie splits it into bind9-dnsutils.
+    if $IS_BOOKWORM; then
+        install_pkgs_best_effort bind9-host || warn "bind9-host install failed — host(1) unavailable"
+    else
+        install_pkgs_best_effort bind9-dnsutils || warn "bind9-dnsutils install failed — host(1) unavailable"
+    fi
 
     # 7z command source differs by codename: bookworm 7zip ships only 7zz, so use p7zip-full (provides /usr/bin/7z). Trixie 7zip 24.x ships /usr/bin/{7z,7za,7zr} natively.
     if $IS_BOOKWORM; then
@@ -1521,7 +1531,7 @@ if should_run_step 3; then
             printf '%s\n' \
                 "# earlyoom config — managed by ry-crostini.sh" \
                 "# ry-crostini:${SCRIPT_VERSION}" \
-                "EARLYOOM_ARGS=\"-m 10 -s 100 -r 3600 -p --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss\"" \
+                "EARLYOOM_ARGS=\"-m 10 -s 100 -r 3600 --prefer (${_EOOM_PREFER}) --avoid (^|/)(init|systemd|dbus-daemon|garcon|sommelier)\$ --sort-by-rss\"" \
                 | write_file_sudo "$_EARLYOOM_CONF"
             # Post-write validation — guards against future template regressions. No sudo: write_file_sudo chmods the file to 644, readable by our user.
             if ! grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' "$_EARLYOOM_CONF"; then
@@ -1665,8 +1675,8 @@ if should_run_step 6; then
         fi
     fi
 
-    # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active
-    if dpkg -l pulseaudio 2>/dev/null | grep -q '^ii'; then
+    # Mask legacy PulseAudio daemon if present; ensure PipeWire audio chain is active. dpkg-query status read — avoids dpkg-l|grep-q pipefail/SIGPIPE.
+    if [[ "$(dpkg-query -W -f='${Status}' pulseaudio 2>/dev/null)" == "install ok installed" ]]; then
         if run systemctl --user mask --now pulseaudio.service pulseaudio.socket; then
             log "PulseAudio daemon masked (PipeWire provides pulse compatibility)"
         else
@@ -1721,9 +1731,7 @@ if should_run_step 6; then
     _WP_ALSA="${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"
     if [[ ! -f "$_WP_ALSA" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_WP_ALSA" 2>/dev/null; then
         sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'WPEOF' | write_file "$_WP_ALSA"
-# WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh
-# ry-crostini:@@VERSION@@
-# Optimizes ALSA node buffer parameters; disables auto-suspend. WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8). Virtio-snd is a batch device — do NOT set api.alsa.disable-batch=true, which removes PipeWire's native batch compensation and forces excessive headroom. Let PipeWire handle batch timing natively.
+# WirePlumber ALSA tuning for Crostini gaming — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Optimizes ALSA node buffer parameters; disables auto-suspend. WirePlumber 0.5+ JSON .conf format (Trixie ships 0.5.8). Virtio-snd is a batch device — do NOT set api.alsa.disable-batch=true, which removes PipeWire's native batch compensation and forces excessive headroom. Let PipeWire handle batch timing natively.
 
 monitor.alsa.rules = [
     {
@@ -1758,7 +1766,7 @@ WPEOF
         if $_pw_any_active; then
             if systemctl --user restart "${_pw_units[@]}" 2>/dev/null; then
                 _pw_ready=false
-                for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+                for _i in {1..25}; do
                     if systemctl --user is-active --quiet pipewire.service \
                        && systemctl --user is-active --quiet pipewire-pulse.service \
                        && systemctl --user is-active --quiet wireplumber.service; then
@@ -1796,41 +1804,41 @@ if should_run_step 7; then
 
     # 7a. Sommelier environment (controls Linux app scaling)
     SOMMELIER_ENV="${HOME}/.config/environment.d/sommelier.conf"
-    if [[ ! -f "$SOMMELIER_ENV" ]]; then
-        write_file "$SOMMELIER_ENV" <<'EOF'
-# Sommelier display scaling for Crostini SOMMELIER_SCALE adjusts Linux app window scaling: 1.0 = native (let ChromeOS handle scaling — recommended for FHD) 0.5 = 2x magnification (for 4K displays)
+    if [[ ! -f "$SOMMELIER_ENV" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$SOMMELIER_ENV" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'SOMMEOF' | write_file "$SOMMELIER_ENV"
+# Sommelier display scaling for Crostini — managed by ry-crostini.sh ry-crostini:@@VERSION@@ SOMMELIER_SCALE adjusts Linux app window scaling: 1.0 = native (let ChromeOS handle scaling — recommended for FHD) 0.5 = 2x magnification (for 4K displays)
 SOMMELIER_SCALE=1.0
 
 # Pass Super key through to Linux apps instead of ChromeOS intercepting it. Required for VS Code, Firefox, and any app using Super as a modifier.
 SOMMELIER_ACCELERATORS=Super_L
 
 # Do NOT hardcode DISPLAY or WAYLAND_DISPLAY here — Crostini/sommelier sets these dynamically and overriding them can break GUI apps if the display number changes.
-EOF
+SOMMEOF
     else
-        log "Sommelier env already exists — skipping"
+        log "Sommelier env up-to-date — skipping"
     fi
 
     # 7b. GTK 3 settings
     GTK3_SETTINGS="${HOME}/.config/gtk-3.0/settings.ini"
-    if [[ ! -f "$GTK3_SETTINGS" ]]; then
-        _gtk_settings_content | write_file "$GTK3_SETTINGS"
+    if [[ ! -f "$GTK3_SETTINGS" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$GTK3_SETTINGS" 2>/dev/null; then
+        _gtk_settings_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$GTK3_SETTINGS"
     else
-        log "GTK 3 settings.ini already exists — skipping"
+        log "GTK 3 settings.ini up-to-date — skipping"
     fi
 
     # 7c. GTK 4 settings
     GTK4_SETTINGS="${HOME}/.config/gtk-4.0/settings.ini"
-    if [[ ! -f "$GTK4_SETTINGS" ]]; then
-        _gtk_settings_content | write_file "$GTK4_SETTINGS"
+    if [[ ! -f "$GTK4_SETTINGS" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$GTK4_SETTINGS" 2>/dev/null; then
+        _gtk_settings_content | sed "s/@@VERSION@@/${SCRIPT_VERSION}/" | write_file "$GTK4_SETTINGS"
     else
-        log "GTK 4 settings.ini already exists — skipping"
+        log "GTK 4 settings.ini up-to-date — skipping"
     fi
 
     # 7d. GTK 2 settings (legacy apps)
     GTK2_RC="${HOME}/.gtkrc-2.0"
-    if [[ ! -f "$GTK2_RC" ]]; then
-        write_file "$GTK2_RC" <<'EOF'
-# GTK 2 theme settings for legacy apps
+    if [[ ! -f "$GTK2_RC" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$GTK2_RC" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'GTK2EOF' | write_file "$GTK2_RC"
+# GTK 2 theme settings for legacy apps — managed by ry-crostini.sh — ry-crostini:@@VERSION@@
 gtk-theme-name="Adwaita-dark"
 gtk-icon-theme-name="Adwaita"
 gtk-font-name="Noto Sans 11"
@@ -1840,22 +1848,22 @@ gtk-xft-antialias=1
 gtk-xft-hinting=1
 gtk-xft-hintstyle="hintslight"
 gtk-xft-rgba="none"
-EOF
+GTK2EOF
     else
-        log ".gtkrc-2.0 already exists — skipping"
+        log ".gtkrc-2.0 up-to-date — skipping"
     fi
 
     # 7e. Qt scaling and theming
     QT_ENV="${HOME}/.config/environment.d/qt.conf"
-    if [[ ! -f "$QT_ENV" ]]; then
-        write_file "$QT_ENV" <<'EOF'
-# Qt theming — QT_AUTO_SCREEN_SCALE_FACTOR removed (deprecated Qt 5.14, ignored in Qt 6)
+    if [[ ! -f "$QT_ENV" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$QT_ENV" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'QTEOF' | write_file "$QT_ENV"
+# Qt theming — managed by ry-crostini.sh — ry-crostini:@@VERSION@@ QT_AUTO_SCREEN_SCALE_FACTOR removed (deprecated Qt 5.14, ignored in Qt 6)
 QT_QPA_PLATFORM=wayland;xcb
 QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 QT_QPA_PLATFORMTHEME=gtk3
-EOF
+QTEOF
     else
-        log "Qt env already exists — skipping"
+        log "Qt env up-to-date — skipping"
     fi
 
     # Qt GTK platform theme plugins (no qt5ct — conflicts with =gtk3); single batch install
@@ -1864,9 +1872,10 @@ EOF
 
     # 7f. Xft / Xresources (for pure X11 apps)
     XRESOURCES="${HOME}/.Xresources"
-    if [[ ! -f "$XRESOURCES" ]]; then
-        write_file "$XRESOURCES" <<'EOF'
-! Font rendering for X11 apps on Duet 5 (13.3in 1920x1080 OLED)
+    if [[ ! -f "$XRESOURCES" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$XRESOURCES" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'XRESEOF' | write_file "$XRESOURCES"
+! Font rendering for X11 apps on Duet 5 (13.3in 1920x1080 OLED) — managed by ry-crostini.sh
+! ry-crostini:@@VERSION@@
 ! OLED has no LCD subpixel stripe — use grayscale AA (rgba=none)
 ! NOTE: sommelier passes DPI to X clients via Xwayland DPI buckets (72, 96, 160, 240).
 ! 96 matches the nearest bucket for FHD@13.3in and avoids inconsistent sizing
@@ -1879,9 +1888,9 @@ Xft.rgba: none
 ! Cursor
 Xcursor.size: 24
 Xcursor.theme: Adwaita
-EOF
+XRESEOF
     else
-        log ".Xresources already exists — skipping"
+        log ".Xresources up-to-date — skipping"
     fi
     # Apply Xresources — only if an X display is reachable (sommelier may not be up yet on first install)
     if [[ -n "${DISPLAY:-}" ]] && command -v xrdb &>/dev/null; then
@@ -1941,13 +1950,14 @@ FCEOF
 
     # 7h. Cursor theme (ensure consistency across toolkits)
     CURSOR_DIR="${HOME}/.icons/default"
-    if [[ ! -f "${CURSOR_DIR}/index.theme" ]]; then
-        write_file "${CURSOR_DIR}/index.theme" <<'EOF'
+    if [[ ! -f "${CURSOR_DIR}/index.theme" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "${CURSOR_DIR}/index.theme" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'CURSEOF' | write_file "${CURSOR_DIR}/index.theme"
+# ry-crostini:@@VERSION@@
 [Icon Theme]
 Inherits=Adwaita
-EOF
+CURSEOF
     else
-        log "Cursor theme already exists — skipping"
+        log "Cursor theme up-to-date — skipping"
     fi
 
     unset SOMMELIER_ENV GTK3_SETTINGS GTK4_SETTINGS GTK2_RC QT_ENV XRESOURCES FC_LOCAL CURSOR_DIR
@@ -2045,6 +2055,12 @@ Storage=volatile
 RuntimeMaxUse=50M
 RuntimeMaxFileSize=10M
 ForwardToSyslog=no
+# Drop info/debug messages — saves RAM on 4 GB system; warning+ still kept
+MaxLevelStore=warning
+# No compression — small volatile journal, save CPU on Cortex-A55 efficiency cores
+Compress=no
+# Audit subsystem unreachable in unprivileged Crostini LXC; skip the kernel call
+Audit=no
 JDEOF
         run sudo systemctl restart systemd-journald \
             || warn "journald restart failed — volatile storage takes effect on next container start"
@@ -2078,13 +2094,10 @@ _ry_crostini_path_prepend() {
 # Local bin (user scripts)
 [ -d "$HOME/.local/bin" ] && _ry_crostini_path_prepend "$HOME/.local/bin"
 
-# Parallel make — cap at 4 to match big-core count on
-# heterogeneous ARM SoCs (see run-game affinity logic). Protects 4 GB RAM
-# from C++ build OOM. Evaluated at every login via quoted heredoc, so
-# nproc reflects current container CPU allocation, not install-time value.
+# Parallel make — cap at 4 to match big-core count on heterogeneous ARM SoCs (see run-game affinity logic). Protects 4 GB RAM from C++ build OOM. -l load-average cap prevents thrashing when the scheduler queue exceeds core count. Evaluated at every login via quoted heredoc, so nproc reflects current container CPU allocation, not install-time value.
 _ry_nproc="$(nproc 2>/dev/null || echo 2)"
-[ "${_ry_nproc:-2}" -gt 4 ] 2>/dev/null && _ry_nproc=4
-export MAKEFLAGS="-j${_ry_nproc:-2}"
+[ "${_ry_nproc:-2}" -gt 4 ] && _ry_nproc=4
+export MAKEFLAGS="-j${_ry_nproc:-2} -l${_ry_nproc:-2}.0"
 unset _ry_nproc
 
 unset -f _ry_crostini_path_prepend
@@ -2139,7 +2152,7 @@ if should_run_step 10; then
             dosbox-x retroarch retroarch-assets || warn "Some gaming packages failed"
     fi
     # Probe candidate before install — Trixie moves unrar to non-free-non-free. Attempting install with no candidate exits 100 and generates a noisy WARN.
-    _unrar_cand="$(apt-cache policy unrar 2>/dev/null | awk '/Candidate:/ {print $2}')"
+    _unrar_cand="$(LC_ALL=C apt-cache policy unrar 2>/dev/null | awk '/Candidate:/ {print $2}')"
     if [[ -n "$_unrar_cand" && "$_unrar_cand" != "(none)" ]]; then
         if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y unrar; then
             log "unrar installed ✓"
@@ -2151,11 +2164,11 @@ if should_run_step 10; then
     fi
     unset _unrar_cand
 
-    # RetroArch default config
+    # RetroArch default config (self-heals on version bump)
     _RA_CFG="${HOME}/.config/retroarch/retroarch.cfg"
-    if [[ ! -f "$_RA_CFG" ]]; then
-        write_file "$_RA_CFG" <<'RACFG'
-# RetroArch Crostini config — managed by ry-crostini.sh Written once on first install; edit freely afterward.
+    if [[ ! -f "$_RA_CFG" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_RA_CFG" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'RACFG' | write_file "$_RA_CFG"
+# RetroArch Crostini config — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Re-written on version bump; manual edits below this line will be overwritten on script upgrade.
 
 # Video: glcore works on virgl's GL 4.3 core profile and enables slang shaders. Threaded video disabled — interferes with video_frame_delay_auto timing and frame pacing (Libretro docs). Enable per-core override for N64/PSP if needed.
 video_driver = "glcore"
@@ -2186,17 +2199,27 @@ preempt_enable = "false"
 # Misc
 savestate_compression = "true"
 menu_driver = "rgui"
+
+# Prevent accidental overwrite of these tuned defaults when exiting via menu (upstream default is true)
+config_save_on_exit = "false"
+
+# Cap fast-forward at 3× — uncapped (default 0.0) thermally throttles SC7180P and wastes battery
+fastforward_ratio = "3.0"
+
+# Pixel-perfect output for retro content on OLED (upstream defaults: smooth=true, integer=false)
+video_smooth = "false"
+video_scale_integer = "true"
 RACFG
     else
-        log "RetroArch config already exists — skipping"
+        log "RetroArch config up-to-date — skipping"
     fi
     unset _RA_CFG
 
-    # ScummVM default config
+    # ScummVM default config (self-heals on version bump)
     _SVM_CFG="${HOME}/.config/scummvm/scummvm.ini"
-    if [[ ! -f "$_SVM_CFG" ]]; then
-        write_file "$_SVM_CFG" <<'SVMCFG'
-# ScummVM Crostini config — managed by ry-crostini.sh Written once on first install; edit freely afterward.
+    if [[ ! -f "$_SVM_CFG" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_SVM_CFG" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'SVMCFG' | write_file "$_SVM_CFG"
+# ScummVM Crostini config — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Re-written on version bump; manual edits below this line will be overwritten on script upgrade.
 [scummvm]
 gfx_mode=opengl
 stretch_mode=pixel-perfect
@@ -2214,17 +2237,17 @@ fluidsynth_chorus_activate=false
 fluidsynth_misc_interpolation=linear
 SVMCFG
     else
-        log "ScummVM config already exists — skipping"
+        log "ScummVM config up-to-date — skipping"
     fi
     unset _SVM_CFG
 
-    # DOSBox-X default config
+    # DOSBox-X default config (self-heals on version bump)
     _DBX_CFG="${HOME}/.config/dosbox-x/dosbox-x.conf"
     if $IS_BOOKWORM; then
         log "bookworm: skipping DOSBox-X config write (dosbox-x not installed; vanilla dosbox uses incompatible format)"
-    elif [[ ! -f "$_DBX_CFG" ]]; then
-        write_file "$_DBX_CFG" <<'DBXCFG'
-# DOSBox-X Crostini config — managed by ry-crostini.sh Written once on first install; edit freely afterward.
+    elif [[ ! -f "$_DBX_CFG" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_DBX_CFG" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'DBXCFG' | write_file "$_DBX_CFG"
+# DOSBox-X Crostini config — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Re-written on version bump; manual edits below this line will be overwritten on script upgrade.
 
 [sdl]
 # GPU-accelerated rendering via virgl; nearest-neighbor (no bilinear blur)
@@ -2245,7 +2268,7 @@ cycles=auto 5000 70% limit 50000
 rate=48000
 DBXCFG
     else
-        log "DOSBox-X config already exists — skipping"
+        log "DOSBox-X config up-to-date — skipping"
     fi
     unset _DBX_CFG
 
@@ -2287,7 +2310,7 @@ DBXCFG
         log "bookworm: skipping box64 (not in Debian repos); run-x86 will use qemu-user"
     else
         # Probe candidate before install — symmetric with unrar handling above
-        _box64_cand="$(apt-cache policy box64 2>/dev/null | awk '/Candidate:/ {print $2}')"
+        _box64_cand="$(LC_ALL=C apt-cache policy box64 2>/dev/null | awk '/Candidate:/ {print $2}')"
         if [[ -n "$_box64_cand" && "$_box64_cand" != "(none)" ]]; then
             if run sudo DEBIAN_FRONTEND=noninteractive apt-get install -y box64; then
                 log "box64 installed ✓"
@@ -2303,13 +2326,13 @@ DBXCFG
     # qemu-user: TCG x86/i386 emulation (do NOT install qemu-user-binfmt — EPERM in unprivileged)
     install_pkgs_best_effort qemu-user || warn "qemu-user install failed"
 
-    # Write ~/.box64rc with SC7180P-tuned defaults (skip on bookworm — box64 not installed)
+    # Write ~/.box64rc with SC7180P-tuned defaults (skip on bookworm — box64 not installed). Self-heals on version bump.
     _BOX64_RC="${HOME}/.box64rc"
     if $IS_BOOKWORM; then
         log "bookworm: skipping .box64rc write (box64 not installed)"
-    elif [[ ! -f "$_BOX64_RC" ]]; then
-        write_file "$_BOX64_RC" <<'RCEOF'
-# box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by ry-crostini.sh Written once on first install; edit freely afterward. Reference: https://github.com/ptitSeb/box64/blob/main/docs/USAGE.md
+    elif [[ ! -f "$_BOX64_RC" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_BOX64_RC" 2>/dev/null; then
+        sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'RCEOF' | write_file "$_BOX64_RC"
+# box64 config for Crostini SC7180P (Snapdragon 7c Gen 2) — managed by ry-crostini.sh ry-crostini:@@VERSION@@ Re-written on version bump; manual edits below this line will be overwritten on script upgrade. Reference: https://github.com/ptitSeb/box64/blob/main/docs/USAGE.md
 
 [default]
 # Suppress verbose output
@@ -2320,9 +2343,7 @@ BOX64_DYNAREC_CALLRET=1
 BOX64_DYNAREC_PURGE=1
 # DynaRec disk cache — saves generated native code for faster subsequent loads. 0=off, 1=generate+use, 2=use existing only. Requires box64 ≥ v0.3.8. Default 1: generate on first run AND reuse. Switch to 2 only if you want a read-only cache (no new entries written) — useful after a known-good warmup.
 BOX64_DYNACACHE=1
-# Native ARM CPU flags — uses host NEON/etc for flag computation (v0.3.2+)
-BOX64_DYNAREC_NATIVEFLAGS=1
-# Larger forward gap for DynaRec blocks — default 128; 512 builds bigger blocks for better throughput (box64 CHANGELOG: "can get more than 30%")
+# BOX64_DYNAREC_NATIVEFLAGS removed in v8.1.31 — default is already 1 in box64 0.3.4+ (verified against trixie 0.3.4 manpage) Larger forward gap for DynaRec blocks — default 128; 512 builds bigger blocks for better throughput (box64 CHANGELOG: "can get more than 30%")
 BOX64_DYNAREC_FORWARD=512
 # Map x86 PAUSE→ARM YIELD — better spinlock behavior, lower power on battery
 BOX64_DYNAREC_PAUSE=1
@@ -2346,7 +2367,7 @@ BOX64_DYNAREC_FORWARD=1024
 RCEOF
         log "Wrote ${_BOX64_RC}"
     else
-        log ".box64rc already exists — skipping"
+        log ".box64rc up-to-date — skipping"
     fi
     unset _BOX64_RC
 
@@ -2355,8 +2376,7 @@ RCEOF
     if [[ ! -f "$_RUN_X86" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_RUN_X86" 2>/dev/null; then
         sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'WRAPPER' | write_file_exec "$_RUN_X86"
 #!/usr/bin/env bash
-# run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini Prefers box64 (DynaRec JIT) when available; falls back to qemu-user (TCG). Usage: run-x86 ./program [args...] Managed by ry-crostini.sh — edit freely.
-# ry-crostini:@@VERSION@@
+# run-x86 — convenience wrapper for x86_64 emulation on ARM64 Crostini. Prefers box64 (DynaRec JIT) when available; falls back to qemu-user (TCG). Usage: run-x86 ./program [args...]. Managed by ry-crostini.sh — edit freely. ry-crostini:@@VERSION@@
 
 set -euo pipefail
 
@@ -2430,8 +2450,7 @@ WRAPPER
     if [[ ! -f "$_GOG_EXTRACT" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_GOG_EXTRACT" 2>/dev/null; then
         sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'GOGWRAP' | write_file_exec "$_GOG_EXTRACT"
 #!/usr/bin/env bash
-# gog-extract — extract GOG game installers on ARM64 Linux without Wine Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec) Usage: gog-extract <installer> [output-dir] Managed by ry-crostini.sh — edit freely.
-# ry-crostini:@@VERSION@@
+# gog-extract — extract GOG game installers on ARM64 Linux without Wine. Handles Windows .exe (via innoextract) and Linux .sh (via makeself --noexec). Usage: gog-extract <installer> [output-dir]. Managed by ry-crostini.sh — edit freely. ry-crostini:@@VERSION@@
 
 set -euo pipefail
 
@@ -2516,8 +2535,7 @@ GOGWRAP
     if [[ ! -f "$_RUN_GAME" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$_RUN_GAME" 2>/dev/null; then
         sed -e "s/@@VERSION@@/${SCRIPT_VERSION}/" -e "s/@@VTAG@@/v${SCRIPT_VERSION}/" <<'RGWRAP' | write_file_exec "$_RUN_GAME"
 #!/usr/bin/env bash
-# run-game — launch a game on Cortex-A76 big cores with elevated priority SC7180P: cores 6-7 = Cortex-A76, cores 0-5 = Cortex-A55 Usage: run-game <command> [args...] Managed by ry-crostini.sh — edit freely.
-# ry-crostini:@@VERSION@@
+# run-game — launch a game on Cortex-A76 big cores with elevated priority. SC7180P: cores 6-7 = Cortex-A76, cores 0-5 = Cortex-A55. Usage: run-game <command> [args...]. Managed by ry-crostini.sh — edit freely. ry-crostini:@@VERSION@@
 
 set -euo pipefail
 
@@ -2613,15 +2631,20 @@ if should_run_step 11; then
         _gl_env_args=()
         if [[ -r "$_gpu_env_file" ]]; then
             while IFS= read -r _gl_line; do
+                # Trim leading whitespace before blank/comment tests so indented `    # comment` lines don't pass the `\#*` test and leak into env(1). Matches the step 13 env.d re-import parser's whitespace handling.
+                _gl_line="${_gl_line#"${_gl_line%%[![:space:]]*}"}"
                 [[ -z "$_gl_line" || "$_gl_line" == \#* ]] && continue
                 [[ "$_gl_line" == *=* ]] || continue
+                # Validate key charset (POSIX env identifier) before handing to env(1). Rejects lines where the LHS contains whitespace, shell metachars, or non-identifier bytes that would make `env KEY=VAL cmd` misbehave or treat the malformed token as a command.
+                _gl_key="${_gl_line%%=*}"
+                [[ "$_gl_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
                 # Strip inline comments after value; expand ${HOME}/$HOME only
                 _gl_line="${_gl_line//\$\{HOME\}/$HOME}"
                 _gl_line="${_gl_line//\$HOME/$HOME}"
                 _gl_env_args+=("$_gl_line")
             done < "$_gpu_env_file"
         fi
-        unset _gpu_env_file _gl_line
+        unset _gpu_env_file _gl_line _gl_key
         if command -v glxinfo &>/dev/null; then
             {
                 read -r GL_VENDOR
@@ -2658,9 +2681,9 @@ if should_run_step 11; then
         fi
         if command -v vulkaninfo &>/dev/null; then
             _vk_out="$(env "${_gl_env_args[@]}" vulkaninfo --summary 2>/dev/null || true)"
-            # vulkaninfo --summary uses `deviceName = ...` and `apiVersion = ...` NOT `GPU name = ...` — earlier versions of this check grepped for the wrong field name and never matched, silently reporting Vulkan as unavailable even on systems where it works.
-            VK_GPU="$(printf '%s\n' "$_vk_out" | grep "deviceName" | head -1 | cut -d= -f2 | xargs -r || true)"
-            VK_API="$(printf '%s\n' "$_vk_out" | grep "apiVersion" | head -1 | cut -d= -f2 | xargs -r || true)"
+            # vulkaninfo --summary uses `deviceName = ...` and `apiVersion = ...` NOT `GPU name = ...` — earlier versions of this check grepped for the wrong field name and never matched, silently reporting Vulkan as unavailable even on systems where it works. Single awk pass on a here-string — no pipe chain, no SIGPIPE fragility. awk's gsub trims leading/trailing whitespace (xargs -r equivalent for the tokens we capture).
+            VK_GPU="$(awk -F= '/deviceName/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' <<<"$_vk_out" || true)"
+            VK_API="$(awk -F= '/apiVersion/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}' <<<"$_vk_out" || true)"
             unset _vk_out
             if [[ -n "$VK_GPU" ]]; then
                 # lavapipe (Mesa software Vulkan) reports deviceName=llvmpipe — same llvmpipe-as-success false-positive as the GL block above. Demote.
@@ -2701,9 +2724,9 @@ if should_run_step 11; then
     fi
     logprintf '  DISPLAY:       %s\n' "${DISPLAY:-not set}"
     logprintf '  WAYLAND:       %s\n' "${WAYLAND_DISPLAY:-not set}"
-    # The three lines below read from config files on disk, not from running GTK/X11 state — they report the CONFIGURED values, not what's currently live in xrdb or in-process GTK. Labels prefixed "Configured" to remove the liveness implication. xrdb cross-check below confirms whether Xft.dpi actually landed in the running X server.
-    logprintf '  GTK theme:     %s (configured)\n' "$(grep gtk-theme-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
-    _xft_file="$(grep 'Xft.dpi' "${HOME}/.Xresources" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+    # The three lines below read from config files on disk, not from running GTK/X11 state — they report the CONFIGURED values, not what's currently live in xrdb or in-process GTK. Labels prefixed "Configured" to remove the liveness implication. xrdb cross-check below confirms whether Xft.dpi actually landed in the running X server. Single awk pass — no pipe, no pipefail/SIGPIPE fragility. Previous grep|head|cut chain could concatenate the captured value with the || fallback if grep SIGPIPEd mid-emit.
+    logprintf '  GTK theme:     %s (configured)\n' "$(awk -F= '/^gtk-theme-name/{print $2; exit}' "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null || echo 'default')"
+    _xft_file="$(awk '/^Xft\.dpi:/ {print $2; exit}' "${HOME}/.Xresources" 2>/dev/null || true)"
     [[ -z "$_xft_file" ]] && _xft_file='default'
     logprintf '  Xft DPI:       %s (configured)\n' "$_xft_file"
     # Cross-check: does the running X server actually have Xft.dpi loaded? step 7 attempts `xrdb -merge ~/.Xresources` but gates on $DISPLAY being set — on a fresh install without sommelier up yet, the merge is skipped and verify must tell the user the written value is not yet live.
@@ -2724,7 +2747,7 @@ if should_run_step 11; then
         unset _xft_live
     fi
     unset _xft_file
-    logprintf '  Font:          %s (configured)\n' "$(grep gtk-font-name "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null | head -1 | cut -d= -f2 || echo 'default')"
+    logprintf '  Font:          %s (configured)\n' "$(awk -F= '/^gtk-font-name/{print $2; exit}' "${HOME}/.config/gtk-3.0/settings.ini" 2>/dev/null || echo 'default')"
     logprintf '\n'
 
     # Audio
@@ -2745,7 +2768,7 @@ if should_run_step 11; then
         ((_verify_warn++)) || true
     fi
     if command -v pactl &>/dev/null; then
-        PA_STATUS="$(timeout 5 pactl info 2>/dev/null | grep "Server Name" | cut -d: -f2 | xargs -r || true)"
+        PA_STATUS="$(timeout 5 pactl info 2>/dev/null | awk -F: '/^Server Name:/{sub(/^[ \t]+/, "", $2); print $2; exit}' || true)"
         if [[ -n "$PA_STATUS" ]]; then
             logprintf '  PulseAudio:    %b✓%b %s\n' "$GREEN" "$RESET" "$PA_STATUS"
             ((_verify_pass++)) || true
@@ -2763,13 +2786,13 @@ if should_run_step 11; then
         SHARED_N=${#_shared_arr[@]}
         if [[ "$SHARED_N" -gt 0 ]]; then
             logprintf '  Shared dirs:   %b✓%b %s folder(s)\n' "$GREEN" "$RESET" "$SHARED_N"
-            for d in "${_shared_arr[@]}"; do
-                [[ -n "$d" ]] && logprintf '    %s\n' "$d"
+            for _d in "${_shared_arr[@]}"; do
+                [[ -n "$_d" ]] && logprintf '    %s\n' "$_d"
             done
         else
             logprintf '  Shared dirs:   none — share via Files app → right-click → Share with Linux\n'
         fi
-        unset _shared_arr SHARED_N d
+        unset _shared_arr SHARED_N _d
     fi
     logprintf '\n'
 
@@ -2829,26 +2852,27 @@ if should_run_step 11; then
     logprintf '%bConfig files written:%b\n' "$BOLD" "$RESET"
 
     check_file "/etc/apt/apt.conf.d/90parallel"                "Apt download tuning"
+    $IS_BOOKWORM && check_file "/etc/apt/sources.list.d/bookworm-backports.list" "bookworm-backports repo"
     check_file "/etc/systemd/system/ry-crostini-cros-pin.service" "cros.list cleanup service"
     check_file "${HOME}/.config/environment.d/gpu.conf"       "GPU env"
     check_file "${HOME}/.config/environment.d/sommelier.conf"  "Sommelier scaling + keys"
     check_file "${HOME}/.config/environment.d/qt.conf"         "Qt scaling/theming"
-    # Step 7: Qt GTK platform themes — check qt5-gtk-platformtheme and adwaita-qt independently
-    if dpkg -s qt5-gtk-platformtheme &>/dev/null; then
+    # Step 7: Qt GTK platform themes — check qt5-gtk-platformtheme, adwaita-qt, and qt6-gtk-platformtheme independently. Use dpkg-query with exact Status match instead of `dpkg -s` which returns 0 for half-installed/half-configured/config-files states where the package cannot actually provide the theme plugin. Anchored equality on the Status string closes that window.
+    if [[ "$(dpkg-query -W -f='${Status}' qt5-gtk-platformtheme 2>/dev/null)" == "install ok installed" ]]; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "qt5-gtk-platformtheme"
         ((_verify_pass++)) || true
     else
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "qt5-gtk-platformtheme not installed"
         ((_verify_warn++)) || true
     fi
-    if dpkg -s adwaita-qt &>/dev/null; then
+    if [[ "$(dpkg-query -W -f='${Status}' adwaita-qt 2>/dev/null)" == "install ok installed" ]]; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "adwaita-qt (Qt5 dark theme)"
         ((_verify_pass++)) || true
     else
         logprintf '  %b⚠%b  %-44s\n' "$YELLOW" "$RESET" "adwaita-qt not installed"
         ((_verify_warn++)) || true
     fi
-    if dpkg -s qt6-gtk-platformtheme &>/dev/null; then
+    if [[ "$(dpkg-query -W -f='${Status}' qt6-gtk-platformtheme 2>/dev/null)" == "install ok installed" ]]; then
         logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "Qt6 GTK platform theme"
         ((_verify_pass++)) || true
     else
@@ -2868,9 +2892,10 @@ if should_run_step 11; then
     check_file "${HOME}/.config/wireplumber/wireplumber.conf.d/51-crostini-alsa.conf"        "WirePlumber ALSA tuning"
     # WirePlumber version probe — the JSON .conf above is silently ignored by 0.4.x. On bookworm this catches the case where the bookworm-backports refresh in step 6 failed and the system is still on stock 0.4.13 (config has no effect). `wireplumber --version` prints the version on line 2 ("Compiled with libwireplumber X.Y.Z"), not line 1 — anchor on the libwireplumber keyword so a future banner that prints library versions (libspa, glib) ahead of the wireplumber version doesn't grab the wrong triple.
     if command -v wireplumber &>/dev/null; then
+        # timeout|awk: one pipe hop only (unavoidable — timeout must exec). awk matches on libwireplumber|^wireplumber and extracts the first X.Y.Z triple in a single pass.
         _wp_ver="$(timeout 5 wireplumber --version 2>/dev/null \
-            | grep -iE 'libwireplumber|^wireplumber' \
-            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+            | awk 'tolower($0) ~ /libwireplumber/ || /^wireplumber/ { if (match($0, /[0-9]+\.[0-9]+\.[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit } }' \
+            || true)"
         if [[ -n "$_wp_ver" ]]; then
             _wp_major="${_wp_ver%%.*}"
             _wp_rest="${_wp_ver#*.}"
@@ -2908,9 +2933,9 @@ if should_run_step 11; then
     fi
     # earlyoom OOM killer
     check_file "/etc/default/earlyoom"                                                           "earlyoom OOM config"
-    # Re-validate the --prefer regex shape — step 3 validates at write time, but the file could be corrupted later by manual edit, dpkg-overlay, or apt-purge restoring stock. Same anchor pattern as the post-write check in step 3.
+    # Re-validate the --prefer regex shape — step 3 validates at write time, but the file could be corrupted later by manual edit, dpkg-overlay, or apt-purge restoring stock. Stricter than step 3: require at least one known gaming process name in the alternation so a parenthesized-but-garbage value fails here.
     if [[ -s /etc/default/earlyoom ]]; then
-        if grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*\|[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
+        if grep -Eq '^EARLYOOM_ARGS=.*--prefer \([^)]*(retroarch|wine|dosbox|dosbox-x|scummvm|box64)[^)]*\)' /etc/default/earlyoom 2>/dev/null; then
             logprintf '  %b✓%b  %-44s\n' "$GREEN" "$RESET" "earlyoom --prefer regex valid"
             ((_verify_pass++)) || true
         else
@@ -2976,6 +3001,23 @@ if should_run_step 12; then
     check_file "${HOME}/.local/bin/run-x86"                                                 "x86 emulation wrapper"
     check_file "${HOME}/.local/bin/gog-extract"                                              "GOG installer extractor"
     check_file "${HOME}/.local/bin/run-game"                                                "CPU affinity game launcher"
+
+    # Shebang validity check — wrappers without a `#!` first line are exec'd via the caller's shell on ENOEXEC. Bash parents handle this fine (re-exec via bash), but dash/sh, systemd ExecStart, cron, xdg-open, and system(3) all break on any bash-ism (set -o pipefail, [[, ${var:-}). check_file only tests existence/non-empty; this catches the class of defect separately.
+    for _wf in "${HOME}/.local/bin/run-x86" "${HOME}/.local/bin/gog-extract" "${HOME}/.local/bin/run-game"; do
+        _wf_name="${_wf##*/}"
+        if [[ ! -f "$_wf" ]]; then
+            continue   # absence already reported by check_file above
+        fi
+        _wf_head="$(head -c2 -- "$_wf" 2>/dev/null || true)"
+        if [[ "$_wf_head" == "#!" ]]; then
+            logprintf '  %b✓%b  %-44s valid shebang\n' "$GREEN" "$RESET" "$_wf_name"
+            ((_verify_pass++)) || true
+        else
+            logprintf '  %b✗%b  %-44s missing shebang — non-bash callers will fail\n' "$RED" "$RESET" "$_wf_name"
+            ((_verify_fail++)) || true
+        fi
+    done
+    unset _wf _wf_name _wf_head
     logprintf '\n'
 
     if [[ "$_verify_fail" -eq 0 ]]; then
@@ -3032,9 +3074,7 @@ if should_run_step 13; then
         _no_checks_ran=true
         log "No verification checks were executed — use --verify to validate."
     elif [[ "$_had_failures" -eq 0 ]]; then
-        # All checks passed — advance progress bar to 13/13 and remove checkpoint file.
-        # Using _progress_draw directly (not set_checkpoint) avoids a tmpfile+rename round-trip
-        # that would be immediately undone by the rm below.
+        # All checks passed — advance progress bar to 13/13 and remove checkpoint file. Using _progress_draw directly (not set_checkpoint) avoids a tmpfile+rename round-trip that would be immediately undone by the rm below.
         _progress_draw 13
         rm -f -- "$STEP_FILE"
         log "Checkpoint file removed. Setup fully complete."
@@ -3075,11 +3115,13 @@ if should_run_step 13; then
                 _ev="${_eline#*=}"
                 # Validate key: identifier chars only (defends against pathological lines)
                 [[ "$_ek" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-                # Strip optional surrounding double OR single quotes (systemd environment.d accepts both forms)
+                # Strip optional surrounding double OR single quotes (systemd environment.d accepts both forms). Reject lone opening quote — malformed values like `"foo` would otherwise pass through with quote intact and export as literal.
                 if [[ "$_ev" == \"*\" && ${#_ev} -ge 2 ]]; then
                     _ev="${_ev:1:${#_ev}-2}"
                 elif [[ "$_ev" == \'*\' && ${#_ev} -ge 2 ]]; then
                     _ev="${_ev:1:${#_ev}-2}"
+                elif [[ "$_ev" == \"* || "$_ev" == \'* || "$_ev" == *\" || "$_ev" == *\' ]]; then
+                    continue
                 fi
                 # Expand ${HOME} / $HOME — the only variable reference systemd environment.d files in this script use (gpu.conf MESA_SHADER_CACHE_DIR). Done as literal string substitution to avoid re-invoking the shell parser.
                 _ev="${_ev//\$\{HOME\}/$HOME}"
@@ -3104,7 +3146,7 @@ if should_run_step 13; then
     if [[ "${#_somm_units[@]}" -gt 0 ]] && systemctl --user restart "${_somm_units[@]}" 2>/dev/null; then
         # Poll for sommelier readiness up to 5 s — slow containers (eMMC contention, OOM recovery) may need >1 s to re-establish the display socket. Check via systemctl is-active, not pgrep: on aarch64 Crostini the sommelier process comm is "ld-linux-aarch6" (dynamic-loader argv0 truncation), so `pgrep -x sommelier` never matches and the poll would always time out.
         _somm_ready=false
-        for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
+        for _i in {1..25}; do
             if systemctl --user is-active --quiet "${_somm_units[@]}"; then _somm_ready=true; break; fi
             sleep 0.2
         done

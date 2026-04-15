@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.30-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.36-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -67,9 +67,10 @@ is reversible.
 #      chrome://flags/#crostini-gpu-support → Enabled
 #      chrome://flags/#exo-pointer-lock     → Enabled
 # 3. Cache sudo, clone, run:
-sudo true
-git clone https://github.com/ryanmusante/ry-crostini.git
-cd ry-crostini && bash ry-crostini.sh
+sudo true \
+  && git clone https://github.com/ryanmusante/ry-crostini.git \
+  && cd ry-crostini \
+  && bash ry-crostini.sh
 # 4. Close and reopen the Terminal app when finished.
 ```
 
@@ -205,10 +206,10 @@ Thirteen ordered steps, each idempotent and checkpointed. Steps 1–10 install a
 | `~/.Xresources` | 7 | Xft DPI 96 |
 | `~/.config/fontconfig/fonts.conf` | 7 | Font rendering (grayscale AA for OLED) |
 | `~/.icons/default/index.theme` | 7 | Adwaita cursor theme |
-| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, ALSA audio, 32 ms latency, refresh rate, frame delay, late input polling |
+| `~/.config/retroarch/retroarch.cfg` | 10 | glcore renderer, ALSA audio, 32 ms latency, refresh rate, frame delay, late input polling, pixel-perfect integer scaling, fast-forward cap, save-on-exit off |
 | `~/.config/scummvm/scummvm.ini` | 10 | OpenGL, pixel-perfect scaling, FluidSynth, chorus off |
-| `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, 4:3 aspect, 48 kHz mixer, cycle tuning |
-| `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts |
+| `~/.config/dosbox-x/dosbox-x.conf` | 10 | ARM64 dynarec, GPU rendering, 4:3 aspect, 48 kHz mixer, cycle tuning (trixie-only) |
+| `~/.box64rc` | 10 | SC7180P DynaRec + Wine tuning, FORWARD/PAUSE opts (trixie-only) |
 | `~/.local/bin/run-x86` | 10 | x86/x86\_64 binary dispatcher (box64 / qemu) |
 | `~/.local/bin/gog-extract` | 10 | GOG installer extraction without Wine |
 | `~/.local/bin/run-game` | 10 | CPU affinity + priority launcher; per-game `MALLOC_ARENA_MAX=2`, `MESA_NO_ERROR=1`, `mesa_glthread=true` (unsafe globally on virgl) |
@@ -238,7 +239,7 @@ Nothing the script writes is destructive without a tmpfile-and-rename path, a ba
 
 | Property | Implementation |
 |----------|----------------|
-| Idempotent | Configuration files skip if already present; the 12 files with `ry-crostini:VERSION` markers (9 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `#` for all others) |
+| Idempotent | Configuration files skip if already present; all 25 files with `ry-crostini:VERSION` markers (22 configs + 3 wrappers in `~/.local/bin/`) self-heal when SCRIPT_VERSION advances; marker comment syntax is file-format-appropriate (`//` for APT conf, `<!-- -->` for XML, `!` for Xresources, `#` for all others) |
 | Atomic writes | tmpfile + mv via `_write_file_impl`; modes 644 (config), 700 (executables in `~/.local/bin/`), 600 (log via `umask 077`) |
 | Concurrent-safe | PID-based `mkdir` lock with stale detection |
 | Checkpoint resume | Progress saved after each step to `~/.ry-crostini-checkpoint`; re-run continues from last completed step |
@@ -533,9 +534,10 @@ For anything that doesn't fit the compatibility tiers above, streaming is the re
 
 | Priority | Client | Recommended | Notes |
 |----------|--------|-------------|-------|
-| 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming, Luna) | ✅ | Direct V4L2 hardware decode, no VM overhead |
+| 1 | ChromeOS browser (GeForce NOW, Xbox Cloud Gaming) | ✅ | Direct V4L2 hardware decode, no VM overhead |
 | 2 | Android Moonlight app (Play Store) | ✅ | Hardware decode; optimal for Sunshine/GameStream hosts |
 | 3 | Chiaki-ng (PS Remote Play) | ✅ | ARM64 Linux AppImage; native Crostini streaming client |
+| — | Amazon Luna (ChromeOS browser) | ⚠ Prime only | Storefront, Bring-Your-Own-Library, and third-party subscriptions discontinued 2026-04-10; a-la-carte/BYOL streaming sunsets 2026-06-10. Remaining value is the Prime-tier + Luna Premium catalogue (~155 mostly older titles). |
 | — | Moonlight Qt | ⚠ No | arm64 `.deb` available but software decode only (no V4L2 hw accel) |
 | — | Parsec | ✗ No | No ARM64 Linux support |
 | — | Steam Link | ✗ No | No ARM64 Linux support |
