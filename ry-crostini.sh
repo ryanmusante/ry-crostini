@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ry-crostini.sh — Crostini post-install bootstrap for Lenovo Duet 5 (82QS0001US)
 #
-# Version: 8.1.36 Date:    2026-04-14 Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P) Target:  Debian Bookworm container under ChromeOS Crostini (primary target). Trixie upgrade is opt-in via --upgrade-trixie.
+# Version: 8.1.37 Date:    2026-04-15 Arch:    aarch64 / arm64 (Qualcomm Snapdragon 7c Gen 2 — SC7180P) Target:  Debian Bookworm container under ChromeOS Crostini (primary target). Trixie upgrade is opt-in via --upgrade-trixie.
 #
 # Bookworm path uses bookworm-backports for pipewire 1.4 / wireplumber 0.5 and falls back to vanilla dosbox + qemu-user (no dosbox-x, no box64).
 #
@@ -20,7 +20,7 @@ umask 022
 
 # Constants
 readonly SCRIPT_NAME="ry-crostini.sh"
-readonly SCRIPT_VERSION="8.1.36"
+readonly SCRIPT_VERSION="8.1.37"
 readonly EXPECTED_ARCH="aarch64"
 _log_ts="$(date +%Y%m%d-%H%M%S)" || { printf 'FATAL: date failed\n' >&2; exit 1; }
 # Not readonly — _parallel_check_tools subshells must reassign to /dev/null
@@ -90,9 +90,13 @@ cleanup() {
     if [[ -n "${_PARALLEL_TMPDIR:-}" && -d "${_PARALLEL_TMPDIR:-}" ]]; then
         rm -rf -- "$_PARALLEL_TMPDIR" 2>/dev/null || true
     fi
-    # Remove abandoned write_file_sudo tmpfile (signal between mktemp and mv)
+    # Remove abandoned write_file_sudo tmpfile (signal between mktemp and mv). Defense-in-depth: validate the path matches the write_file_sudo tmpfile naming convention (`<dir>/.tmp_<8-rand>`) before invoking sudo rm. write_file_sudo only ever sets this from `sudo mktemp "$(dirname "$dest")/.tmp_XXXXXXXX"`, so a value not matching `*/.tmp_*` indicates a bug elsewhere — refuse to delete rather than rm an arbitrary path with sudo.
     if [[ -n "${_SUDO_TMPFILE:-}" ]]; then
-        sudo rm -f -- "$_SUDO_TMPFILE" 2>/dev/null || true
+        if [[ "$_SUDO_TMPFILE" == */.tmp_* ]]; then
+            sudo rm -f -- "$_SUDO_TMPFILE" 2>/dev/null || true
+        else
+            _cleanup_warn "Refusing to sudo rm _SUDO_TMPFILE='${_SUDO_TMPFILE}' (does not match write_file_sudo tmpfile naming)"
+        fi
     fi
     # Release lock only if this instance acquired it
     if $_LOCK_ACQUIRED && [[ -n "${LOCK_FILE:-}" ]]; then
@@ -195,6 +199,12 @@ _progress_resize() {
     $_PROGRESS_ENABLED || return
     local rows
     rows="$(tput lines 2>/dev/null)" || return
+    # Floor mirrors _progress_init's L158 guard. A WINCH down to <5 rows would otherwise emit `\e[1;Nr` with N<=3 (DECSTBM bottom < safe minimum); on rows=1 the value collapses to `\e[1;0r` which is invalid (bottom < top) and corrupts the scroll region on terminals that don't silently ignore it. Disable progress and reset the scroll region to the full window so subsequent draws are no-ops.
+    if [[ "$rows" -lt 5 ]]; then
+        _PROGRESS_ENABLED=false
+        printf '\033[r'
+        return
+    fi
     printf '\033[1;%dr' "$((rows - 1))"
     _progress_draw
 }
@@ -1904,6 +1914,9 @@ XRESEOF
     fi
 
     # 7g. Fontconfig (grayscale AA for OLED, Noto defaults)
+    # Pre-install the font packages referenced as fontconfig aliases below (fonts-noto = Noto Sans/Serif, fonts-firacode = Fira Code monospace) BEFORE fc-cache runs at L1957. Step 8 also installs these as part of GUI_PKGS — apt sees them as already-installed and the call is a no-op there. Without this pre-install, the step 7 fc-cache rebuilds without Fira Code; step 8's apt postinst then triggers a second rebuild ~5 s later. Idempotent and version-agnostic.
+    install_pkgs_best_effort fonts-noto fonts-firacode \
+        || warn "Pre-fontconfig font install incomplete — fc-cache will rebuild again after step 8"
     FC_LOCAL="${HOME}/.config/fontconfig/fonts.conf"
     if [[ ! -f "$FC_LOCAL" ]] || ! grep -Fq "ry-crostini:${SCRIPT_VERSION}" "$FC_LOCAL" 2>/dev/null; then
         sed "s/@@VERSION@@/${SCRIPT_VERSION}/" <<'FCEOF' | write_file "$FC_LOCAL"
@@ -2593,7 +2606,6 @@ _verify_pass=0
 _verify_fail=0
 _verify_warn=0
 
-
 # Step 11: Verification — tools and config files
 if should_run_step 11; then
     # Inject install-time paths (profile.d not yet sourced in current shell). Scoped to step 11 — no value to earlier steps and avoids unnecessary PATH mutation on --from-step=1..10 runs.
@@ -3084,8 +3096,7 @@ if should_run_step 13; then
     fi
 
     # Clean up verification variables
-    unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS
-    unset _verify_pass _verify_fail _verify_warn
+    unset GL_VENDOR GL_RENDERER GL_VERSION VK_GPU VK_API SND_DEV_COUNT PA_STATUS _verify_pass _verify_fail _verify_warn
 
     # Elapsed time
     _now_epoch="$(date +%s 2>/dev/null)" || _now_epoch=""

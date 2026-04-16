@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.36-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.37-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -136,9 +136,13 @@ bash ry-crostini.sh [OPTIONS]
 
 | Exit Code | Meaning |
 |-----------|---------|
-| `0` | All verification checks passed |
+| `0` | Success — all steps completed, verification passed |
 | `1` | Verification failure or fatal error |
 | `2` | No verification checks executed (e.g. `--from-step=13` alone) |
+| `129` | Interrupted by SIGHUP (128 + 1) |
+| `130` | Interrupted by SIGINT (128 + 2, Ctrl-C) |
+| `131` | Interrupted by SIGQUIT (128 + 3) |
+| `143` | Interrupted by SIGTERM (128 + 15) |
 
 The exit message distinguishes verification failures from mid-step fatal
 errors. Verification failures preserve the checkpoint so that
@@ -375,12 +379,12 @@ with step numbers and purposes.
 
 ## Gaming Reference
 
-Step 10 installs DOSBox-X, ScummVM, RetroArch, FluidSynth GM soundfont,
-innoextract, unar, box64 (x86\_64 DynaRec JIT), and qemu-user (i386/x86\_64
-TCG). `unrar` (RARLAB, non-free) is attempted separately; `unar` is the
-fallback. Default configs and wrappers are written on first install for
-RetroArch, ScummVM, run-x86, run-game, and gog-extract
-(`.box64rc` and `dosbox-x.conf` are added on trixie only).
+Step 10 installs DOSBox-X (trixie) or vanilla `dosbox` (bookworm), ScummVM,
+RetroArch, FluidSynth GM soundfont, innoextract, unar, box64 (x86\_64 DynaRec
+JIT, trixie only), and qemu-user (i386/x86\_64 TCG). `unrar` (RARLAB, non-free)
+is attempted separately; `unar` is the fallback. Default configs and wrappers
+are written on first install for RetroArch, ScummVM, run-x86, run-game, and
+gog-extract (`.box64rc` and `dosbox-x.conf` are added on trixie only).
 
 ### Compatibility Tiers
 
@@ -388,7 +392,7 @@ RetroArch, ScummVM, run-x86, run-game, and gog-extract
 
 | Tier | Category | RAM | Examples |
 |------|----------|-----|----------|
-| Excellent | ScummVM, DOSBox-X | < 200 MB | Monkey Island, DOOM, Ultima |
+| Excellent | ScummVM, DOSBox-X (trixie) / `dosbox` (bookworm) | < 200 MB | Monkey Island, DOOM, Ultima |
 | Good | RetroArch 8/16-bit cores | < 300 MB | NES, SNES, Genesis, GBA |
 | Fair | RetroArch PSX/PSP | 300–500 MB | PS1 catalog, lighter PSP titles |
 | Marginal | RetroArch N64, box64+Wine 2D | 500 MB–2 GB | May exhibit lag or trigger OOM |
@@ -400,7 +404,7 @@ Three natively-compiled emulators cover DOS, point-and-click adventures, and ret
 
 | Emulator | Description | Configuration |
 |----------|-------------|---------------|
-| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, 4:3 aspect, 48 kHz mixer, cycle tuning) |
+| DOSBox-X | DOS emulator with save-states, PC-98, MT-32, and CJK support (trixie only — bookworm installs vanilla `dosbox` 0.74) | `~/.config/dosbox-x/dosbox-x.conf` (ARM64 dynarec, OpenGL, 4:3 aspect, 48 kHz mixer, cycle tuning; trixie only) |
 | ScummVM | 325+ supported games via native engine reimplementations | `~/.config/scummvm/scummvm.ini` (OpenGL, pixel-perfect scaling, FluidSynth) |
 | RetroArch | Multi-system frontend (native arm64 Debian package) | `~/.config/retroarch/retroarch.cfg` |
 
@@ -476,9 +480,9 @@ on virgl; omitted from `gpu.conf`):
 
 ```bash
 run-game retroarch                     # RetroArch on big cores
-run-game dosbox-x                      # DOSBox-X on big cores
+run-game dosbox-x                      # DOSBox-X (trixie) — use `dosbox` on bookworm
 run-game scummvm                       # ScummVM on big cores
-run-game run-x86 ./some_x86_program    # Chain with x86 emulation
+run-game run-x86 ./some_x86_program    # Chain with x86 emulation (trixie; box64 unavailable on bookworm)
 ```
 
 On non-SC7180P hardware, big cores are detected dynamically via
