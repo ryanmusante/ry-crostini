@@ -2,6 +2,19 @@ ry-crostini changelog
 
 Note: line-number references in entries reflect the state at that version's commit. Subsequent edits shift the numbers; use `git show vX.Y.Z:ry-crostini.sh | sed -n 'LINE,+5p'` or search by function/step name if an audit trail is needed.
 
+2026-04-16  v8.1.39
+- Comment trimming. 49 script-flow comments exceeding 200 chars trimmed to concise single-line summaries. Historical context, alternative-approach rationale, and prior-version references moved to CHANGELOG where they originated. Heredoc content (config files, embedded scripts) and shellcheck directives untouched.
+- README — fixed 2 inline code spans that crossed line breaks (L359-360, L470-471). GitHub Flavored Markdown does not support multi-line inline code; backtick pairs must stay on one line. Joined the wrapped lines.
+- README — TOC and anchor audit: 33 internal links validated against GitHub's anchor generation rules; 0 broken.
+- Validation: `bash -n` clean; `shellcheck -S warning` clean; line count 3184 (unchanged — comment content shortened, no lines added or removed). README 553 → 551 (-2 joined lines).
+
+2026-04-16  v8.1.38
+- Audit fixes. Exhaustive pass on v8.1.37 surfaced 0 HIGH, 0 MED, 1 LOW, 2 INFO across the script; 0 across the docs.
+- LOW — L1083,1102,1118,1133,1147,1159 `_unused` variable leak: interactive prompts used `read -r -t 300 _unused </dev/tty` six times but never unset the variable, leaking it into scope for the rest of the script. Fix: replaced `_unused` with `_` (bash throwaway variable), eliminating the leak entirely.
+- INFO — L1227 redundant `IS_BOOKWORM=true` inside step 2: identical assignment already performed at global init L827 under the same condition (`!UPGRADE_TRIXIE && codename==bookworm`). Fix: removed the redundant assignment; added a comment cross-referencing L827.
+- INFO — L1436 `mv` without `--` separator in systemd unit ExecStart: all other mv calls in the script use `mv --` for defensive path handling. The operands here are fixed literal paths (`/etc/apt/sources.list.d/cros.list` → `/etc/apt/cros.list.regenerated`) so risk was zero, but the inconsistency conflicted with the project's coding standard. Fix: added `--`.
+- Validation: `bash -n` clean; `shellcheck -x -s bash` unchanged (4 documented SC2030 notes). Line count: 3184 → 3184 (net 0; -1 removed redundant assignment, +1 replacement comment).
+
 2026-04-15  v8.1.37
 - Audit fixes. Exhaustive pass on v8.1.36 surfaced 0 HIGH, 0 MED, 3 LOW across the script; 0 across the docs. After re-verification, 8 initial findings were retracted (nice/ionice gate always passes; SECONDS/_START_EPOCH equivalent; trixie rollback idempotent; earlyoom write-vs-verify asymmetry intentional per v8.1.35; _pw_ready unset correct; XDG 0755 moot in single-user Crostini; mkdir applications already gated; README && chain correct per v8.1.36). Remaining real findings addressed below.
 - LOW — L198 `_progress_resize` missing rows≥5 floor: `_progress_init` guards against terminals <5 rows but `_progress_resize` (SIGWINCH handler) did not — a resize to <5 rows emitted `\e[1;Nr` with N≤3 (DECSTBM bottom < safe minimum). On rows=1, the value collapsed to `\e[1;0r` (bottom < top), invalid per ECMA-48; xterm ignores it but other terminals may corrupt the scroll region. Fix: added `if [[ "$rows" -lt 5 ]]` guard that disables progress and resets the scroll region to the full window, mirroring `_progress_init`'s L158 guard.

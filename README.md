@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.37-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.39-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
@@ -356,8 +356,7 @@ with `bash ry-crostini.sh --verify`.
 
 ## Uninstall / Rollback
 
-There is no automated uninstaller. The supported reset is **`Settings →
-Developers → Linux → Remove Linux development environment`**, which deletes
+There is no automated uninstaller. The supported reset is **`Settings → Developers → Linux → Remove Linux development environment`**, which deletes
 the entire container in seconds. The script is designed to be re-runnable
 on a fresh container at any time, and this is the only way to undo a
 Trixie codename upgrade (no in-place trixie→bookworm downgrade exists).
@@ -467,8 +466,7 @@ ELF → descriptive error + exit 2. Run `run-x86 --help` to list available backe
 mode (v0.3.2+, no armhf required). FEX-Emu is not warranted on 4 GB.
 
 **Transparent `./x86_program` execution:** binfmt_misc is blocked in
-unprivileged Crostini; requires a privileged container (`vmc container termina
-x86 --privileged true` from crosh). Privileged containers have reduced security
+unprivileged Crostini; requires a privileged container (`vmc container termina x86 --privileged true` from crosh). Privileged containers have reduced security
 isolation; the default `penguin` container is unaffected.
 
 ### Game Launcher
