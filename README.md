@@ -1,6 +1,6 @@
 # ry-crostini
 
-[![version](https://img.shields.io/badge/version-8.1.39-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-8.1.42-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
 [![arch](https://img.shields.io/badge/arch-aarch64-lightgrey)](#hardware)
